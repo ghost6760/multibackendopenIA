@@ -35,8 +35,97 @@ from langchain.text_splitter import MarkdownHeaderTextSplitter
 load_dotenv()
 
 # ===============================
-# Environment Setup
+# COMPANY CONFIGURATION MANAGER
 # ===============================
+
+class CompanyConfigManager:
+    """
+    Gestor de configuraciones multi-empresa
+    Permite configuraciones específicas por empresa manteniendo flexibilidad
+    """
+    
+    def __init__(self, redis_client):
+        self.redis_client = redis_client
+        self.config_prefix = "company_config:"
+        self.default_config = self._get_default_config()
+        
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Configuración por defecto del sistema"""
+        return {
+            "model_name": os.getenv("MODEL_NAME", "gpt-4o-mini"),
+            "embedding_model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+            "max_tokens": int(os.getenv("MAX_TOKENS", 1500)),
+            "temperature": float(os.getenv("TEMPERATURE", 0.7)),
+            "max_context_messages": int(os.getenv("MAX_CONTEXT_MESSAGES", 10)),
+            "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", 0.7)),
+            "max_retrieved_docs": int(os.getenv("MAX_RETRIEVED_DOCS", 3)),
+            "vector_dim": 1536,  # Para text-embedding-3-small
+            "bot_active_statuses": ["open"],
+            "bot_inactive_statuses": ["pending", "resolved", "snoozed"]
+        }
+    
+    def get_company_config(self, company_id: str) -> Dict[str, Any]:
+        """
+        Obtener configuración específica de una empresa
+        Si no existe, retorna configuración por defecto
+        """
+        try:
+            config_key = f"{self.config_prefix}{company_id}"
+            stored_config = self.redis_client.hgetall(config_key)
+            
+            if stored_config:
+                # Merge con configuración por defecto
+                config = self.default_config.copy()
+                
+                # Convertir tipos de datos apropiadamente
+                for key, value in stored_config.items():
+                    if key in ["max_tokens", "max_context_messages", "max_retrieved_docs", "vector_dim"]:
+                        config[key] = int(value)
+                    elif key in ["temperature", "similarity_threshold"]:
+                        config[key] = float(value)
+                    elif key in ["bot_active_statuses", "bot_inactive_statuses"]:
+                        config[key] = json.loads(value)
+                    else:
+                        config[key] = value
+                
+                return config
+            else:
+                # Guardar configuración por defecto para la empresa
+                self.set_company_config(company_id, self.default_config)
+                return self.default_config.copy()
+                
+        except Exception as e:
+            logger.error(f"Error getting config for company {company_id}: {e}")
+            return self.default_config.copy()
+    
+    def set_company_config(self, company_id: str, config: Dict[str, Any]) -> bool:
+        """Establecer configuración específica para una empresa"""
+        try:
+            config_key = f"{self.config_prefix}{company_id}"
+            
+            # Preparar datos para Redis (convertir listas a JSON)
+            redis_data = {}
+            for key, value in config.items():
+                if isinstance(value, (list, dict)):
+                    redis_data[key] = json.dumps(value)
+                else:
+                    redis_data[key] = str(value)
+            
+            self.redis_client.hset(config_key, mapping=redis_data)
+            self.redis_client.expire(config_key, 2592000)  # 30 días TTL
+            
+            logger.info(f"✅ Config updated for company {company_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error setting config for company {company_id}: {e}")
+            return False
+
+# ===============================
+# MULTI-COMPANY ENVIRONMENT SETUP
+# ===============================
+
+# Core environment variables (mantienen compatibilidad)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 CHATWOOT_API_KEY = os.getenv("CHATWOOT_API_KEY")
@@ -44,17 +133,7 @@ CHATWOOT_BASE_URL = os.getenv("CHATWOOT_BASE_URL", "https://chatwoot-production-
 ACCOUNT_ID = os.getenv("ACCOUNT_ID", "7")
 PORT = int(os.getenv("PORT", 8080))
 
-# Model configuration
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", 1500))
-TEMPERATURE = float(os.getenv("TEMPERATURE", 0.7))
-MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", 10))
-
-# Embedding configuration
-SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", 0.7))
-MAX_RETRIEVED_DOCS = int(os.getenv("MAX_RETRIEVED_DOCS", 3))
-
+# Validación de variables críticas
 if not OPENAI_API_KEY or not CHATWOOT_API_KEY:
     print("ERROR: Missing required environment variables")
     print("Required: OPENAI_API_KEY, CHATWOOT_API_KEY")
@@ -63,8 +142,6 @@ if not OPENAI_API_KEY or not CHATWOOT_API_KEY:
 print("Environment loaded successfully")
 print(f"Chatwoot URL: {CHATWOOT_BASE_URL}")
 print(f"Account ID: {ACCOUNT_ID}")
-print(f"Model: {MODEL_NAME}")
-print(f"Embedding Model: {EMBEDDING_MODEL}")
 print(f"Redis URL: {REDIS_URL}")
 
 # Initialize Flask
@@ -80,6 +157,9 @@ except Exception as e:
     print(f"❌ Redis connection failed: {e}")
     sys.exit(1)
 
+# Initialize Company Config Manager
+company_config_manager = CompanyConfigManager(redis_client)
+
 # Logging configuration
 log_level = logging.INFO if os.getenv("ENVIRONMENT") == "production" else logging.DEBUG
 logging.basicConfig(
@@ -90,36 +170,92 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================
-# LangChain Components Setup
+# MULTI-COMPANY LANGCHAIN COMPONENTS
 # ===============================
 
-# Initialize LangChain components
-embeddings = OpenAIEmbeddings(
-    model=EMBEDDING_MODEL,
-    openai_api_key=OPENAI_API_KEY
-)
+class MultiCompanyLangChainManager:
+    """
+    Gestor de componentes LangChain por empresa
+    Permite tener configuraciones y recursos separados por empresa
+    """
+    
+    def __init__(self, redis_client, config_manager: CompanyConfigManager):
+        self.redis_client = redis_client
+        self.config_manager = config_manager
+        self.company_components = {}  # Cache de componentes por empresa
+        
+    def _get_company_key(self, company_id: str) -> str:
+        """Generar clave estándar para empresa"""
+        return f"company:{company_id}"
+    
+    def get_embeddings(self, company_id: str) -> OpenAIEmbeddings:
+        """Obtener embeddings específicos para una empresa"""
+        company_key = self._get_company_key(company_id)
+        
+        if f"{company_key}:embeddings" not in self.company_components:
+            config = self.config_manager.get_company_config(company_id)
+            
+            self.company_components[f"{company_key}:embeddings"] = OpenAIEmbeddings(
+                model=config["embedding_model"],
+                openai_api_key=OPENAI_API_KEY
+            )
+        
+        return self.company_components[f"{company_key}:embeddings"]
+    
+    def get_chat_model(self, company_id: str) -> ChatOpenAI:
+        """Obtener modelo de chat específico para una empresa"""
+        company_key = self._get_company_key(company_id)
+        
+        if f"{company_key}:chat_model" not in self.company_components:
+            config = self.config_manager.get_company_config(company_id)
+            
+            self.company_components[f"{company_key}:chat_model"] = ChatOpenAI(
+                model_name=config["model_name"],
+                temperature=config["temperature"],
+                max_tokens=config["max_tokens"],
+                openai_api_key=OPENAI_API_KEY
+            )
+        
+        return self.company_components[f"{company_key}:chat_model"]
+    
+    def get_vectorstore(self, company_id: str) -> RedisVectorStore:
+        """Obtener vector store específico para una empresa"""
+        company_key = self._get_company_key(company_id)
+        
+        if f"{company_key}:vectorstore" not in self.company_components:
+            config = self.config_manager.get_company_config(company_id)
+            embeddings = self.get_embeddings(company_id)
+            
+            self.company_components[f"{company_key}:vectorstore"] = RedisVectorStore(
+                embeddings,
+                redis_url=REDIS_URL,
+                index_name=f"{company_id}_documents",  # Índice específico por empresa
+                vector_dim=config["vector_dim"]
+            )
+        
+        return self.company_components[f"{company_key}:vectorstore"]
+    
+    def clear_company_cache(self, company_id: str):
+        """Limpiar cache de componentes para una empresa (útil al actualizar config)"""
+        company_key = self._get_company_key(company_id)
+        
+        keys_to_remove = [key for key in self.company_components.keys() if key.startswith(company_key)]
+        for key in keys_to_remove:
+            del self.company_components[key]
+        
+        logger.info(f"✅ Cleared component cache for company {company_id}")
 
-chat_model = ChatOpenAI(
-    model_name=MODEL_NAME,
-    temperature=TEMPERATURE,
-    max_tokens=MAX_TOKENS,
-    openai_api_key=OPENAI_API_KEY
-)
+# Initialize Multi-Company LangChain Manager
+langchain_manager = MultiCompanyLangChainManager(redis_client, company_config_manager)
 
-# Initialize Redis Vector Store
-vectorstore = RedisVectorStore(
-    embeddings,
-    redis_url=REDIS_URL,
-    index_name="benova_documents",
-    vector_dim=1536  # Tamaño para text-embedding-3-small
-)
-
-
-def create_advanced_chunking_system():
+def create_advanced_chunking_system(company_id: str):
     """
     Crear sistema de chunking avanzado con MarkdownHeaderTextSplitter
+    Ahora recibe company_id para futuras personalizaciones
     """
-    # Headers para dividir el contenido
+    config = company_config_manager.get_company_config(company_id)
+    
+    # Headers para dividir el contenido (personalizable por empresa en el futuro)
     headers_to_split_on = [
         ("##", "treatment"),  # Nivel 1: Tratamientos
         ("###", "detail"),  # Detalles importantes
@@ -130,7 +266,6 @@ def create_advanced_chunking_system():
         headers_to_split_on=headers_to_split_on,
         strip_headers=False,       # Mantener el texto del header en cada chunk
         return_each_line=False     # Agrupar todo bajo el mismo header
-    
     )
     
     # Fallback para textos largos sin headers
@@ -163,8 +298,11 @@ def normalize_text(text: str) -> str:
     # Join lines back with newlines
     return '\n'.join(normalized_lines)
 
-def classify_chunk_metadata(chunk, chunk_text: str) -> Dict[str, Any]:
-    """Clasificar automáticamente metadata de chunks"""
+def classify_chunk_metadata(chunk, chunk_text: str, company_id: str) -> Dict[str, Any]:
+    """
+    Clasificar automáticamente metadata de chunks
+    Ahora incluye company_id en metadata
+    """
     section = chunk.metadata.get("section", "").lower()
     treatment = chunk.metadata.get("treatment", "general")
     
@@ -178,8 +316,9 @@ def classify_chunk_metadata(chunk, chunk_text: str) -> Dict[str, Any]:
     else:
         metadata_type = "otro"
     
-    # Convertir booleano a string
+    # Convertir booleano a string e incluir company_id
     metadata = {
+        "company_id": company_id,  # NUEVO: Identificador de empresa
         "treatment": treatment,
         "type": metadata_type,
         "section": section,
@@ -190,16 +329,17 @@ def classify_chunk_metadata(chunk, chunk_text: str) -> Dict[str, Any]:
     
     return metadata
 
-def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]]]:
+def advanced_chunk_processing(text: str, company_id: str) -> Tuple[List[str], List[Dict[str, Any]]]:
     """
     Procesar texto usando sistema de chunking avanzado
+    Ahora recibe company_id para procesamiento específico por empresa
     """
     if not text or not text.strip():
         return [], []
     
     try:
-        # Crear splitters
-        markdown_splitter, fallback_splitter = create_advanced_chunking_system()
+        # Crear splitters específicos para la empresa
+        markdown_splitter, fallback_splitter = create_advanced_chunking_system(company_id)
         
         # Normalizar texto
         normalized_text = normalize_text(text)
@@ -210,7 +350,7 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
             
             # Si no se encontraron headers, usar fallback
             if not chunks or all(not chunk.metadata for chunk in chunks):
-                logger.info("No headers found, using fallback chunking")
+                logger.info(f"No headers found for company {company_id}, using fallback chunking")
                 text_chunks = fallback_splitter.split_text(normalized_text)
                 
                 # Crear chunks simples para fallback
@@ -223,7 +363,7 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
                     chunks.append(chunk_obj)
             
         except Exception as e:
-            logger.warning(f"Error in markdown chunking, using fallback: {e}")
+            logger.warning(f"Error in markdown chunking for company {company_id}, using fallback: {e}")
             text_chunks = fallback_splitter.split_text(normalized_text)
             
             # Crear chunks simples para fallback
@@ -235,43 +375,45 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
                 })()
                 chunks.append(chunk_obj)
         
-        # Procesar chunks y generar metadatas
+        # Procesar chunks y generar metadatas con company_id
         processed_texts = []
         metadatas = []
         
         for chunk in chunks:
             if chunk.page_content and chunk.page_content.strip():
                 processed_texts.append(chunk.page_content)
-                metadata = classify_chunk_metadata(chunk, chunk.page_content)
+                metadata = classify_chunk_metadata(chunk, chunk.page_content, company_id)
                 metadatas.append(metadata)
         
-        logger.info(f"Processed {len(processed_texts)} chunks using advanced chunking")
+        logger.info(f"Processed {len(processed_texts)} chunks for company {company_id} using advanced chunking")
         
         return processed_texts, metadatas
         
     except Exception as e:
-        logger.error(f"Error in advanced chunk processing: {e}")
+        logger.error(f"Error in advanced chunk processing for company {company_id}: {e}")
         return [], []
 
 # ===============================
-# BOT ACTIVATION LOGIC
+# MULTI-COMPANY BOT ACTIVATION LOGIC
 # ===============================
-
-BOT_ACTIVE_STATUSES = ["open"]
-BOT_INACTIVE_STATUSES = ["pending", "resolved", "snoozed"]
 
 status_lock = threading.Lock()
 
-def update_bot_status(conversation_id, conversation_status):
-    """Update bot status for a specific conversation in Redis"""
+def update_bot_status(conversation_id: str, conversation_status: str, company_id: str):
+    """
+    Update bot status for a specific conversation in Redis
+    Ahora incluye separación por empresa
+    """
     with status_lock:
-        is_active = conversation_status in BOT_ACTIVE_STATUSES
+        config = company_config_manager.get_company_config(company_id)
+        is_active = conversation_status in config["bot_active_statuses"]
         
-        # Store in Redis
-        status_key = f"bot_status:{conversation_id}"
+        # Store in Redis con namespace por empresa
+        status_key = f"bot_status:{company_id}:{conversation_id}"
         status_data = {
             'active': str(is_active),
             'status': conversation_status,
+            'company_id': company_id,
             'updated_at': str(time.time())
         }
         
@@ -282,83 +424,89 @@ def update_bot_status(conversation_id, conversation_status):
             
             if old_status != str(is_active):
                 status_text = "ACTIVO" if is_active else "INACTIVO"
-                logger.info(f"🔄 Conversation {conversation_id}: Bot {status_text} (status: {conversation_status})")
+                logger.info(f"🔄 Company {company_id} - Conversation {conversation_id}: Bot {status_text} (status: {conversation_status})")
                 
         except Exception as e:
-            logger.error(f"Error updating bot status in Redis: {e}")
+            logger.error(f"Error updating bot status in Redis for company {company_id}: {e}")
 
-def should_bot_respond(conversation_id, conversation_status):
-    """Determine if bot should respond based on conversation status"""
-    update_bot_status(conversation_id, conversation_status)
-    is_active = conversation_status in BOT_ACTIVE_STATUSES
+def should_bot_respond(conversation_id: str, conversation_status: str, company_id: str) -> bool:
+    """
+    Determine if bot should respond based on conversation status and company config
+    Ahora considera configuración específica por empresa
+    """
+    update_bot_status(conversation_id, conversation_status, company_id)
+    
+    config = company_config_manager.get_company_config(company_id)
+    is_active = conversation_status in config["bot_active_statuses"]
     
     if is_active:
-        logger.info(f"✅ Bot WILL respond to conversation {conversation_id} (status: {conversation_status})")
+        logger.info(f"✅ Company {company_id} - Bot WILL respond to conversation {conversation_id} (status: {conversation_status})")
     else:
         if conversation_status == "pending":
-            logger.info(f"⏸️ Bot will NOT respond to conversation {conversation_id} (status: pending - INACTIVE)")
+            logger.info(f"⏸️ Company {company_id} - Bot will NOT respond to conversation {conversation_id} (status: pending - INACTIVE)")
         else:
-            logger.info(f"🚫 Bot will NOT respond to conversation {conversation_id} (status: {conversation_status})")
+            logger.info(f"🚫 Company {company_id} - Bot will NOT respond to conversation {conversation_id} (status: {conversation_status})")
     
     return is_active
 
-def is_message_already_processed(message_id, conversation_id):
-    """Check if message has already been processed using Redis"""
+def is_message_already_processed(message_id: str, conversation_id: str, company_id: str) -> bool:
+    """
+    Check if message has already been processed using Redis
+    Ahora incluye separación por empresa
+    """
     if not message_id:
         return False
     
-    key = f"processed_message:{conversation_id}:{message_id}"
+    key = f"processed_message:{company_id}:{conversation_id}:{message_id}"
     
     try:
         if redis_client.exists(key):
-            logger.info(f"🔄 Message {message_id} already processed, skipping")
+            logger.info(f"🔄 Company {company_id} - Message {message_id} already processed, skipping")
             return True
         
         redis_client.set(key, "1", ex=3600)  # 1 hour TTL
-        logger.info(f"✅ Message {message_id} marked as processed")
+        logger.info(f"✅ Company {company_id} - Message {message_id} marked as processed")
         return False
         
     except Exception as e:
-        logger.error(f"Error checking processed message in Redis: {e}")
+        logger.error(f"Error checking processed message in Redis for company {company_id}: {e}")
         return False
 
 # ===============================
-# REFACTORED Modern Conversation Manager - UNIFIED CHAT HISTORY
+# MULTI-COMPANY CONVERSATION MANAGER
 # ===============================
 
-class ModernConversationManager:
+class MultiCompanyConversationManager:
     """
-    REFACTORED: Conversation Manager moderno con métodos unificados de chat history
+    REFACTORED: Conversation Manager moderno con soporte multi-empresa
     
     CAMBIOS PRINCIPALES:
-    - Eliminada redundancia entre get_chat_history y get_chat_message_history
-    - Método unificado get_chat_history con parámetros para diferentes formatos
-    - Mantenida compatibilidad con código existente
-    - Mejor gestión de Redis y manejo de errores
+    - Separación completa por empresa usando company_id
+    - Configuraciones específicas por empresa
+    - Namespacing en Redis por empresa
+    - Compatibilidad mantenida con código existente
     """
     
-    def __init__(self, redis_client, max_messages: int = 10):
+    def __init__(self, redis_client, config_manager: CompanyConfigManager):
         self.redis_client = redis_client
-        self.max_messages = max_messages
+        self.config_manager = config_manager
         self.redis_prefix = "conversation:"
         self.conversations = {}
         self.message_histories = {}
         self.load_conversations_from_redis()
         
+    def _get_conversation_key(self, user_id: str, company_id: str) -> str:
+        """Generate standardized conversation key with company separation"""
+        return f"conversation:{company_id}:{user_id}"
     
-    def _get_conversation_key(self, user_id: str) -> str:
-        """Generate standardized conversation key"""
-        return f"conversation:{user_id}"
+    def _get_message_history_key(self, user_id: str, company_id: str) -> str:
+        """Generate standardized message history key for Redis with company separation"""
+        return f"chat_history:{company_id}:{user_id}"
     
-    def _get_message_history_key(self, user_id: str) -> str:
-        """Generate standardized message history key for Redis"""
-        return f"chat_history:{user_id}"
-    
-    def _create_user_id(self, contact_id: str) -> str:
-        """Generate standardized user ID"""
-        if not contact_id.startswith("chatwoot_contact_"):
-            return f"chatwoot_contact_{contact_id}"
-        return contact_id
+    def _create_user_id(self, contact_id: str, company_id: str) -> str:
+        """Generate standardized user ID with company context"""
+        base_id = contact_id if contact_id.startswith("chatwoot_contact_") else f"chatwoot_contact_{contact_id}"
+        return f"{company_id}:{base_id}"
     
     def _get_redis_connection_params(self) -> Dict[str, Any]:
         """
@@ -389,47 +537,51 @@ class ModernConversationManager:
                 "ttl": 604800
             }
     
-    def _get_or_create_redis_history(self, user_id: str) -> BaseChatMessageHistory:
+    def _get_or_create_redis_history(self, user_id: str, company_id: str) -> BaseChatMessageHistory:
         """
-        REFACTORED: Método interno para crear/obtener RedisChatMessageHistory
+        REFACTORED: Método interno para crear/obtener RedisChatMessageHistory con separación por empresa
         Centraliza la lógica de creación de objetos de historia Redis
         """
-        if not user_id:
-            raise ValueError("user_id cannot be empty")
+        if not user_id or not company_id:
+            raise ValueError("user_id and company_id cannot be empty")
+        
+        cache_key = f"{company_id}:{user_id}"
         
         # Usar caché en memoria para evitar recrear objetos
-        if user_id not in self.message_histories:
+        if cache_key not in self.message_histories:
             try:
                 redis_params = self._get_redis_connection_params()
+                config = self.config_manager.get_company_config(company_id)
                 
-                # Crear RedisChatMessageHistory con parámetros mejorados
-                self.message_histories[user_id] = RedisChatMessageHistory(
-                    session_id=user_id,
+                # Crear RedisChatMessageHistory con namespace por empresa
+                self.message_histories[cache_key] = RedisChatMessageHistory(
+                    session_id=f"{company_id}:{user_id}",  # Incluir company_id en session_id
                     url=redis_params["url"],
-                    key_prefix="chat_history:",
+                    key_prefix=f"chat_history:{company_id}:",  # Prefix específico por empresa
                     ttl=redis_params["ttl"]
                 )
                 
-                logger.info(f"✅ Created Redis message history for user {user_id}")
+                logger.info(f"✅ Created Redis message history for company {company_id}, user {user_id}")
                 
             except Exception as e:
-                logger.error(f"❌ Error creating Redis message history for user {user_id}: {e}")
+                logger.error(f"❌ Error creating Redis message history for company {company_id}, user {user_id}: {e}")
                 # Crear una historia en memoria como fallback
                 from langchain_core.chat_history import InMemoryChatMessageHistory
-                self.message_histories[user_id] = InMemoryChatMessageHistory()
-                logger.warning(f"⚠️ Using in-memory fallback for user {user_id}")
+                self.message_histories[cache_key] = InMemoryChatMessageHistory()
+                logger.warning(f"⚠️ Using in-memory fallback for company {company_id}, user {user_id}")
             
             # Aplicar límite de mensajes (ventana deslizante)
-            self._apply_message_window(user_id)
+            self._apply_message_window(user_id, company_id)
         
-        return self.message_histories[user_id]
+        return self.message_histories[cache_key]
     
-    def get_chat_history(self, user_id: str, format_type: str = "dict") -> Any:
+    def get_chat_history(self, user_id: str, company_id: str, format_type: str = "dict") -> Any:
         """
-        REFACTORED: Método unificado para obtener chat history en diferentes formatos
+        REFACTORED: Método unificado para obtener chat history en diferentes formatos con separación por empresa
         
         Args:
             user_id: ID del usuario
+            company_id: ID de la empresa
             format_type: Formato de salida
                 - "dict": Lista de diccionarios con role/content (DEFAULT - compatibilidad)
                 - "langchain": Objeto BaseChatMessageHistory nativo de LangChain
@@ -438,7 +590,7 @@ class ModernConversationManager:
         Returns:
             Chat history en el formato especificado
         """
-        if not user_id:
+        if not user_id or not company_id:
             if format_type == "dict":
                 return []
             elif format_type == "langchain":
@@ -450,8 +602,8 @@ class ModernConversationManager:
                 return []
         
         try:
-            # Obtener el objeto Redis history (centralizado)
-            redis_history = self._get_or_create_redis_history(user_id)
+            # Obtener el objeto Redis history (centralizado) con separación por empresa
+            redis_history = self._get_or_create_redis_history(user_id, company_id)
             
             # Retornar según el formato solicitado
             if format_type == "langchain":
@@ -483,10 +635,10 @@ class ModernConversationManager:
             
             else:
                 logger.warning(f"Unknown format_type: {format_type}, defaulting to dict")
-                return self.get_chat_history(user_id, "dict")
+                return self.get_chat_history(user_id, company_id, "dict")
                 
         except Exception as e:
-            logger.error(f"Error getting chat history for user {user_id}: {e}")
+            logger.error(f"Error getting chat history for company {company_id}, user {user_id}: {e}")
             # Retornar valores por defecto según el formato
             if format_type == "dict":
                 return []
@@ -498,18 +650,22 @@ class ModernConversationManager:
             else:
                 return []
     
-    def _apply_message_window(self, user_id: str):
+    def _apply_message_window(self, user_id: str, company_id: str):
         """
         Aplica ventana deslizante de mensajes para mantener solo los últimos N mensajes
-        MEJORADO: Mejor manejo de errores
+        Ahora usa configuración específica por empresa
         """
         try:
-            history = self.message_histories[user_id]
+            config = self.config_manager.get_company_config(company_id)
+            max_messages = config["max_context_messages"]
+            
+            cache_key = f"{company_id}:{user_id}"
+            history = self.message_histories[cache_key]
             messages = history.messages
             
-            if len(messages) > self.max_messages:
+            if len(messages) > max_messages:
                 # Mantener solo los últimos max_messages
-                messages_to_keep = messages[-self.max_messages:]
+                messages_to_keep = messages[-max_messages:]
                 
                 # Limpiar el historial existente
                 history.clear()
@@ -518,23 +674,23 @@ class ModernConversationManager:
                 for message in messages_to_keep:
                     history.add_message(message)
                 
-                logger.info(f"✅ Applied message window for user {user_id}: kept {len(messages_to_keep)} messages")
+                logger.info(f"✅ Applied message window for company {company_id}, user {user_id}: kept {len(messages_to_keep)} messages")
         
         except Exception as e:
-            logger.error(f"❌ Error applying message window for user {user_id}: {e}")
+            logger.error(f"❌ Error applying message window for company {company_id}, user {user_id}: {e}")
     
-    def add_message(self, user_id: str, role: str, content: str) -> bool:
+    def add_message(self, user_id: str, company_id: str, role: str, content: str) -> bool:
         """
-        Add message with automatic window management
-        MEJORADO: Mejor validación y manejo de errores
+        Add message with automatic window management and company separation
+        MEJORADO: Separación por empresa y mejor validación
         """
-        if not user_id or not content.strip():
-            logger.warning("Invalid user_id or content for message")
+        if not user_id or not company_id or not content.strip():
+            logger.warning(f"Invalid parameters for message - user_id: {user_id}, company_id: {company_id}, content length: {len(content) if content else 0}")
             return False
         
         try:
-            # Usar el método unificado para obtener history
-            history = self.get_chat_history(user_id, format_type="langchain")
+            # Usar el método unificado para obtener history con separación por empresa
+            history = self.get_chat_history(user_id, company_id, format_type="langchain")
             
             # Add message to history
             if role == "user":
@@ -546,26 +702,28 @@ class ModernConversationManager:
                 return False
             
             # Update cache and apply window management
-            if user_id in self.message_histories:
-                self._apply_message_window(user_id)
+            cache_key = f"{company_id}:{user_id}"
+            if cache_key in self.message_histories:
+                self._apply_message_window(user_id, company_id)
             
             # Update metadata
-            self._update_conversation_metadata(user_id)
+            self._update_conversation_metadata(user_id, company_id)
             
-            logger.info(f"✅ Message added for user {user_id} (role: {role})")
+            logger.info(f"✅ Message added for company {company_id}, user {user_id} (role: {role})")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error adding message for user {user_id}: {e}")
+            logger.error(f"❌ Error adding message for company {company_id}, user {user_id}: {e}")
             return False
     
-    def _update_conversation_metadata(self, user_id: str):
-        """Update conversation metadata in Redis"""
+    def _update_conversation_metadata(self, user_id: str, company_id: str):
+        """Update conversation metadata in Redis with company separation"""
         try:
-            conversation_key = self._get_conversation_key(user_id)
+            conversation_key = self._get_conversation_key(user_id, company_id)
             metadata = {
                 'last_updated': str(time.time()),
                 'user_id': user_id,
+                'company_id': company_id,
                 'updated_at': datetime.utcnow().isoformat()
             }
             
@@ -573,30 +731,40 @@ class ModernConversationManager:
             self.redis_client.expire(conversation_key, 604800)  # 7 días TTL
             
         except Exception as e:
-            logger.error(f"Error updating metadata for user {user_id}: {e}")
+            logger.error(f"Error updating metadata for company {company_id}, user {user_id}: {e}")
     
     def load_conversations_from_redis(self):
         """
-        Load conversations from Redis with modern approach
-        MEJORADO: Mejor manejo de errores y migración
+        Load conversations from Redis with modern approach and multi-company support
+        MEJORADO: Mejor manejo de errores y migración multi-empresa
         """
         try:
-            # Buscar claves de conversación existentes
-            conversation_keys = self.redis_client.keys("conversation:*")
-            chat_history_keys = self.redis_client.keys("chat_history:*")
+            # Buscar claves de conversación existentes (formato legacy y nuevo)
+            legacy_conversation_keys = self.redis_client.keys("conversation:*")
+            legacy_chat_history_keys = self.redis_client.keys("chat_history:*")
+            
+            # Buscar claves con formato multi-empresa
+            company_conversation_keys = self.redis_client.keys("conversation:*:*")
+            company_chat_history_keys = self.redis_client.keys("chat_history:*:*")
             
             loaded_count = 0
             
-            # Migrar datos existentes si es necesario
-            for key in conversation_keys:
+            # Migrar datos legacy (sin company_id) - asignar a empresa por defecto
+            default_company_id = "benova"  # Empresa por defecto para migración
+            
+            for key in legacy_conversation_keys:
                 try:
+                    # Evitar procesar claves que ya tienen formato multi-empresa
+                    if key.count(':') > 1:
+                        continue
+                        
                     user_id = key.split(':', 1)[1]
                     context_data = self.redis_client.hgetall(key)
                     
                     if context_data and 'messages' in context_data:
-                        # Migrar mensajes antiguos al nuevo formato
+                        # Migrar mensajes antiguos al nuevo formato multi-empresa
                         old_messages = json.loads(context_data['messages'])
-                        history = self.get_chat_history(user_id, format_type="langchain")
+                        history = self.get_chat_history(user_id, default_company_id, format_type="langchain")
                         
                         # Verificar si ya migró
                         if len(history.messages) == 0 and old_messages:
@@ -606,54 +774,271 @@ class ModernConversationManager:
                                 elif msg.get('role') == 'assistant':
                                     history.add_ai_message(msg['content'])
                             
-                            self._apply_message_window(user_id)
+                            self._apply_message_window(user_id, default_company_id)
                             loaded_count += 1
-                            logger.info(f"✅ Migrated conversation for user {user_id}")
+                            logger.info(f"✅ Migrated legacy conversation for user {user_id} to company {default_company_id}")
                 
                 except Exception as e:
-                    logger.warning(f"Failed to migrate conversation {key}: {e}")
+                    logger.warning(f"Failed to migrate legacy conversation {key}: {e}")
                     continue
             
-            # Contar conversaciones ya en nuevo formato
-            for key in chat_history_keys:
-                if key not in [self._get_message_history_key(k.split(':', 1)[1]) for k in conversation_keys]:
-                    loaded_count += 1
+            # Contar conversaciones ya en formato multi-empresa
+            for key in company_chat_history_keys:
+                try:
+                    parts = key.split(':')
+                    if len(parts) >= 3:
+                        loaded_count += 1
+                except Exception:
+                    continue
             
-            logger.info(f"✅ Loaded {loaded_count} conversation contexts from Redis")
+            logger.info(f"✅ Loaded {loaded_count} conversation contexts from Redis (including legacy migration)")
             
         except Exception as e:
             logger.error(f"❌ Error loading contexts from Redis: {e}")
     
-    def get_message_count(self, user_id: str) -> int:
-        """Get total message count for a user"""
+    def get_message_count(self, user_id: str, company_id: str) -> int:
+        """Get total message count for a user in specific company"""
         try:
-            history = self.get_chat_history(user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, company_id, format_type="langchain")
             return len(history.messages)
         except Exception as e:
-            logger.error(f"Error getting message count for user {user_id}: {e}")
+            logger.error(f"Error getting message count for company {company_id}, user {user_id}: {e}")
             return 0
     
-    def clear_conversation(self, user_id: str) -> bool:
-        """Clear conversation history for a user"""
+    def clear_conversation(self, user_id: str, company_id: str) -> bool:
+        """Clear conversation history for a user in specific company"""
         try:
-            history = self.get_chat_history(user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, company_id, format_type="langchain")
             history.clear()
             
             # Limpiar metadata
-            conversation_key = self._get_conversation_key(user_id)
+            conversation_key = self._get_conversation_key(user_id, company_id)
             self.redis_client.delete(conversation_key)
             
             # Limpiar caché
-            if user_id in self.message_histories:
-                del self.message_histories[user_id]
+            cache_key = f"{company_id}:{user_id}"
+            if cache_key in self.message_histories:
+                del self.message_histories[cache_key]
             
-            logger.info(f"✅ Cleared conversation for user {user_id}")
+            logger.info(f"✅ Cleared conversation for company {company_id}, user {user_id}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error clearing conversation for user {user_id}: {e}")
+            logger.error(f"❌ Error clearing conversation for company {company_id}, user {user_id}: {e}")
             return False
+    
+    def get_company_conversations(self, company_id: str) -> List[Dict[str, Any]]:
+        """
+        NUEVO: Obtener todas las conversaciones de una empresa específica
+        Útil para analytics y gestión por empresa
+        """
+        try:
+            pattern = f"conversation:{company_id}:*"
+            conversation_keys = self.redis_client.keys(pattern)
+            
+            conversations = []
+            for key in conversation_keys:
+                try:
+                    metadata = self.redis_client.hgetall(key)
+                    if metadata:
+                        user_id = key.split(':', 2)[2]  # Extraer user_id
+                        message_count = self.get_message_count(user_id, company_id)
+                        
+                        conversations.append({
+                            'user_id': user_id,
+                            'company_id': company_id,
+                            'message_count': message_count,
+                            'last_updated': metadata.get('last_updated', '0'),
+                            'updated_at': metadata.get('updated_at', '')
+                        })
+                except Exception as e:
+                    logger.warning(f"Error processing conversation key {key}: {e}")
+                    continue
+            
+            logger.info(f"✅ Retrieved {len(conversations)} conversations for company {company_id}")
+            return conversations
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting conversations for company {company_id}: {e}")
+            return []
+    
+    def get_all_companies(self) -> List[str]:
+        """
+        NUEVO: Obtener lista de todas las empresas que tienen conversaciones
+        Útil para administración multi-empresa
+        """
+        try:
+            # Buscar todas las claves de conversación
+            conversation_keys = self.redis_client.keys("conversation:*:*")
+            chat_history_keys = self.redis_client.keys("chat_history:*:*")
+            
+            companies = set()
+            
+            # Extraer company_id de conversation keys
+            for key in conversation_keys:
+                try:
+                    parts = key.split(':')
+                    if len(parts) >= 3:
+                        company_id = parts[1]
+                        companies.add(company_id)
+                except Exception:
+                    continue
+            
+            # Extraer company_id de chat_history keys
+            for key in chat_history_keys:
+                try:
+                    parts = key.split(':')
+                    if len(parts) >= 3:
+                        company_id = parts[1]
+                        companies.add(company_id)
+                except Exception:
+                    continue
+            
+            companies_list = sorted(list(companies))
+            logger.info(f"✅ Found {len(companies_list)} companies: {companies_list}")
+            return companies_list
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting companies list: {e}")
+            return []
 
+# ===============================
+# UTILITY FUNCTIONS FOR MULTI-COMPANY SUPPORT
+# ===============================
+
+def extract_company_id_from_request(request_data: Dict[str, Any]) -> str:
+    """
+    NUEVO: Extraer company_id del request
+    Prioriza diferentes fuentes: header, query param, body, fallback
+    """
+    try:
+        # Prioridad 1: Header personalizado
+        if hasattr(request, 'headers') and 'X-Company-ID' in request.headers:
+            return request.headers['X-Company-ID']
+        
+        # Prioridad 2: Query parameter
+        if hasattr(request, 'args') and 'company_id' in request.args:
+            return request.args.get('company_id')
+        
+        # Prioridad 3: En el body del request
+        if isinstance(request_data, dict):
+            if 'company_id' in request_data:
+                return request_data['company_id']
+            
+            # Buscar en nested objects (ej: conversation.company_id)
+            if 'conversation' in request_data and isinstance(request_data['conversation'], dict):
+                if 'company_id' in request_data['conversation']:
+                    return request_data['conversation']['company_id']
+        
+        # Prioridad 4: Extraer de account_id o inbox_id (mapeo específico)
+        if isinstance(request_data, dict):
+            # Mapeo específico account_id -> company_id (personalizable)
+            account_id_mapping = {
+                "7": "benova",  # Account ID 7 = Benova (compatibilidad legacy)
+                # Agregar más mapeos según necesidades
+            }
+            
+            account_id = request_data.get('account', {}).get('id') if 'account' in request_data else None
+            if account_id and str(account_id) in account_id_mapping:
+                return account_id_mapping[str(account_id)]
+        
+        # Fallback: empresa por defecto
+        default_company = os.getenv("DEFAULT_COMPANY_ID", "benova")
+        logger.warning(f"No company_id found in request, using default: {default_company}")
+        return default_company
+        
+    except Exception as e:
+        logger.error(f"Error extracting company_id from request: {e}")
+        return os.getenv("DEFAULT_COMPANY_ID", "benova")
+
+def validate_company_access(company_id: str, api_key: str = None) -> bool:
+    """
+    NUEVO: Validar acceso a una empresa específica
+    Permite implementar autorización por empresa en el futuro
+    """
+    try:
+        # Por ahora, permitir acceso a todas las empresas
+        # En el futuro, implementar lógica de autorización basada en API keys, tokens, etc.
+        
+        if not company_id or not company_id.strip():
+            return False
+        
+        # Validar formato de company_id (alfanumérico, guiones, underscores)
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+, company_id):
+            logger.warning(f"Invalid company_id format: {company_id}")
+            return False
+        
+        # Longitud razonable
+        if len(company_id) > 50:
+            logger.warning(f"Company_id too long: {company_id}")
+            return False
+        
+        logger.info(f"✅ Access validated for company: {company_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating company access for {company_id}: {e}")
+        return False
+
+# ===============================
+# INITIALIZE MULTI-COMPANY COMPONENTS
+# ===============================
+
+# Initialize Multi-Company Conversation Manager
+conversation_manager = MultiCompanyConversationManager(redis_client, company_config_manager)
+
+# ===============================
+# BACKWARDS COMPATIBILITY LAYER
+# ===============================
+
+def get_legacy_config_value(key: str, default_value: Any, company_id: str = "benova") -> Any:
+    """
+    COMPATIBILIDAD: Obtener valores de configuración manteniendo compatibilidad con código legacy
+    """
+    config = company_config_manager.get_company_config(company_id)
+    
+    # Mapeo de nombres legacy a nuevos nombres
+    legacy_mapping = {
+        "MODEL_NAME": "model_name",
+        "EMBEDDING_MODEL": "embedding_model", 
+        "MAX_TOKENS": "max_tokens",
+        "TEMPERATURE": "temperature",
+        "MAX_CONTEXT_MESSAGES": "max_context_messages",
+        "SIMILARITY_THRESHOLD": "similarity_threshold",
+        "MAX_RETRIEVED_DOCS": "max_retrieved_docs",
+        "BOT_ACTIVE_STATUSES": "bot_active_statuses",
+        "BOT_INACTIVE_STATUSES": "bot_inactive_statuses"
+    }
+    
+    config_key = legacy_mapping.get(key, key.lower())
+    return config.get(config_key, default_value)
+
+# Mantener variables globales para compatibilidad (usando empresa por defecto)
+DEFAULT_COMPANY_ID = os.getenv("DEFAULT_COMPANY_ID", "benova")
+
+# Variables de compatibilidad que apuntan a configuración de empresa por defecto
+MODEL_NAME = get_legacy_config_value("MODEL_NAME", "gpt-4o-mini", DEFAULT_COMPANY_ID)
+EMBEDDING_MODEL = get_legacy_config_value("EMBEDDING_MODEL", "text-embedding-3-small", DEFAULT_COMPANY_ID)
+MAX_TOKENS = get_legacy_config_value("MAX_TOKENS", 1500, DEFAULT_COMPANY_ID)
+TEMPERATURE = get_legacy_config_value("TEMPERATURE", 0.7, DEFAULT_COMPANY_ID)
+MAX_CONTEXT_MESSAGES = get_legacy_config_value("MAX_CONTEXT_MESSAGES", 10, DEFAULT_COMPANY_ID)
+SIMILARITY_THRESHOLD = get_legacy_config_value("SIMILARITY_THRESHOLD", 0.7, DEFAULT_COMPANY_ID)
+MAX_RETRIEVED_DOCS = get_legacy_config_value("MAX_RETRIEVED_DOCS", 3, DEFAULT_COMPANY_ID)
+
+# Componentes legacy que apuntan a empresa por defecto
+embeddings = langchain_manager.get_embeddings(DEFAULT_COMPANY_ID)
+chat_model = langchain_manager.get_chat_model(DEFAULT_COMPANY_ID)
+vectorstore = langchain_manager.get_vectorstore(DEFAULT_COMPANY_ID)
+
+# Mostrar configuración cargada
+print(f"Multi-Company System Initialized")
+print(f"Default Company: {DEFAULT_COMPANY_ID}")
+print(f"Model: {MODEL_NAME}")
+print(f"Embedding Model: {EMBEDDING_MODEL}")
+print(f"Companies available: {conversation_manager.get_all_companies()}")
+
+logger.info("🏢 Multi-Company Backend System Initialized Successfully")
 
 
 # ===============================
@@ -661,168 +1046,288 @@ class ModernConversationManager:
 # UBICACIÓN: Agregar después de la clase ModernConversationManager
 # ===============================
 
-class DocumentChangeTracker:
+# ===============================
+# MULTI-COMPANY: Sistema de Invalidación de Cache
+# UBICACIÓN: Agregar después de la clase MultiCompanyConversationManager
+# ===============================
+
+class MultiCompanyDocumentChangeTracker:
     """
     Sistema para rastrear cambios en documentos y invalidar cache
+    REFACTORIZADO: Soporte multi-empresa con separación por company_id
     """
     
     def __init__(self, redis_client):
         self.redis_client = redis_client
-        self.version_key = "vectorstore_version"
-        self.doc_hash_key = "document_hashes"
+        self.version_key_prefix = "vectorstore_version"  # Prefijo para versiones por empresa
+        self.doc_hash_key_prefix = "document_hashes"     # Prefijo para hashes por empresa
+        self.global_version_key = "global_vectorstore_version"  # Versión global del sistema
     
-    def get_current_version(self) -> int:
-        """Obtener versión actual del vectorstore"""
+    def _get_company_version_key(self, company_id: str) -> str:
+        """Generar clave de versión específica para empresa"""
+        return f"{self.version_key_prefix}:{company_id}"
+    
+    def _get_company_doc_hash_key(self, company_id: str) -> str:
+        """Generar clave de hashes de documentos específica para empresa"""
+        return f"{self.doc_hash_key_prefix}:{company_id}"
+    
+    def get_current_version(self, company_id: str) -> int:
+        """Obtener versión actual del vectorstore para empresa específica"""
         try:
-            version = self.redis_client.get(self.version_key)
+            if not company_id:
+                logger.warning("company_id is required for get_current_version")
+                return 0
+                
+            version_key = self._get_company_version_key(company_id)
+            version = self.redis_client.get(version_key)
             return int(version) if version else 0
-        except:
+        except Exception as e:
+            logger.error(f"Error getting version for company {company_id}: {e}")
             return 0
     
-    def increment_version(self):
-        """Incrementar versión del vectorstore"""
+    def increment_version(self, company_id: str):
+        """Incrementar versión del vectorstore para empresa específica"""
         try:
-            self.redis_client.incr(self.version_key)
-            logger.info(f"Vectorstore version incremented to {self.get_current_version()}")
+            if not company_id:
+                logger.warning("company_id is required for increment_version")
+                return
+                
+            version_key = self._get_company_version_key(company_id)
+            new_version = self.redis_client.incr(version_key)
+            
+            # También incrementar versión global del sistema
+            global_version = self.redis_client.incr(self.global_version_key)
+            
+            logger.info(f"Vectorstore version incremented for company {company_id} to {new_version} (global: {global_version})")
         except Exception as e:
-            logger.error(f"Error incrementing version: {e}")
+            logger.error(f"Error incrementing version for company {company_id}: {e}")
     
-    def register_document_change(self, doc_id: str, change_type: str):
+    def register_document_change(self, doc_id: str, change_type: str, company_id: str):
         """
-        Registrar cambio en documento
+        Registrar cambio en documento para empresa específica
         change_type: 'added', 'updated', 'deleted'
+        REFACTORIZADO: Incluye company_id para separación por empresa
         """
         try:
+            if not company_id:
+                logger.warning("company_id is required for register_document_change")
+                return
+                
             change_data = {
                 'doc_id': doc_id,
                 'change_type': change_type,
+                'company_id': company_id,  # NUEVO: Incluir company_id
                 'timestamp': datetime.utcnow().isoformat()
             }
             
-            # Registrar cambio
-            change_key = f"doc_change:{doc_id}:{int(time.time())}"
+            # Registrar cambio con namespace por empresa
+            change_key = f"doc_change:{company_id}:{doc_id}:{int(time.time())}"
             self.redis_client.setex(change_key, 3600, json.dumps(change_data))  # 1 hour TTL
             
-            # Incrementar versión global
-            self.increment_version()
+            # Incrementar versión para la empresa específica
+            self.increment_version(company_id)
             
-            logger.info(f"Document change registered: {doc_id} - {change_type}")
+            logger.info(f"Document change registered for company {company_id}: {doc_id} - {change_type}")
             
         except Exception as e:
-            logger.error(f"Error registering document change: {e}")
+            logger.error(f"Error registering document change for company {company_id}: {e}")
     
-    def should_invalidate_cache(self, last_version: int) -> bool:
-        """Determinar si se debe invalidar cache"""
-        current_version = self.get_current_version()
-        return current_version > last_version
+    def should_invalidate_cache(self, last_version: int, company_id: str) -> bool:
+        """Determinar si se debe invalidar cache para empresa específica"""
+        try:
+            if not company_id:
+                logger.warning("company_id is required for should_invalidate_cache")
+                return False
+                
+            current_version = self.get_current_version(company_id)
+            return current_version > last_version
+        except Exception as e:
+            logger.error(f"Error checking cache invalidation for company {company_id}: {e}")
+            return False
+    
+    def get_all_company_versions(self) -> Dict[str, int]:
+        """
+        NUEVO: Obtener versiones de todas las empresas
+        Útil para administración multi-empresa
+        """
+        try:
+            version_keys = self.redis_client.keys(f"{self.version_key_prefix}:*")
+            versions = {}
+            
+            for key in version_keys:
+                try:
+                    company_id = key.split(':', 1)[1]  # Extraer company_id
+                    version = self.redis_client.get(key)
+                    versions[company_id] = int(version) if version else 0
+                except Exception as e:
+                    logger.warning(f"Error processing version key {key}: {e}")
+                    continue
+            
+            return versions
+        except Exception as e:
+            logger.error(f"Error getting all company versions: {e}")
+            return {}
+    
+    def get_company_document_changes(self, company_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        NUEVO: Obtener cambios recientes de documentos para una empresa específica
+        """
+        try:
+            if not company_id:
+                return []
+                
+            pattern = f"doc_change:{company_id}:*"
+            change_keys = self.redis_client.keys(pattern)
+            
+            changes = []
+            for key in sorted(change_keys, reverse=True)[:limit]:  # Más recientes primero
+                try:
+                    change_data = self.redis_client.get(key)
+                    if change_data:
+                        changes.append(json.loads(change_data))
+                except Exception as e:
+                    logger.warning(f"Error processing change key {key}: {e}")
+                    continue
+            
+            return changes
+        except Exception as e:
+            logger.error(f"Error getting document changes for company {company_id}: {e}")
+            return []
 
-# Instanciar el tracker
-document_change_tracker = DocumentChangeTracker(redis_client)
+# Instanciar el tracker multi-empresa
+multi_company_document_change_tracker = MultiCompanyDocumentChangeTracker(redis_client)
 
 # ===============================
-# multiagentSystem - ACTUALIZADO PARA USAR CHAT HISTORY UNIFICADO
+# MULTI-COMPANY: Sistema Multi-Agente REFACTORIZADO
 # ===============================
 
-class BenovaMultiAgentSystem:
+class MultiCompanyBenovaMultiAgentSystem:
     """
-    Sistema multi-agente integrado con agente de schedule mejorado
-    Incluye microservicio de Selenium para agendamiento automático
+    Sistema multi-agente integrado con soporte multi-empresa
+    REFACTORIZADO: Arquitectura escalable para múltiples empresas
+    
+    CAMBIOS PRINCIPALES:
+    - Separación completa por company_id
+    - Configuraciones específicas por empresa  
+    - Componentes LangChain por empresa
+    - Microservicios con contexto de empresa
+    - Compatibilidad mantenida con API existente
     """
     
-    def __init__(self, chat_model, vectorstore, conversation_manager):
-        self.chat_model = chat_model
-        self.vectorstore = vectorstore
+    def __init__(self, langchain_manager: MultiCompanyLangChainManager, 
+                 conversation_manager: MultiCompanyConversationManager,
+                 config_manager: CompanyConfigManager):
+        self.langchain_manager = langchain_manager
         self.conversation_manager = conversation_manager
-        self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        self.config_manager = config_manager
         
-        # URL del microservicio de schedule (configuración para local)
+        # Cache de agentes por empresa para optimización
+        self.company_agents = {}
+        
+        # Configuración de microservicio de schedule (mantenida para compatibilidad)
         self.schedule_service_url = os.getenv('SCHEDULE_SERVICE_URL', 'http://127.0.0.1:4040')
-        
-        # Configuración para entorno local
         self.is_local_development = os.getenv('ENVIRONMENT', 'production') == 'local'
-        
-        # Timeout específico para conexiones locales
         self.selenium_timeout = 30 if self.is_local_development else 60
         
-        # Cache del estado de Selenium con timestamp
-        self.selenium_service_available = False
-        self.selenium_status_last_check = 0
+        # Cache del estado de Selenium con timestamp (por empresa)
+        self.selenium_service_status = {}  # {company_id: {available: bool, last_check: timestamp}}
         self.selenium_status_cache_duration = 30  # 30 segundos de cache
         
-        # Inicializar agentes especializados
-        self.router_agent = self._create_router_agent()
-        self.emergency_agent = self._create_emergency_agent()
-        self.sales_agent = self._create_sales_agent()
-        self.support_agent = self._create_support_agent()
-        self.schedule_agent = self._create_enhanced_schedule_agent()
-        # Initialize availability agent
-        self.availability_agent = self._create_availability_agent()
-        # Crear orquestador principal
-        
-        self.orchestrator = self._create_orchestrator()
-        
-        # Inicializar conexión con microservicio local
-        self._initialize_local_selenium_connection()
+        logger.info("🏢 Multi-Company Multi-Agent System initialized")
     
-    def _verify_selenium_service(self, force_check: bool = False) -> bool:
+    def _get_company_key(self, company_id: str) -> str:
+        """Generar clave estándar para empresa"""
+        return f"company_agents:{company_id}"
+    
+    def _verify_selenium_service(self, company_id: str, force_check: bool = False) -> bool:
         """
-        Verificar disponibilidad del servicio Selenium local con cache inteligente
-        Args:
-            force_check: Si True, fuerza una nueva verificación ignorando el cache
+        Verificar disponibilidad del servicio Selenium con cache por empresa
+        REFACTORIZADO: Separación por empresa para futuras personalizaciones
         """
-        import time
-        
         current_time = time.time()
         
+        # Inicializar status si no existe
+        if company_id not in self.selenium_service_status:
+            self.selenium_service_status[company_id] = {
+                'available': False,
+                'last_check': 0
+            }
+        
+        company_status = self.selenium_service_status[company_id]
+        
         # Si no es verificación forzada y el cache es válido, usar el valor cacheado
-        if not force_check and (current_time - self.selenium_status_last_check) < self.selenium_status_cache_duration:
-            return self.selenium_service_available
+        if not force_check and (current_time - company_status['last_check']) < self.selenium_status_cache_duration:
+            return company_status['available']
         
         # Realizar nueva verificación
         try:
+            # En el futuro, aquí se podría personalizar por empresa
+            # Por ahora, usar el mismo endpoint para todas las empresas
             response = requests.get(
                 f"{self.schedule_service_url}/health",
+                headers={"X-Company-ID": company_id},  # NUEVO: Header de empresa
                 timeout=3
             )
             
             if response.status_code == 200:
-                self.selenium_service_available = True
-                self.selenium_status_last_check = current_time
+                company_status['available'] = True
+                company_status['last_check'] = current_time
                 return True
             else:
-                self.selenium_service_available = False
-                self.selenium_status_last_check = current_time
+                company_status['available'] = False
+                company_status['last_check'] = current_time
                 return False
                 
         except Exception as e:
-            logger.warning(f"Selenium service verification failed: {e}")
-            self.selenium_service_available = False
-            self.selenium_status_last_check = current_time
+            logger.warning(f"Selenium service verification failed for company {company_id}: {e}")
+            company_status['available'] = False
+            company_status['last_check'] = current_time
             return False
     
-    def _initialize_local_selenium_connection(self):
-        """Inicializar y verificar conexión con microservicio local"""
-        try:
-            logger.info(f"Intentando conectar con microservicio de Selenium en: {self.schedule_service_url}")
+    def _get_or_create_agents(self, company_id: str) -> Dict[str, Any]:
+        """
+        Obtener o crear agentes específicos para una empresa
+        NUEVO: Sistema de cache de agentes por empresa
+        """
+        company_key = self._get_company_key(company_id)
+        
+        if company_key not in self.company_agents:
+            logger.info(f"Creating new agent set for company {company_id}")
             
-            # Verificar disponibilidad del servicio (forzar verificación inicial)
-            is_available = self._verify_selenium_service(force_check=True)
+            # Obtener componentes LangChain específicos para la empresa
+            chat_model = self.langchain_manager.get_chat_model(company_id)
+            vectorstore = self.langchain_manager.get_vectorstore(company_id)
+            retriever = vectorstore.as_retriever(
+                search_kwargs={"k": self.config_manager.get_company_config(company_id)["max_retrieved_docs"]}
+            )
             
-            if is_available:
-                logger.info("✅ Conexión exitosa con microservicio de Selenium local")
-            else:
-                logger.warning("⚠️ Servicio de Selenium no disponible")
-                
-        except Exception as e:
-            logger.error(f"❌ Error inicializando conexión con Selenium: {e}")
-            self.selenium_service_available = False
+            # Crear agentes específicos para la empresa
+            self.company_agents[company_key] = {
+                'router_agent': self._create_router_agent(company_id),
+                'emergency_agent': self._create_emergency_agent(company_id),
+                'sales_agent': self._create_sales_agent(company_id, retriever),
+                'support_agent': self._create_support_agent(company_id, retriever),
+                'schedule_agent': self._create_enhanced_schedule_agent(company_id, retriever),
+                'availability_agent': self._create_availability_agent(company_id),
+                'orchestrator': None  # Se creará cuando se necesite
+            }
+            
+            # Crear orquestador para la empresa
+            self.company_agents[company_key]['orchestrator'] = self._create_orchestrator(company_id)
+            
+            logger.info(f"✅ Agent set created for company {company_id}")
+        
+        return self.company_agents[company_key]
     
-    def _create_router_agent(self):
+    def _create_router_agent(self, company_id: str):
         """
         Agente Router: Clasifica la intención del usuario
+        REFACTORIZADO: Usa modelo específico de la empresa
         """
+        chat_model = self.langchain_manager.get_chat_model(company_id)
+        
         router_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres un clasificador de intenciones para Benova (centro estético).
+            ("system", """Eres un clasificador de intenciones para un centro estético.
 
 ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categorías:
 
@@ -862,14 +1367,17 @@ Mensaje del usuario: {question}"""),
             ("human", "{question}")
         ])
         
-        return router_prompt | self.chat_model | StrOutputParser()
+        return router_prompt | chat_model | StrOutputParser()
     
-    def _create_emergency_agent(self):
+    def _create_emergency_agent(self, company_id: str):
         """
         Agente de Emergencias: Maneja urgencias médicas
+        REFACTORIZADO: Usa modelo específico de la empresa
         """
+        chat_model = self.langchain_manager.get_chat_model(company_id)
+        
         emergency_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, especialista en emergencias médicas de Benova.
+            ("system", """Eres un especialista en emergencias médicas del centro estético.
 
 SITUACIÓN DETECTADA: Posible emergencia médica.
 
@@ -893,14 +1401,17 @@ Mensaje del usuario: {question}"""),
             ("human", "{question}")
         ])
         
-        return emergency_prompt | self.chat_model | StrOutputParser()
+        return emergency_prompt | chat_model | StrOutputParser()
     
-    def _create_sales_agent(self):
+    def _create_sales_agent(self, company_id: str, retriever):
         """
         Agente de Ventas: Especializado en información comercial
+        REFACTORIZADO: Usa componentes específicos de la empresa
         """
+        chat_model = self.langchain_manager.get_chat_model(company_id)
+        
         sales_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, asesora comercial especializada de Benova.
+            ("system", """Eres un asesor comercial especializado del centro estético.
 
 OBJETIVO: Proporcionar información comercial precisa y persuasiva.
 
@@ -929,13 +1440,13 @@ Pregunta del usuario: {question}"""),
         ])
         
         def get_sales_context(inputs):
-            """Obtener contexto RAG para ventas"""
+            """Obtener contexto RAG para ventas usando retriever específico de la empresa"""
             try:
                 question = inputs.get("question", "")
-                docs = self.retriever.invoke(question)
+                docs = retriever.invoke(question)
                 
                 if not docs:
-                    return """Información básica de Benova:
+                    return f"""Información básica del centro estético:
 - Centro estético especializado
 - Tratamientos de belleza y bienestar
 - Atención personalizada
@@ -945,7 +1456,7 @@ Para información específica de tratamientos, te conectaré con un especialista
                 return "\n\n".join(doc.page_content for doc in docs)
                 
             except Exception as e:
-                logger.error(f"Error retrieving sales context: {e}")
+                logger.error(f"Error retrieving sales context for company {company_id}: {e}")
                 return "Información básica disponible. Te conectaré con un especialista para detalles específicos."
         
         return (
@@ -955,16 +1466,19 @@ Para información específica de tratamientos, te conectaré con un especialista
                 "chat_history": lambda x: x.get("chat_history", [])
             }
             | sales_prompt
-            | self.chat_model
+            | chat_model
             | StrOutputParser()
         )
     
-    def _create_support_agent(self):
+    def _create_support_agent(self, company_id: str, retriever):
         """
         Agente de Soporte: Consultas generales y escalación
+        REFACTORIZADO: Usa componentes específicos de la empresa
         """
+        chat_model = self.langchain_manager.get_chat_model(company_id)
+        
         support_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, especialista en soporte al cliente de Benova.
+            ("system", """Eres un especialista en soporte al cliente del centro estético.
 
 OBJETIVO: Resolver consultas generales y facilitar navegación.
 
@@ -996,13 +1510,13 @@ Consulta del usuario: {question}"""),
         ])
         
         def get_support_context(inputs):
-            """Obtener contexto RAG para soporte"""
+            """Obtener contexto RAG para soporte usando retriever específico de la empresa"""
             try:
                 question = inputs.get("question", "")
-                docs = self.retriever.invoke(question)
+                docs = retriever.invoke(question)
                 
                 if not docs:
-                    return """Información general de Benova:
+                    return f"""Información general del centro estético:
 - Horarios de atención
 - Información general del centro
 - Consultas sobre procesos
@@ -1012,7 +1526,7 @@ Para información específica, te conectaré con un especialista."""
                 return "\n\n".join(doc.page_content for doc in docs)
                 
             except Exception as e:
-                logger.error(f"Error retrieving support context: {e}")
+                logger.error(f"Error retrieving support context for company {company_id}: {e}")
                 return "Información general disponible. Te conectaré con un especialista para consultas específicas."
         
         return (
@@ -1022,15 +1536,17 @@ Para información específica, te conectaré con un especialista."""
                 "chat_history": lambda x: x.get("chat_history", [])
             }
             | support_prompt
-            | self.chat_model
+            | chat_model
             | StrOutputParser()
         )
-
-###########################################################################################################################################
-    def _create_availability_agent(self):
-        """Agente que verifica disponibilidad MEJORADO con comunicación robusta"""
+    
+    def _create_availability_agent(self, company_id: str):
+        """
+        Agente que verifica disponibilidad MEJORADO con soporte multi-empresa
+        REFACTORIZADO: Usa componentes específicos de la empresa
+        """
         availability_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres un agente de disponibilidad de Benova.
+            ("system", """Eres un agente de disponibilidad del centro estético.
     
     ESTADO DEL SISTEMA:
     {selenium_status}
@@ -1057,84 +1573,148 @@ Para información específica, te conectaré con un especialista."""
         ])
         
         def get_availability_selenium_status(inputs):
-            """Obtener estado del sistema Selenium para availability (igual que schedule)"""
-            # Verificar estado del servicio antes de cada consulta
-            is_available = self._verify_selenium_service()
+            """Obtener estado del sistema Selenium para availability por empresa"""
+            is_available = self._verify_selenium_service(company_id)
             
             if is_available:
-                return f"✅ Sistema de disponibilidad ACTIVO (Conectado a {self.schedule_service_url})"
+                return f"✅ Sistema de disponibilidad ACTIVO para empresa {company_id} (Conectado a {self.schedule_service_url})"
             else:
-                return f"⚠️ Sistema de disponibilidad NO DISPONIBLE (Verificar conexión: {self.schedule_service_url})"
+                return f"⚠️ Sistema de disponibilidad NO DISPONIBLE para empresa {company_id} (Verificar conexión: {self.schedule_service_url})"
         
         def process_availability(inputs):
-            """Procesar consulta de disponibilidad MEJORADA"""
+            """Procesar consulta de disponibilidad para empresa específica"""
             try:
                 question = inputs.get("question", "")
                 chat_history = inputs.get("chat_history", [])
                 selenium_status = inputs.get("selenium_status", "")
                 
-                logger.info(f"=== AVAILABILITY AGENT - PROCESANDO ===")
-                logger.info(f"Pregunta: {question}")
-                logger.info(f"Estado Selenium: {selenium_status}")
+                logger.info(f"Procesando solicitud de agenda para empresa {company_id}: {question}")
                 
-                # 1. VERIFICAR SERVICIO DISPONIBLE PRIMERO
-                if not self._verify_selenium_service():
-                    logger.error("Servicio Selenium no disponible para availability agent")
-                    return "Error consultando disponibilidad. Te conectaré con un especialista para verificar horarios. 👩‍⚕️"
+                # PASO 1: SIEMPRE verificar disponibilidad si se menciona agendamiento
+                available_slots = ""
+                if self._contains_schedule_intent(question):
+                    logger.info(f"Detectado intent de agendamiento para empresa {company_id} - verificando disponibilidad")
+                    try:
+                        # Obtener agente de disponibilidad específico de la empresa
+                        company_agents = self._get_or_create_agents(company_id)
+                        availability_response = company_agents['availability_agent'].invoke({"question": question})
+                        available_slots = availability_response
+                        logger.info(f"Disponibilidad obtenida para empresa {company_id}: {available_slots}")
+                    except Exception as e:
+                        logger.error(f"Error verificando disponibilidad para empresa {company_id}: {e}")
+                        available_slots = "Error consultando disponibilidad. Verificaré manualmente."
                 
-                # Extract date from question and history
-                date = self._extract_date_from_question(question, chat_history)
-                treatment = self._extract_treatment_from_question(question)
+                # Preparar inputs para el prompt
+                base_inputs = {
+                    "question": question,
+                    "chat_history": chat_history,
+                    "context": context,
+                    "selenium_status": selenium_status,
+                    "available_slots": available_slots
+                }
                 
-                if not date:
-                    return "Por favor especifica la fecha en formato DD-MM-YYYY para consultar disponibilidad."
+                # PASO 2: Generar respuesta base con información de disponibilidad
+                logger.info(f"Generando respuesta base con disponibilidad para empresa {company_id}")
+                base_response = (schedule_prompt | chat_model | StrOutputParser()).invoke(base_inputs)
                 
-                logger.info(f"Fecha extraída: {date}, Tratamiento: {treatment}")
-                
-                # Obtener duración del tratamiento desde RAG
-                duration = self._get_treatment_duration(treatment)
-                logger.info(f"Duración del tratamiento: {duration} minutos")
-                
-                # 2. LLAMAR ENDPOINT CON MÉTODO MEJORADO
-                availability_data = self._call_check_availability(date)
-                
-                if not availability_data:
-                    logger.warning("No se obtuvieron datos de disponibilidad")
-                    return "Error consultando disponibilidad. Te conectaré con un especialista."
-                
-                if not availability_data.get("available_slots"):
-                    logger.info("No hay slots disponibles para la fecha solicitada")
-                    return f"No hay horarios disponibles para {date}."
-                
-                # Filtrar slots según duración
-                filtered_slots = self._filter_slots_by_duration(
-                    availability_data["available_slots"], 
-                    duration
+                # PASO 3: Determinar si proceder con Selenium (solo después de verificar disponibilidad)
+                should_proceed_selenium = (
+                    self._contains_schedule_intent(question) and 
+                    self._should_use_selenium(question, chat_history) and
+                    self._has_available_slots_confirmation(available_slots) and
+                    not self._is_just_availability_check(question)
                 )
                 
-                logger.info(f"Slots filtrados: {filtered_slots}")
+                logger.info(f"¿Proceder con Selenium para empresa {company_id}? {should_proceed_selenium}")
                 
-                # Formatear respuesta
-                response = self._format_slots_response(filtered_slots, date, duration)
-                logger.info(f"=== AVAILABILITY AGENT - RESPUESTA GENERADA ===")
-                return response
+                if should_proceed_selenium:
+                    logger.info(f"Procediendo con agendamiento automático via Selenium para empresa {company_id}")
+                    selenium_result = self._call_local_schedule_microservice(question, user_id, chat_history, company_id)
+                    
+                    if selenium_result.get('success'):
+                        return f"{available_slots}\n\n{selenium_result.get('response', base_response)}"
+                    elif selenium_result.get('requires_more_info'):
+                        return f"{available_slots}\n\n{selenium_result.get('response', base_response)}"
+                    else:
+                        return f"{available_slots}\n\n{base_response}\n\nNota: Te conectaré con un especialista para completar el agendamiento."
+                
+                return base_response
                 
             except Exception as e:
-                logger.error(f"Error en agente de disponibilidad: {e}")
-                logger.exception("Stack trace completo:")
-                return "Error consultando disponibilidad. Te conectaré con un especialista."
-    
+                logger.error(f"Error en agendamiento para empresa {company_id}: {e}")
+                return "Error procesando tu solicitud. Conectando con especialista... 📋"
+        
         return (
             {
-                "selenium_status": get_availability_selenium_status,
+                "context": get_schedule_context,
+                "selenium_status": get_selenium_status,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", [])
+                "chat_history": lambda x: x.get("chat_history", []),
+                "user_id": lambda x: x.get("user_id", "default_user")
             }
-            | RunnableLambda(process_availability)
+            | RunnableLambda(process_schedule_with_selenium)
         )
     
+    def _create_orchestrator(self, company_id: str):
+        """
+        Orquestador principal que coordina los agentes para empresa específica
+        REFACTORIZADO: Usa agentes específicos de la empresa
+        """
+        def route_to_agent(inputs):
+            """Enrutar a agente específico basado en clasificación para empresa específica"""
+            try:
+                # Obtener agentes específicos de la empresa
+                company_agents = self._get_or_create_agents(company_id)
+                
+                # Obtener clasificación del router específico de la empresa
+                router_response = company_agents['router_agent'].invoke(inputs)
+                
+                # Parsear respuesta JSON
+                try:
+                    classification = json.loads(router_response)
+                    intent = classification.get("intent", "SUPPORT")
+                    confidence = classification.get("confidence", 0.5)
+                    
+                    logger.info(f"Intent classified for company {company_id}: {intent} (confidence: {confidence})")
+                    
+                except json.JSONDecodeError:
+                    # Fallback si no es JSON válido
+                    intent = "SUPPORT"
+                    confidence = 0.3
+                    logger.warning(f"Router response was not valid JSON for company {company_id}, defaulting to SUPPORT")
+                
+                # Agregar user_id a inputs para el agente de schedule
+                inputs["user_id"] = inputs.get("user_id", "default_user")
+                inputs["company_id"] = company_id  # NUEVO: Agregar company_id a inputs
+                
+                # Determinar agente basado en intención usando agentes específicos de la empresa
+                if intent == "EMERGENCY" or confidence > 0.8:
+                    if intent == "EMERGENCY":
+                        return company_agents['emergency_agent'].invoke(inputs)
+                    elif intent == "SALES":
+                        return company_agents['sales_agent'].invoke(inputs)
+                    elif intent == "SCHEDULE":
+                        return company_agents['schedule_agent'].invoke(inputs)
+                    else:
+                        return company_agents['support_agent'].invoke(inputs)
+                else:
+                    # Baja confianza, usar soporte por defecto
+                    return company_agents['support_agent'].invoke(inputs)
+                    
+            except Exception as e:
+                logger.error(f"Error in orchestrator for company {company_id}: {e}")
+                # Fallback a soporte en caso de error
+                company_agents = self._get_or_create_agents(company_id)
+                return company_agents['support_agent'].invoke(inputs)
+        
+        return RunnableLambda(route_to_agent)
+    
+    # ===============================
+    # MÉTODOS DE UTILIDAD MULTI-EMPRESA
+    # ===============================
+    
     def _extract_date_from_question(self, question, chat_history=None):
-        """Extract date from question or chat history"""
+        """Extract date from question or chat history (sin cambios - es agnóstico a empresa)"""
         import re
         
         # Check current question first
@@ -1155,7 +1735,7 @@ Para información específica, te conectaré con un especialista."""
         return None
     
     def _find_date_in_text(self, text):
-        """Helper to find date in text"""
+        """Helper to find date in text (sin cambios - es agnóstico a empresa)"""
         import re
         from datetime import datetime, timedelta
         
@@ -1180,7 +1760,7 @@ Para información específica, te conectaré con un especialista."""
         return None
     
     def _extract_treatment_from_question(self, question):
-        """Extraer tratamiento del mensaje"""
+        """Extraer tratamiento del mensaje (sin cambios - es agnóstico a empresa)"""
         question_lower = question.lower()
         
         # Diccionario de tratamientos conocidos
@@ -1201,11 +1781,18 @@ Para información específica, te conectaré con un especialista."""
         
         return "tratamiento general"
     
-    def _get_treatment_duration(self, treatment):
-        """Obtener duración del tratamiento desde RAG o configuración por defecto"""
+    def _get_treatment_duration(self, treatment, company_id: str):
+        """
+        Obtener duración del tratamiento desde RAG específico de la empresa
+        REFACTORIZADO: Usa retriever específico de la empresa
+        """
         try:
+            # Usar retriever específico de la empresa
+            vectorstore = self.langchain_manager.get_vectorstore(company_id)
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            
             # Consultar RAG para obtener duración específica
-            docs = self.retriever.invoke(f"duración tiempo {treatment}")
+            docs = retriever.invoke(f"duración tiempo {treatment}")
             
             for doc in docs:
                 content = doc.page_content.lower()
@@ -1232,59 +1819,131 @@ Para información específica, te conectaré con un especialista."""
             return default_durations.get(treatment, 60)  # 60 min por defecto
             
         except Exception as e:
-            logger.error(f"Error obteniendo duración del tratamiento: {e}")
+            logger.error(f"Error obteniendo duración del tratamiento para empresa {company_id}: {e}")
             return 60  # Duración por defecto
     
-    def _call_check_availability(self, date):
-        """Llamar al endpoint de disponibilidad con la misma lógica que schedule_agent"""
+    def _call_check_availability(self, date, company_id: str):
+        """
+        Llamar al endpoint de disponibilidad con contexto de empresa
+        REFACTORIZADO: Incluye company_id en headers
+        """
         try:
-            # 1. VERIFICAR ESTADO DEL SERVICIO PRIMERO (como schedule_agent)
-            if not self._verify_selenium_service():
-                logger.warning("Servicio Selenium no disponible para availability check")
+            # 1. VERIFICAR ESTADO DEL SERVICIO PRIMERO
+            if not self._verify_selenium_service(company_id):
+                logger.warning(f"Servicio Selenium no disponible para availability check empresa {company_id}")
                 return None
             
-            logger.info(f"Consultando disponibilidad en: {self.schedule_service_url}/check-availability para fecha: {date}")
+            logger.info(f"Consultando disponibilidad en: {self.schedule_service_url}/check-availability para fecha: {date} empresa: {company_id}")
             
-            # 2. USAR LA MISMA CONFIGURACIÓN QUE SCHEDULE_AGENT
+            # 2. INCLUIR COMPANY_ID EN HEADERS
             response = requests.post(
                 f"{self.schedule_service_url}/check-availability",
-                json={"date": date},
-                headers={"Content-Type": "application/json"},
-                timeout=self.selenium_timeout  # Usar el mismo timeout que schedule_agent
+                json={"date": date, "company_id": company_id},  # NUEVO: Incluir company_id
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Company-ID": company_id  # NUEVO: Header de empresa
+                },
+                timeout=self.selenium_timeout
             )
             
-            logger.info(f"Respuesta de availability endpoint - Status: {response.status_code}")
+            logger.info(f"Respuesta de availability endpoint empresa {company_id} - Status: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Datos de disponibilidad obtenidos exitosamente: {result.get('success', False)}")
+                logger.info(f"Datos de disponibilidad obtenidos exitosamente para empresa {company_id}: {result.get('success', False)}")
                 return result.get("data", {})
             else:
-                logger.warning(f"Endpoint de disponibilidad retornó código {response.status_code}")
+                logger.warning(f"Endpoint de disponibilidad retornó código {response.status_code} para empresa {company_id}")
                 logger.warning(f"Respuesta: {response.text}")
-                # Marcar servicio como no disponible si hay error
-                self.selenium_service_available = False
+                # Marcar servicio como no disponible para esta empresa
+                if company_id in self.selenium_service_status:
+                    self.selenium_service_status[company_id]['available'] = False
                 return None
                 
         except requests.exceptions.Timeout:
-            logger.error(f"Timeout conectando con endpoint de disponibilidad ({self.selenium_timeout}s)")
-            self.selenium_service_available = False
+            logger.error(f"Timeout conectando con endpoint de disponibilidad ({self.selenium_timeout}s) empresa {company_id}")
+            if company_id in self.selenium_service_status:
+                self.selenium_service_status[company_id]['available'] = False
             return None
         
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"No se pudo conectar con endpoint de disponibilidad: {self.schedule_service_url}")
+            logger.error(f"No se pudo conectar con endpoint de disponibilidad para empresa {company_id}: {self.schedule_service_url}")
             logger.error(f"Error de conexión: {e}")
-            logger.error("Verifica que el microservicio esté ejecutándose en tu máquina local")
-            self.selenium_service_available = False
+            if company_id in self.selenium_service_status:
+                self.selenium_service_status[company_id]['available'] = False
             return None
             
         except Exception as e:
-            logger.error(f"Error llamando endpoint de disponibilidad: {e}")
-            self.selenium_service_available = False
+            logger.error(f"Error llamando endpoint de disponibilidad para empresa {company_id}: {e}")
+            if company_id in self.selenium_service_status:
+                self.selenium_service_status[company_id]['available'] = False
             return None
     
+    def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list, company_id: str) -> Dict[str, Any]:
+        """
+        Llamar al microservicio de schedule LOCAL con contexto de empresa
+        REFACTORIZADO: Incluye company_id en la llamada
+        """
+        try:
+            logger.info(f"Llamando a microservicio local en: {self.schedule_service_url} para empresa {company_id}")
+            
+            response = requests.post(
+                f"{self.schedule_service_url}/schedule-request",
+                json={
+                    "message": question,
+                    "user_id": user_id,
+                    "company_id": company_id,  # NUEVO: Incluir company_id
+                    "chat_history": [
+                        {
+                            "content": msg.content if hasattr(msg, 'content') else str(msg),
+                            "type": getattr(msg, 'type', 'user')
+                        } for msg in chat_history
+                    ]
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Company-ID": company_id  # NUEVO: Header de empresa
+                },
+                timeout=self.selenium_timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                # Si se agendó exitosamente, notificar al sistema principal
+                if result.get('success') and result.get('appointment_data'):
+                    self._notify_appointment_success(user_id, result.get('appointment_data'), company_id)
+                
+                logger.info(f"Respuesta exitosa del microservicio local para empresa {company_id}: {result.get('success', False)}")
+                return result
+            else:
+                logger.warning(f"Microservicio local retornó código {response.status_code} para empresa {company_id}")
+                # Marcar servicio como no disponible para esta empresa
+                if company_id in self.selenium_service_status:
+                    self.selenium_service_status[company_id]['available'] = False
+                return {"success": False, "message": "Servicio local no disponible"}
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout conectando con microservicio local ({self.selenium_timeout}s) empresa {company_id}")
+            if company_id in self.selenium_service_status:
+                self.selenium_service_status[company_id]['available'] = False
+            return {"success": False, "message": "Timeout del servicio local"}
+        
+        except requests.exceptions.ConnectionError:
+            logger.error(f"No se pudo conectar con microservicio local para empresa {company_id}: {self.schedule_service_url}")
+            if company_id in self.selenium_service_status:
+                self.selenium_service_status[company_id]['available'] = False
+            return {"success": False, "message": "Servicio local no disponible"}
+        
+        except Exception as e:
+            logger.error(f"Error llamando microservicio local para empresa {company_id}: {e}")
+            if company_id in self.selenium_service_status:
+                self.selenium_service_status[company_id]['available'] = False
+            return {"success": False, "message": "Error del servicio local"}
+    
+    # Métodos de utilidad sin cambios (agnósticos a empresa)
     def _filter_slots_by_duration(self, available_slots, required_duration):
-        """Filtrar slots que pueden acomodar la duración requerida"""
+        """Filtrar slots que pueden acomodar la duración requerida (sin cambios)"""
         try:
             if not available_slots:
                 return []
@@ -1322,7 +1981,7 @@ Para información específica, te conectaré con un especialista."""
             return []
     
     def _are_consecutive_times(self, times):
-        """Verificar si los horarios son consecutivos (diferencia de 30 min)"""
+        """Verificar si los horarios son consecutivos (sin cambios)"""
         for i in range(len(times) - 1):
             current_minutes = self._time_to_minutes(times[i])
             next_minutes = self._time_to_minutes(times[i + 1])
@@ -1331,9 +1990,8 @@ Para información específica, te conectaré con un especialista."""
         return True
     
     def _time_to_minutes(self, time_str):
-        """Convertir hora a minutos desde medianoche"""
+        """Convertir hora a minutos desde medianoche (sin cambios)"""
         try:
-            # Manejar formato "HH:MM" o "H:MM"
             time_clean = time_str.strip()
             if ':' in time_clean:
                 parts = time_clean.split(':')
@@ -1345,7 +2003,7 @@ Para información específica, te conectaré con un especialista."""
             return 0
     
     def _add_minutes_to_time(self, time_str, minutes_to_add):
-        """Sumar minutos a una hora y retornar en formato HH:MM"""
+        """Sumar minutos a una hora (sin cambios)"""
         try:
             total_minutes = self._time_to_minutes(time_str) + minutes_to_add
             hours = (total_minutes // 60) % 24
@@ -1355,69 +2013,308 @@ Para información específica, te conectaré con un especialista."""
             return time_str
     
     def _format_slots_response(self, slots, date, duration):
-        """Formatear respuesta con horarios disponibles"""
+        """Formatear respuesta con horarios disponibles (sin cambios)"""
         if not slots:
             return f"No hay horarios disponibles para {date} (tratamiento de {duration} min)."
         
         slots_text = "\n".join(f"- {slot}" for slot in slots)
         return f"Horarios disponibles para {date} (tratamiento de {duration} min):\n{slots_text}"
-
-#########################################################################################################################################################
-    def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list) -> Dict[str, Any]:
-        """Llamar al microservicio de schedule LOCAL"""
+    
+    def _contains_schedule_intent(self, question: str) -> bool:
+        """Detectar si la pregunta contiene intención de agendamiento (sin cambios)"""
+        schedule_keywords = [
+            "agendar", "reservar", "programar", "cita", "appointment",
+            "agenda", "disponibilidad", "horario", "fecha", "hora",
+            "procede", "proceder", "confirmar cita"
+        ]
+        return any(keyword in question.lower() for keyword in schedule_keywords)
+    
+    def _has_available_slots_confirmation(self, availability_response: str) -> bool:
+        """Verificar si hay slots disponibles (sin cambios)"""
+        if not availability_response:
+            return False
+        
+        availability_lower = availability_response.lower()
+        
+        text_indicators = [
+            "horarios disponibles",
+            "disponible para"
+        ]
+        
+        has_text_indicators = any(indicator in availability_lower for indicator in text_indicators)
+        has_list_format = "- " in availability_response
+        has_time_format = ":" in availability_response and "-" in availability_response
+        
+        negative_indicators = [
+            "no hay horarios disponibles",
+            "no hay disponibilidad", 
+            "error consultando disponibilidad"
+        ]
+        
+        has_negative = any(indicator in availability_lower for indicator in negative_indicators)
+        has_positive = has_text_indicators or has_list_format or has_time_format
+        
+        return has_positive and not has_negative
+    
+    def _is_just_availability_check(self, question: str) -> bool:
+        """Determinar si solo se está consultando disponibilidad (sin cambios)"""
+        availability_only_keywords = [
+            "disponibilidad para", "horarios disponibles", "qué horarios",
+            "cuándo hay", "hay disponibilidad", "ver horarios"
+        ]
+        
+        schedule_confirmation_keywords = [
+            "agendar", "reservar", "procede", "proceder", "confirmar",
+            "quiero la cita", "agenda la cita"
+        ]
+        
+        has_availability_check = any(keyword in question.lower() for keyword in availability_only_keywords)
+        has_schedule_confirmation = any(keyword in question.lower() for keyword in schedule_confirmation_keywords)
+        
+        return has_availability_check and not has_schedule_confirmation
+    
+    def _should_use_selenium(self, question: str, chat_history: list) -> bool:
+        """Determinar si se debe usar el microservicio de Selenium (sin cambios)"""
+        question_lower = question.lower()
+        
+        schedule_keywords = [
+            "agendar", "reservar", "programar", "cita", "appointment",
+            "agenda", "disponibilidad", "horario", "fecha", "hora"
+        ]
+        
+        has_schedule_intent = any(keyword in question_lower for keyword in schedule_keywords)
+        has_patient_info = self._extract_patient_info_from_history(chat_history)
+        
+        return has_schedule_intent and (has_patient_info or self._has_complete_info_in_message(question))
+    
+    def _extract_patient_info_from_history(self, chat_history: list) -> bool:
+        """Extraer información del paciente del historial (sin cambios)"""
+        history_text = " ".join([msg.content if hasattr(msg, 'content') else str(msg) for msg in chat_history])
+        
+        has_name = any(word in history_text.lower() for word in ["nombre", "llamo", "soy"])
+        has_phone = any(char.isdigit() for char in history_text) and len([c for c in history_text if c.isdigit()]) >= 7
+        has_date = any(word in history_text.lower() for word in ["fecha", "día", "mañana", "hoy"])
+        
+        return has_name and (has_phone or has_date)
+    
+    def _has_complete_info_in_message(self, message: str) -> bool:
+        """Verificar si el mensaje tiene información completa (sin cambios)"""
+        message_lower = message.lower()
+        
+        has_name_indicator = any(word in message_lower for word in ["nombre", "llamo", "soy"])
+        has_phone_indicator = any(char.isdigit() for char in message) and len([c for c in message if c.isdigit()]) >= 7
+        has_date_indicator = any(word in message_lower for word in ["fecha", "día", "mañana", "hoy"])
+        
+        return has_name_indicator and has_phone_indicator and has_date_indicator
+    
+    def _notify_appointment_success(self, user_id: str, appointment_data: Dict[str, Any], company_id: str):
+        """
+        Notificar al sistema principal sobre cita exitosa
+        REFACTORIZADO: Incluye company_id en la notificación
+        """
         try:
-            logger.info(f"Llamando a microservicio local en: {self.schedule_service_url}")
-            
-            response = requests.post(
-                f"{self.schedule_service_url}/schedule-request",
-                json={
-                    "message": question,
-                    "user_id": user_id,
-                    "chat_history": [
-                        {
-                            "content": msg.content if hasattr(msg, 'content') else str(msg),
-                            "type": getattr(msg, 'type', 'user')
-                        } for msg in chat_history
-                    ]
-                },
-                timeout=self.selenium_timeout
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # Si se agendó exitosamente, notificar al sistema principal
-                if result.get('success') and result.get('appointment_data'):
-                    self._notify_appointment_success(user_id, result.get('appointment_data'))
-                
-                logger.info(f"Respuesta exitosa del microservicio local: {result.get('success', False)}")
-                return result
-            else:
-                logger.warning(f"Microservicio local retornó código {response.status_code}")
-                # Marcar servicio como no disponible para evitar llamadas adicionales
-                self.selenium_service_available = False
-                return {"success": False, "message": "Servicio local no disponible"}
-                
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout conectando con microservicio local ({self.selenium_timeout}s)")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Timeout del servicio local"}
-        
-        except requests.exceptions.ConnectionError:
-            logger.error(f"No se pudo conectar con microservicio local: {self.schedule_service_url}")
-            logger.error("Verifica que el microservicio esté ejecutándose en tu máquina local")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Servicio local no disponible"}
-        
+            main_system_url = os.getenv('MAIN_SYSTEM_URL')
+            if main_system_url:
+                requests.post(
+                    f"{main_system_url}/appointment-notification",
+                    json={
+                        "user_id": user_id,
+                        "company_id": company_id,  # NUEVO: Incluir company_id
+                        "event": "appointment_scheduled",
+                        "data": appointment_data
+                    },
+                    headers={
+                        "X-Company-ID": company_id  # NUEVO: Header de empresa
+                    },
+                    timeout=5
+                )
+                logger.info(f"Notificación enviada al sistema principal para usuario {user_id} empresa {company_id}")
         except Exception as e:
-            logger.error(f"Error llamando microservicio local: {e}")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Error del servicio local"}
+            logger.error(f"Error notificando cita exitosa para empresa {company_id}: {e}")
+    
+    # ===============================
+    # API PÚBLICA MULTI-EMPRESA
+    # ===============================
+    
+    def get_response(self, question: str, user_id: str, company_id: str) -> Tuple[str, str]:
+        """
+        Método principal para obtener respuesta del sistema multi-agente
+        REFACTORIZADO: Requiere company_id y usa componentes específicos de la empresa
+        
+        Args:
+            question: Pregunta del usuario
+            user_id: ID del usuario 
+            company_id: ID de la empresa
             
-    def _create_enhanced_schedule_agent(self):
-        """Agente de Schedule mejorado con integración de disponibilidad"""
+        Returns:
+            Tuple[respuesta, agente_utilizado]
+        """
+        if not question or not question.strip():
+            return "Por favor, envía un mensaje específico para poder ayudarte. 😊", "support"
+        
+        if not user_id or not user_id.strip():
+            return "Error interno: ID de usuario inválido.", "error"
+        
+        if not company_id or not company_id.strip():
+            return "Error interno: ID de empresa inválido.", "error"
+        
+        try:
+            # Validar acceso a la empresa
+            if not validate_company_access(company_id):
+                return "Error: Acceso no autorizado a esta empresa.", "error"
+            
+            # Obtener historial de conversación específico de la empresa
+            chat_history = self.conversation_manager.get_chat_history(user_id, company_id, format_type="messages")
+            
+            # Obtener orquestador específico de la empresa
+            company_agents = self._get_or_create_agents(company_id)
+            orchestrator = company_agents['orchestrator']
+            
+            # Preparar inputs
+            inputs = {
+                "question": question.strip(),
+                "chat_history": chat_history,
+                "user_id": user_id,
+                "company_id": company_id
+            }
+            
+            # Obtener respuesta del orquestador específico de la empresa
+            response = orchestrator.invoke(inputs)
+            
+            # Agregar mensajes al historial específico de la empresa
+            self.conversation_manager.add_message(user_id, company_id, "user", question)
+            self.conversation_manager.add_message(user_id, company_id, "assistant", response)
+            
+            # Determinar qué agente se utilizó
+            agent_used = self._determine_agent_used(response)
+            
+            logger.info(f"Multi-agent response generated for user {user_id} company {company_id} using {agent_used}")
+            
+            return response, agent_used
+            
+        except Exception as e:
+            logger.exception(f"Error en sistema multi-agente (User: {user_id}, Company: {company_id})")
+            return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", "error"
+    
+    def _determine_agent_used(self, response: str) -> str:
+        """Determinar qué agente se utilizó basado en la respuesta (sin cambios)"""
+        if "Escalando tu caso de emergencia" in response:
+            return "emergency"
+        elif "¿Te gustaría agendar tu cita?" in response:
+            return "sales"
+        elif "Procesando tu solicitud de agenda" in response:
+            return "schedule"
+        elif "Te conectaré con un especialista" in response:
+            return "support"
+        else:
+            return "support"
+    
+    def health_check(self, company_id: str = None) -> Dict[str, Any]:
+        """
+        Verificar salud del sistema multi-agente
+        REFACTORIZADO: Puede verificar empresa específica o sistema general
+        """
+        try:
+            # Si no se especifica empresa, verificar sistema general
+            if not company_id:
+                # Verificar todas las empresas registradas
+                all_companies = self.conversation_manager.get_all_companies()
+                company_health = {}
+                
+                for comp_id in all_companies:
+                    try:
+                        service_healthy = self._verify_selenium_service(comp_id)
+                        company_health[comp_id] = {
+                            "selenium_service_healthy": service_healthy,
+                            "agents_created": self._get_company_key(comp_id) in self.company_agents
+                        }
+                    except Exception as e:
+                        company_health[comp_id] = {
+                            "selenium_service_healthy": False,
+                            "agents_created": False,
+                            "error": str(e)
+                        }
+                
+                return {
+                    "system_healthy": True,
+                    "system_type": "multi-company_multi-agent_enhanced",
+                    "companies_health": company_health,
+                    "total_companies": len(all_companies),
+                    "schedule_service_url": self.schedule_service_url,
+                    "environment": os.getenv('ENVIRONMENT', 'production')
+                }
+            
+            # Verificar empresa específica
+                
+                logger.info(f"=== AVAILABILITY AGENT - EMPRESA {company_id} ===")
+                logger.info(f"Pregunta: {question}")
+                logger.info(f"Estado Selenium: {selenium_status}")
+                
+                # 1. VERIFICAR SERVICIO DISPONIBLE PRIMERO
+                if not self._verify_selenium_service(company_id):
+                    logger.error(f"Servicio Selenium no disponible para empresa {company_id}")
+                    return "Error consultando disponibilidad. Te conectaré con un especialista para verificar horarios. 👩‍⚕️"
+                
+                # Extract date from question and history
+                date = self._extract_date_from_question(question, chat_history)
+                treatment = self._extract_treatment_from_question(question)
+                
+                if not date:
+                    return "Por favor especifica la fecha en formato DD-MM-YYYY para consultar disponibilidad."
+                
+                logger.info(f"Empresa {company_id} - Fecha extraída: {date}, Tratamiento: {treatment}")
+                
+                # Obtener duración del tratamiento desde RAG específico de la empresa
+                duration = self._get_treatment_duration(treatment, company_id)
+                logger.info(f"Empresa {company_id} - Duración del tratamiento: {duration} minutos")
+                
+                # 2. LLAMAR ENDPOINT CON MÉTODO MEJORADO
+                availability_data = self._call_check_availability(date, company_id)
+                
+                if not availability_data:
+                    logger.warning(f"No se obtuvieron datos de disponibilidad para empresa {company_id}")
+                    return "Error consultando disponibilidad. Te conectaré con un especialista."
+                
+                if not availability_data.get("available_slots"):
+                    logger.info(f"No hay slots disponibles para empresa {company_id} en fecha {date}")
+                    return f"No hay horarios disponibles para {date}."
+                
+                # Filtrar slots según duración
+                filtered_slots = self._filter_slots_by_duration(
+                    availability_data["available_slots"], 
+                    duration
+                )
+                
+                logger.info(f"Empresa {company_id} - Slots filtrados: {filtered_slots}")
+                
+                # Formatear respuesta
+                response = self._format_slots_response(filtered_slots, date, duration)
+                logger.info(f"=== AVAILABILITY AGENT - EMPRESA {company_id} - RESPUESTA GENERADA ===")
+                return response
+                
+            except Exception as e:
+                logger.error(f"Error en agente de disponibilidad para empresa {company_id}: {e}")
+                logger.exception("Stack trace completo:")
+                return "Error consultando disponibilidad. Te conectaré con un especialista."
+    
+        return (
+            {
+                "selenium_status": get_availability_selenium_status,
+                "question": lambda x: x.get("question", ""),
+                "chat_history": lambda x: x.get("chat_history", [])
+            }
+            | RunnableLambda(process_availability)
+        )
+    
+    def _create_enhanced_schedule_agent(self, company_id: str, retriever):
+        """
+        Agente de Schedule mejorado con integración de disponibilidad
+        REFACTORIZADO: Usa componentes específicos de la empresa
+        """
+        chat_model = self.langchain_manager.get_chat_model(company_id)
+        
         schedule_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, especialista en gestión de citas de Benova.
+            ("system", """Eres un especialista en gestión de citas del centro estético.
     
     OBJETIVO: Facilitar la gestión completa de citas y horarios usando herramientas avanzadas.
     
@@ -1480,13 +2377,13 @@ Para información específica, te conectaré con un especialista."""
         ])
         
         def get_schedule_context(inputs):
-            """Obtener contexto RAG para agenda"""
+            """Obtener contexto RAG para agenda usando retriever específico de la empresa"""
             try:
                 question = inputs.get("question", "")
-                docs = self.retriever.invoke(question)
+                docs = retriever.invoke(question)
                 
                 if not docs:
-                    return """Información básica de agenda Benova:
+                    return f"""Información básica de agenda del centro estético:
     - Horarios de atención: Lunes a Viernes 8:00 AM - 6:00 PM, Sábados 8:00 AM - 4:00 PM
     - Servicios agendables: Consultas médicas, Tratamientos estéticos, Procedimientos de belleza
     - Políticas de cancelación: 24 horas de anticipación
@@ -1497,411 +2394,315 @@ Para información específica, te conectaré con un especialista."""
                 return "\n\n".join(doc.page_content for doc in docs)
                 
             except Exception as e:
-                logger.error(f"Error retrieving schedule context: {e}")
+                logger.error(f"Error retrieving schedule context for company {company_id}: {e}")
                 return "Información básica de agenda disponible. Sistema de agendamiento automático disponible."
         
         def get_selenium_status(inputs):
-            """Obtener estado del sistema Selenium local usando cache"""
-            if self.selenium_service_available:
-                return f"✅ Sistema de agendamiento automático ACTIVO (Conectado a {self.schedule_service_url})"
+            """Obtener estado del sistema Selenium específico para la empresa"""
+            if self._verify_selenium_service(company_id):
+                return f"✅ Sistema de agendamiento automático ACTIVO para empresa {company_id} (Conectado a {self.schedule_service_url})"
             else:
-                return "⚠️ Sistema de agendamiento automático NO DISPONIBLE (Verificar conexión local)"
-        
+                return f"⚠️ Sistema de agendamiento automático NO DISPONIBLE para empresa {company_id} (Verificar conexión local)"
+
+#####################################################################################################################################
         def process_schedule_with_selenium(inputs):
-            """Procesar solicitud de agenda con integración de disponibilidad MEJORADA"""
-            try:
-                question = inputs.get("question", "")
-                user_id = inputs.get("user_id", "default_user")
-                chat_history = inputs.get("chat_history", [])
-                context = inputs.get("context", "")
-                selenium_status = inputs.get("selenium_status", "")
-                
-                logger.info(f"Procesando solicitud de agenda: {question}")
-                
-                # PASO 1: SIEMPRE verificar disponibilidad si se menciona agendamiento
-                available_slots = ""
-                if self._contains_schedule_intent(question):
-                    logger.info("Detectado intent de agendamiento - verificando disponibilidad")
+                    """Procesar solicitud de agenda con integración de disponibilidad MEJORADA para empresa específica"""
                     try:
-                        availability_response = self.availability_agent.invoke({"question": question,})
-                        available_slots = availability_response
-                        logger.info(f"Disponibilidad obtenida: {available_slots}")
+                        question = inputs.get("question", "")
+                        user_id = inputs.get("user_id", "default_user")
+                        chat_history = inputs.get("chat_history", [])
+                        context = inputs.get("context", "")
+                        selenium_status = inputs.get("selenium_status", "")
+                        
+                        logger.info(f"Procesando solicitud de agenda para empresa {company_id}: {question}")
+                        
+                        # PASO 1: SIEMPRE verificar disponibilidad si se menciona agendamiento
+                        available_slots = ""
+                        if self._contains_schedule_intent(question):
+                            logger.info(f"Detectado intent de agendamiento para empresa {company_id} - verificando disponibilidad")
+                            try:
+                                # Obtener agente de disponibilidad específico de la empresa
+                                company_agents = self._get_or_create_agents(company_id)
+                                availability_response = company_agents['availability_agent'].invoke({"question": question})
+                                available_slots = availability_response
+                                logger.info(f"Disponibilidad obtenida para empresa {company_id}: {available_slots}")
+                            except Exception as e:
+                                logger.error(f"Error verificando disponibilidad para empresa {company_id}: {e}")
+                                available_slots = "Error consultando disponibilidad. Verificaré manualmente."
+                        
+                        # Preparar inputs para el prompt
+                        base_inputs = {
+                            "question": question,
+                            "chat_history": chat_history,
+                            "context": context,
+                            "selenium_status": selenium_status,
+                            "available_slots": available_slots
+                        }
+                        
+                        # PASO 2: Generar respuesta base con información de disponibilidad
+                        logger.info(f"Generando respuesta base con disponibilidad para empresa {company_id}")
+                        base_response = (schedule_prompt | chat_model | StrOutputParser()).invoke(base_inputs)
+                        
+                        # PASO 3: Determinar si proceder con Selenium (solo después de verificar disponibilidad)
+                        should_proceed_selenium = (
+                            self._contains_schedule_intent(question) and 
+                            self._should_use_selenium(question, chat_history) and
+                            self._has_available_slots_confirmation(available_slots) and
+                            not self._is_just_availability_check(question)
+                        )
+                        
+                        logger.info(f"¿Proceder con Selenium para empresa {company_id}? {should_proceed_selenium}")
+                        
+                        if should_proceed_selenium:
+                            logger.info(f"Procediendo con agendamiento automático via Selenium para empresa {company_id}")
+                            selenium_result = self._call_local_schedule_microservice(question, user_id, chat_history, company_id)
+                            
+                            if selenium_result.get('success'):
+                                return f"{available_slots}\n\n{selenium_result.get('response', base_response)}"
+                            elif selenium_result.get('requires_more_info'):
+                                return f"{available_slots}\n\n{selenium_result.get('response', base_response)}"
+                            else:
+                                return f"{available_slots}\n\n{base_response}\n\nNota: Te conectaré con un especialista para completar el agendamiento."
+                        
+                        return base_response
+                        
                     except Exception as e:
-                        logger.error(f"Error verificando disponibilidad: {e}")
-                        available_slots = "Error consultando disponibilidad. Verificaré manualmente."
+                        logger.error(f"Error en agendamiento para empresa {company_id}: {e}")
+                        return "Error procesando tu solicitud. Conectando con especialista... 📋"
                 
-                # Preparar inputs para el prompt
-                base_inputs = {
-                    "question": question,
-                    "chat_history": chat_history,
-                    "context": context,
-                    "selenium_status": selenium_status,
-                    "available_slots": available_slots
-                }
-                
-                # PASO 2: Generar respuesta base con información de disponibilidad
-                logger.info("Generando respuesta base con disponibilidad")
-                base_response = (schedule_prompt | self.chat_model | StrOutputParser()).invoke(base_inputs)
-                
-                # PASO 3: Determinar si proceder con Selenium (solo después de verificar disponibilidad)
-                should_proceed_selenium = (
-                    self._contains_schedule_intent(question) and 
-                    self._should_use_selenium(question, chat_history) and
-                    self._has_available_slots_confirmation(available_slots) and
-                    not self._is_just_availability_check(question)
+                return (
+                    {
+                        "context": get_schedule_context,
+                        "selenium_status": get_selenium_status,
+                        "question": lambda x: x.get("question", ""),
+                        "chat_history": lambda x: x.get("chat_history", []),
+                        "user_id": lambda x: x.get("user_id", "default_user")
+                    }
+                    | RunnableLambda(process_schedule_with_selenium)
                 )
-                
-                logger.info(f"¿Proceder con Selenium? {should_proceed_selenium}")
-                
-                if should_proceed_selenium:
-                    logger.info("Procediendo con agendamiento automático via Selenium")
-                    selenium_result = self._call_local_schedule_microservice(question, user_id, chat_history)
+            
+            def health_check(self, company_id: str = None) -> Dict[str, Any]:
+                """
+                Verificar salud del sistema multi-agente
+                REFACTORIZADO: Puede verificar empresa específica o sistema general
+                """
+                try:
+                    # Si no se especifica empresa, verificar sistema general
+                    if not company_id:
+                        # Verificar todas las empresas registradas
+                        all_companies = self.conversation_manager.get_all_companies()
+                        company_health = {}
+                        
+                        for comp_id in all_companies:
+                            try:
+                                service_healthy = self._verify_selenium_service(comp_id)
+                                company_health[comp_id] = {
+                                    "selenium_service_healthy": service_healthy,
+                                    "agents_created": self._get_company_key(comp_id) in self.company_agents
+                                }
+                            except Exception as e:
+                                company_health[comp_id] = {
+                                    "selenium_service_healthy": False,
+                                    "agents_created": False,
+                                    "error": str(e)
+                                }
+                        
+                        return {
+                            "system_healthy": True,
+                            "system_type": "multi-company_multi-agent_enhanced",
+                            "companies_health": company_health,
+                            "total_companies": len(all_companies),
+                            "schedule_service_url": self.schedule_service_url,
+                            "environment": os.getenv('ENVIRONMENT', 'production')
+                        }
                     
-                    if selenium_result.get('success'):
-                        return f"{available_slots}\n\n{selenium_result.get('response', base_response)}"
-                    elif selenium_result.get('requires_more_info'):
-                        return f"{available_slots}\n\n{selenium_result.get('response', base_response)}"
+                    # Verificar empresa específica
                     else:
-                        return f"{available_slots}\n\n{base_response}\n\nNota: Te conectaré con un especialista para completar el agendamiento."
-                
-                return base_response
-                
-            except Exception as e:
-                logger.error(f"Error en agendamiento: {e}")
-                return "Error procesando tu solicitud. Conectando con especialista... 📋"
+                        service_healthy = self._verify_selenium_service(company_id)
+                        agents_created = self._get_company_key(company_id) in self.company_agents
+                        
+                        return {
+                            "system_healthy": True,
+                            "company_id": company_id,
+                            "agents_available": ["router", "emergency", "sales", "schedule", "support", "availability"],
+                            "agents_created": agents_created,
+                            "schedule_service_healthy": service_healthy,
+                            "schedule_service_url": self.schedule_service_url,
+                            "schedule_service_type": "LOCAL",
+                            "system_type": "multi-company_multi-agent_enhanced",
+                            "orchestrator_active": agents_created,
+                            "rag_enabled": True,
+                            "selenium_integration": service_healthy,
+                            "environment": os.getenv('ENVIRONMENT', 'production')
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Error en health check para empresa {company_id}: {e}")
+                    return {
+                        "system_healthy": False,
+                        "company_id": company_id,
+                        "error": str(e),
+                        "system_type": "multi-company_multi-agent_enhanced"
+                    }
+            
+            def get_system_stats(self, company_id: str = None) -> Dict[str, Any]:
+                """
+                Obtener estadísticas del sistema multi-agente
+                REFACTORIZADO: Puede obtener stats de empresa específica o sistema general
+                """
+                try:
+                    if not company_id:
+                        # Estadísticas generales del sistema
+                        all_companies = self.conversation_manager.get_all_companies()
+                        total_agents_created = len(self.company_agents)
+                        
+                        return {
+                            "system_type": "multi-company_multi-agent_enhanced",
+                            "total_companies": len(all_companies),
+                            "companies_with_agents": total_agents_created,
+                            "agents_per_company": ["router", "emergency", "sales", "schedule", "support", "availability"],
+                            "orchestrator_active": True,
+                            "rag_enabled": True,
+                            "schedule_service_url": self.schedule_service_url,
+                            "schedule_service_type": "LOCAL",
+                            "environment": os.getenv('ENVIRONMENT', 'production'),
+                            "companies": list(all_companies)
+                        }
+                    else:
+                        # Estadísticas específicas de la empresa
+                        agents_created = self._get_company_key(company_id) in self.company_agents
+                        selenium_available = self._verify_selenium_service(company_id, force_check=False)
+                        
+                        return {
+                            "company_id": company_id,
+                            "agents_available": ["router", "emergency", "sales", "schedule", "support", "availability"],
+                            "agents_created": agents_created,
+                            "system_type": "multi-company_multi-agent_enhanced",
+                            "orchestrator_active": agents_created,
+                            "rag_enabled": True,
+                            "selenium_integration": selenium_available,
+                            "schedule_service_url": self.schedule_service_url,
+                            "schedule_service_type": "LOCAL",
+                            "environment": os.getenv('ENVIRONMENT', 'production')
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Error obteniendo estadísticas para empresa {company_id}: {e}")
+                    return {
+                        "system_type": "multi-company_multi-agent_enhanced",
+                        "error": str(e),
+                        "company_id": company_id
+                    }
+            
+            def reconnect_selenium_service(self, company_id: str) -> bool:
+                """
+                Método para reconectar con el servicio Selenium para empresa específica
+                REFACTORIZADO: Reconexión específica por empresa
+                """
+                try:
+                    logger.info(f"Intentando reconectar con servicio Selenium para empresa {company_id}...")
+                    
+                    # Forzar verificación del servicio para la empresa
+                    service_available = self._verify_selenium_service(company_id, force_check=True)
+                    
+                    if service_available:
+                        logger.info(f"✅ Reconexión exitosa con servicio Selenium para empresa {company_id}")
+                    else:
+                        logger.warning(f"⚠️ No se pudo reconectar con servicio Selenium para empresa {company_id}")
+                    
+                    return service_available
+                    
+                except Exception as e:
+                    logger.error(f"Error en reconexión Selenium para empresa {company_id}: {e}")
+                    return False
+            
+            def clear_company_cache(self, company_id: str) -> bool:
+                """
+                Limpiar cache de agentes para una empresa específica
+                NUEVO: Método para limpiar cache específico de empresa
+                """
+                try:
+                    company_key = self._get_company_key(company_id)
+                    
+                    if company_key in self.company_agents:
+                        del self.company_agents[company_key]
+                        logger.info(f"Cache de agentes limpiado para empresa {company_id}")
+                        return True
+                    else:
+                        logger.info(f"No había cache de agentes para empresa {company_id}")
+                        return False
+                        
+                except Exception as e:
+                    logger.error(f"Error limpiando cache para empresa {company_id}: {e}")
+                    return False
+            
+            def validate_company_access(self, company_id: str) -> bool:
+                """
+                Validar acceso a empresa específica
+                NUEVO: Método de validación de acceso por empresa
+                """
+                try:
+                    # Verificar que la empresa existe en el sistema
+                    all_companies = self.conversation_manager.get_all_companies()
+                    
+                    if company_id not in all_companies:
+                        logger.warning(f"Acceso denegado: empresa {company_id} no registrada")
+                        return False
+                    
+                    # Verificar configuración de la empresa
+                    if not self.config_manager.get_company_config(company_id):
+                        logger.warning(f"Acceso denegado: configuración no encontrada para empresa {company_id}")
+                        return False
+                    
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"Error validando acceso para empresa {company_id}: {e}")
+                    return False
+
+# Función de utilidad para inicializar el sistema multi-empresa
+def create_multicompany_multiagent_system(
+    langchain_manager: MultiCompanyLangChainManager,
+    conversation_manager: MultiCompanyConversationManager,
+    config_manager: CompanyConfigManager
+):
+    """
+    Crear instancia del sistema multi-agente multi-empresa
+    REFACTORIZADO: Función de inicialización para sistema multi-empresa
+    """
+    return MultiCompanyBenovaMultiAgentSystem(
+        langchain_manager=langchain_manager,
+        conversation_manager=conversation_manager,
+        config_manager=config_manager
+    )
+
+# Función de validación global
+def validate_company_access(company_id: str) -> bool:
+    """
+    Función global para validar acceso a empresa
+    NUEVO: Validación global de acceso por empresa
+    """
+    try:
+        # Aquí se puede implementar lógica adicional de validación
+        # Por ejemplo, verificar permisos, licencias, etc.
         
-        return (
-            {
-                "context": get_schedule_context,
-                "selenium_status": get_selenium_status,
-                "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", []),
-                "user_id": lambda x: x.get("user_id", "default_user")
-            }
-            | RunnableLambda(process_schedule_with_selenium)
-        )
-    
-    def _contains_schedule_intent(self, question: str) -> bool:
-        """Detectar si la pregunta contiene intención de agendamiento"""
-        schedule_keywords = [
-            "agendar", "reservar", "programar", "cita", "appointment",
-            "agenda", "disponibilidad", "horario", "fecha", "hora",
-            "procede", "proceder", "confirmar cita"
-        ]
-        return any(keyword in question.lower() for keyword in schedule_keywords)
-    
-    def _has_available_slots_confirmation(self, availability_response: str) -> bool:
-        """Verificar si la respuesta de disponibilidad contiene slots válidos"""
-        if not availability_response:
+        if not company_id or not company_id.strip():
             return False
         
-        availability_lower = availability_response.lower()
+        # Verificaciones básicas de formato
+        if len(company_id) < 3 or len(company_id) > 50:
+            return False
         
-        # Buscar indicadores de que hay slots disponibles
-        text_indicators = [
-            "horarios disponibles",
-            "disponible para"
-        ]
+        # Caracteres permitidos (letras, números, guiones, underscores)
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', company_id):
+            return False
         
-        # Verificar indicadores de texto
-        has_text_indicators = any(indicator in availability_lower for indicator in text_indicators)
+        return True
         
-        # Verificar indicadores de formato (listas y horarios)
-        has_list_format = "- " in availability_response
-        has_time_format = ":" in availability_response and "-" in availability_response
-        
-        # Verificar indicadores negativos
-        negative_indicators = [
-            "no hay horarios disponibles",
-            "no hay disponibilidad", 
-            "error consultando disponibilidad"
-        ]
-        
-        has_negative = any(indicator in availability_lower for indicator in negative_indicators)
-        
-        # Combinar todas las verificaciones
-        has_positive = has_text_indicators or has_list_format or has_time_format
-        
-        return has_positive and not has_negative
-    
-    def _is_just_availability_check(self, question: str) -> bool:
-        """Determinar si solo se está consultando disponibilidad sin agendar"""
-        availability_only_keywords = [
-            "disponibilidad para", "horarios disponibles", "qué horarios",
-            "cuándo hay", "hay disponibilidad", "ver horarios"
-        ]
-        
-        schedule_confirmation_keywords = [
-            "agendar", "reservar", "procede", "proceder", "confirmar",
-            "quiero la cita", "agenda la cita"
-        ]
-        
-        has_availability_check = any(keyword in question.lower() for keyword in availability_only_keywords)
-        has_schedule_confirmation = any(keyword in question.lower() for keyword in schedule_confirmation_keywords)
-        
-        # Si solo pregunta por disponibilidad y no confirma agendamiento
-        return has_availability_check and not has_schedule_confirmation
-    
-    # También necesitas agregar estos métodos de logging adicionales:
-    
-    def _log_schedule_decision_process(self, question: str, availability: str, will_use_selenium: bool):
-        """Log detallado del proceso de decisión para agendamiento"""
-        logger.info(f"=== PROCESO DE DECISIÓN DE AGENDAMIENTO ===")
-        logger.info(f"Pregunta: {question}")
-        logger.info(f"Disponibilidad obtenida: {bool(availability)}")
-        logger.info(f"Slots disponibles: {'Sí' if self._has_available_slots_confirmation(availability) else 'No'}")
-        logger.info(f"Usará Selenium: {will_use_selenium}")
-        logger.info(f"Solo consulta disponibilidad: {self._is_just_availability_check(question)}")
-        logger.info(f"=============================================")
-    
-    def _handle_selenium_unavailable(self) -> str:
-        """Manejar cuando el servicio Selenium no está disponible"""
-        return """Lo siento, el sistema de agendamiento automático no está disponible en este momento. 
-
-Puedes:
-1. Intentar nuevamente en unos minutos
-2. Contactar directamente a nuestro equipo
-3. Te conectaré con un especialista para agendar manualmente
-
-¿Prefieres que te conecte con un especialista? 👩‍⚕️"""
-    
-    def _should_use_selenium(self, question: str, chat_history: list) -> bool:
-        """Determinar si se debe usar el microservicio de Selenium"""
-        question_lower = question.lower()
-        
-        # Palabras clave que indican necesidad de agendamiento
-        schedule_keywords = [
-            "agendar", "reservar", "programar", "cita", "appointment",
-            "agenda", "disponibilidad", "horario", "fecha", "hora"
-        ]
-        
-        # Verificar si la pregunta contiene palabras clave de agendamiento
-        has_schedule_intent = any(keyword in question_lower for keyword in schedule_keywords)
-        
-        # Verificar si hay suficiente información en el historial
-        has_patient_info = self._extract_patient_info_from_history(chat_history)
-        
-        return has_schedule_intent and (has_patient_info or self._has_complete_info_in_message(question))
-    
-    def _extract_patient_info_from_history(self, chat_history: list) -> bool:
-        """Extraer información del paciente del historial"""
-        # Buscar información básica en el historial
-        history_text = " ".join([msg.content if hasattr(msg, 'content') else str(msg) for msg in chat_history])
-        
-        # Verificar si hay información básica disponible
-        has_name = any(word in history_text.lower() for word in ["nombre", "llamo", "soy"])
-        has_phone = any(char.isdigit() for char in history_text) and len([c for c in history_text if c.isdigit()]) >= 7
-        has_date = any(word in history_text.lower() for word in ["fecha", "día", "mañana", "hoy"])
-        
-        return has_name and (has_phone or has_date)
-    
-    def _has_complete_info_in_message(self, message: str) -> bool:
-        """Verificar si el mensaje tiene información completa"""
-        message_lower = message.lower()
-        
-        # Verificar elementos básicos
-        has_name_indicator = any(word in message_lower for word in ["nombre", "llamo", "soy"])
-        has_phone_indicator = any(char.isdigit() for char in message) and len([c for c in message if c.isdigit()]) >= 7
-        has_date_indicator = any(word in message_lower for word in ["fecha", "día", "mañana", "hoy"])
-        
-        return has_name_indicator and has_phone_indicator and has_date_indicator
-    
-
-    
-    def _notify_appointment_success(self, user_id: str, appointment_data: Dict[str, Any]):
-        """Notificar al sistema principal sobre cita exitosa"""
-        try:
-            # Enviar notificación al sistema principal (si es necesario)
-            main_system_url = os.getenv('MAIN_SYSTEM_URL')
-            if main_system_url:
-                requests.post(
-                    f"{main_system_url}/appointment-notification",
-                    json={
-                        "user_id": user_id,
-                        "event": "appointment_scheduled",
-                        "data": appointment_data
-                    },
-                    timeout=5
-                )
-                logger.info(f"Notificación enviada al sistema principal para usuario {user_id}")
-        except Exception as e:
-            logger.error(f"Error notificando cita exitosa: {e}")
-    
-    def _create_orchestrator(self):
-        """
-        Orquestador principal que coordina los agentes
-        """
-        def route_to_agent(inputs):
-            """Enrutar a agente específico basado en clasificación"""
-            try:
-                # Obtener clasificación del router
-                router_response = self.router_agent.invoke(inputs)
-                
-                # Parsear respuesta JSON
-                try:
-                    classification = json.loads(router_response)
-                    intent = classification.get("intent", "SUPPORT")
-                    confidence = classification.get("confidence", 0.5)
-                    
-                    logger.info(f"Intent classified: {intent} (confidence: {confidence})")
-                    
-                except json.JSONDecodeError:
-                    # Fallback si no es JSON válido
-                    intent = "SUPPORT"
-                    confidence = 0.3
-                    logger.warning("Router response was not valid JSON, defaulting to SUPPORT")
-                
-                # Agregar user_id a inputs para el agente de schedule
-                inputs["user_id"] = inputs.get("user_id", "default_user")
-                
-                # Determinar agente basado en intención
-                if intent == "EMERGENCY" or confidence > 0.8:
-                    if intent == "EMERGENCY":
-                        return self.emergency_agent.invoke(inputs)
-                    elif intent == "SALES":
-                        return self.sales_agent.invoke(inputs)
-                    elif intent == "SCHEDULE":
-                        return self.schedule_agent.invoke(inputs)
-                    else:
-                        return self.support_agent.invoke(inputs)
-                else:
-                    # Baja confianza, usar soporte por defecto
-                    return self.support_agent.invoke(inputs)
-                    
-            except Exception as e:
-                logger.error(f"Error in orchestrator: {e}")
-                # Fallback a soporte en caso de error
-                return self.support_agent.invoke(inputs)
-        
-        return RunnableLambda(route_to_agent)
-    
-    def get_response(self, question: str, user_id: str) -> Tuple[str, str]:
-        """
-        Método principal para obtener respuesta del sistema multi-agente
-        Retorna: (respuesta, agente_utilizado)
-        """
-        if not question or not question.strip():
-            return "Por favor, envía un mensaje específico para poder ayudarte. 😊", "support"
-        
-        if not user_id or not user_id.strip():
-            return "Error interno: ID de usuario inválido.", "error"
-        
-        try:
-            # Obtener historial de conversación
-            chat_history = self.conversation_manager.get_chat_history(user_id, format_type="messages")
-            
-            # Preparar inputs
-            inputs = {
-                "question": question.strip(),
-                "chat_history": chat_history,
-                "user_id": user_id
-            }
-            
-            # Obtener respuesta del orquestador
-            response = self.orchestrator.invoke(inputs)
-            
-            # Agregar mensaje del usuario al historial
-            self.conversation_manager.add_message(user_id, "user", question)
-            
-            # Agregar respuesta del asistente al historial
-            self.conversation_manager.add_message(user_id, "assistant", response)
-            
-            # Determinar qué agente se utilizó (para logging)
-            agent_used = self._determine_agent_used(response)
-            
-            logger.info(f"Multi-agent response generated for user {user_id} using {agent_used}")
-            
-            return response, agent_used
-            
-        except Exception as e:
-            logger.exception(f"Error en sistema multi-agente (User: {user_id})")
-            return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", "error"
-    
-    def _determine_agent_used(self, response: str) -> str:
-        """
-        Determinar qué agente se utilizó basado en la respuesta
-        """
-        if "Escalando tu caso de emergencia" in response:
-            return "emergency"
-        elif "¿Te gustaría agendar tu cita?" in response:
-            return "sales"
-        elif "Procesando tu solicitud de agenda" in response:
-            return "schedule"
-        elif "Te conectaré con un especialista" in response:
-            return "support"
-        else:
-            return "support"  # Por defecto
-    
-    def health_check(self) -> Dict[str, Any]:
-        """
-        Verificar salud del sistema multi-agente y microservicio LOCAL
-        """
-        try:
-            # Usar el estado cacheado para el health check, solo verificar si está marcado como no disponible
-            if not self.selenium_service_available:
-                # Intentar una verificación fresca solo si está marcado como no disponible
-                service_healthy = self._verify_selenium_service()
-            else:
-                service_healthy = self.selenium_service_available
-            
-            return {
-                "system_healthy": True,
-                "agents_available": ["router", "emergency", "sales", "schedule", "support"],
-                "schedule_service_healthy": service_healthy,
-                "schedule_service_url": self.schedule_service_url,
-                "schedule_service_type": "LOCAL",
-                "system_type": "multi-agent_enhanced",
-                "orchestrator_active": True,
-                "rag_enabled": True,
-                "selenium_integration": service_healthy,
-                "environment": os.getenv('ENVIRONMENT', 'production')
-            }
-        except Exception as e:
-            return {
-                "system_healthy": True,
-                "agents_available": ["router", "emergency", "sales", "schedule", "support"],
-                "schedule_service_healthy": False,
-                "schedule_service_url": self.schedule_service_url,
-                "schedule_service_type": "LOCAL",
-                "system_type": "multi-agent_enhanced",
-                "orchestrator_active": True,
-                "rag_enabled": True,
-                "selenium_integration": False,
-                "environment": os.getenv('ENVIRONMENT', 'production'),
-                "error": str(e)
-            }
-    
-    
-    def get_system_stats(self) -> Dict[str, Any]:
-        """
-        Obtener estadísticas del sistema multi-agente
-        """
-        return {
-            "agents_available": ["router", "emergency", "sales", "schedule", "support"],
-            "system_type": "multi-agent_enhanced",
-            "orchestrator_active": True,
-            "rag_enabled": True,
-            "selenium_integration": getattr(self, 'selenium_service_available', False),
-            "schedule_service_url": self.schedule_service_url,
-            "schedule_service_type": "LOCAL",
-            "environment": os.getenv('ENVIRONMENT', 'production')
-        }
-    
-    def reconnect_selenium_service(self) -> bool:
-        """
-        Método para reconectar con el servicio Selenium local
-        """
-        logger.info("Intentando reconectar con servicio Selenium local...")
-        self._initialize_local_selenium_connection()
-        return self.selenium_service_available
-
-# Función de utilidad para inicializar el sistema
-def create_enhanced_multiagent_system(chat_model, vectorstore, conversation_manager):
-    """
-    Crear instancia del sistema multi-agente mejorado con conexión local
-    """
-    return BenovaMultiAgentSystem(chat_model, vectorstore, conversation_manager)
-
+    except Exception as e:
+        logger.error(f"Error en validación global de empresa {company_id}: {e}")
+        return False
 
 # ===============================
 # modern_rag_system_with_multiagent
