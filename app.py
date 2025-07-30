@@ -41,6 +41,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 CHATWOOT_API_KEY = os.getenv("CHATWOOT_API_KEY")
 CHATWOOT_BASE_URL = os.getenv("CHATWOOT_BASE_URL", "https://chatwoot-production-0f1d.up.railway.app")
+ACCOUNT_ID = os.getenv("ACCOUNT_ID", "7")
 PORT = int(os.getenv("PORT", 8080))
 
 # Model configuration
@@ -61,6 +62,7 @@ if not OPENAI_API_KEY or not CHATWOOT_API_KEY:
 
 print("Environment loaded successfully")
 print(f"Chatwoot URL: {CHATWOOT_BASE_URL}")
+print(f"Account ID: {ACCOUNT_ID}")
 print(f"Model: {MODEL_NAME}")
 print(f"Embedding Model: {EMBEDDING_MODEL}")
 print(f"Redis URL: {REDIS_URL}")
@@ -88,42 +90,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================
-# Tenant-Aware Vector Store Factory
-# ===============================
-
-class TenantVectorStore:
-    """Factory para crear vector stores específicos por tenant"""
-    
-    _vectorstores = {}
-    
-    @classmethod
-    def get_vectorstore(cls, tenant_id: str) -> RedisVectorStore:
-        """Obtener o crear vector store para un tenant específico"""
-        if tenant_id not in cls._vectorstores:
-            index_name = f"tenant_{tenant_id}_documents"
-            cls._vectorstores[tenant_id] = RedisVectorStore(
-                OpenAIEmbeddings(
-                    model=EMBEDDING_MODEL,
-                    openai_api_key=OPENAI_API_KEY
-                ),
-                redis_url=REDIS_URL,
-                index_name=index_name,
-                vector_dim=1536
-            )
-            logger.info(f"✅ Created vector store for tenant: {tenant_id}")
-        return cls._vectorstores[tenant_id]
-
-# ===============================
 # LangChain Components Setup
 # ===============================
 
 # Initialize LangChain components
+embeddings = OpenAIEmbeddings(
+    model=EMBEDDING_MODEL,
+    openai_api_key=OPENAI_API_KEY
+)
+
 chat_model = ChatOpenAI(
     model_name=MODEL_NAME,
     temperature=TEMPERATURE,
     max_tokens=MAX_TOKENS,
     openai_api_key=OPENAI_API_KEY
 )
+
+# Vectorstore se inicializará dinámicamente por tenant
+def get_vectorstore(tenant_id: str) -> RedisVectorStore:
+    """Obtener vectorstore específico para cada tenant"""
+    return RedisVectorStore(
+        embeddings,
+        redis_url=REDIS_URL,
+        index_name=f"tenant_{tenant_id}_documents",
+        vector_dim=1536
+    )
+
 
 def create_advanced_chunking_system():
     """
@@ -264,7 +256,7 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
         return [], []
 
 # ===============================
-# BOT ACTIVATION LOGIC (Tenant-Aware)
+# BOT ACTIVATION LOGIC
 # ===============================
 
 BOT_ACTIVE_STATUSES = ["open"]
@@ -278,7 +270,7 @@ def update_bot_status(tenant_id: str, conversation_id: str, conversation_status:
         is_active = conversation_status in BOT_ACTIVE_STATUSES
         
         # Store in Redis with tenant namespace
-        status_key = f"tenant:{tenant_id}:bot_status:{conversation_id}"
+        status_key = f"tenant_{tenant_id}:bot_status:{conversation_id}"
         status_data = {
             'active': str(is_active),
             'status': conversation_status,
@@ -297,7 +289,7 @@ def update_bot_status(tenant_id: str, conversation_id: str, conversation_status:
         except Exception as e:
             logger.error(f"Error updating bot status in Redis: {e}")
 
-def should_bot_respond(tenant_id: str, conversation_id: str, conversation_status: str) -> bool:
+def should_bot_respond(tenant_id: str, conversation_id: str, conversation_status: str):
     """Determine if bot should respond based on conversation status"""
     update_bot_status(tenant_id, conversation_id, conversation_status)
     is_active = conversation_status in BOT_ACTIVE_STATUSES
@@ -312,12 +304,12 @@ def should_bot_respond(tenant_id: str, conversation_id: str, conversation_status
     
     return is_active
 
-def is_message_already_processed(tenant_id: str, message_id: str, conversation_id: str) -> bool:
+def is_message_already_processed(tenant_id: str, message_id: str, conversation_id: str):
     """Check if message has already been processed using Redis"""
     if not message_id:
         return False
     
-    key = f"tenant:{tenant_id}:processed_message:{conversation_id}:{message_id}"
+    key = f"tenant_{tenant_id}:processed_message:{conversation_id}:{message_id}"
     
     try:
         if redis_client.exists(key):
@@ -333,30 +325,30 @@ def is_message_already_processed(tenant_id: str, message_id: str, conversation_i
         return False
 
 # ===============================
-# REFACTORED Modern Conversation Manager - UNIFIED CHAT HISTORY (Tenant-Aware)
+# REFACTORED Modern Conversation Manager - UNIFIED CHAT HISTORY
 # ===============================
 
 class ModernConversationManager:
     """
-    REFACTORED: Conversation Manager moderno con multi-tenant
-    CAMBIOS PRINCIPALES:
-    - Soporte para multi-tenant mediante namespaces en Redis
-    - Identificación de tenant en todas las operaciones
-    - Aislamiento de datos entre empresas
+    REFACTORED: Conversation Manager moderno con métodos unificados de chat history
+    y soporte multi-tenant
     """
     
     def __init__(self, redis_client, max_messages: int = 10):
         self.redis_client = redis_client
         self.max_messages = max_messages
+        self.redis_prefix = "conversation:"
+        self.conversations = {}
         self.message_histories = {}
+        # No cargar conversaciones al inicio para multi-tenant
         
     def _get_conversation_key(self, tenant_id: str, user_id: str) -> str:
         """Generate standardized conversation key with tenant namespace"""
-        return f"tenant:{tenant_id}:conversation:{user_id}"
+        return f"tenant_{tenant_id}:conversation:{user_id}"
     
     def _get_message_history_key(self, tenant_id: str, user_id: str) -> str:
-        """Generate standardized message history key with tenant namespace"""
-        return f"tenant:{tenant_id}:chat_history:{user_id}"
+        """Generate standardized message history key for Redis with tenant namespace"""
+        return f"tenant_{tenant_id}:chat_history:{user_id}"
     
     def _create_user_id(self, contact_id: str) -> str:
         """Generate standardized user ID"""
@@ -365,112 +357,211 @@ class ModernConversationManager:
         return contact_id
     
     def _get_redis_connection_params(self) -> Dict[str, Any]:
-        """Get Redis connection parameters"""
-        return {
-            "url": REDIS_URL,
-            "ttl": 604800  # 7 días
-        }
+        """
+        Extract Redis connection parameters from client
+        MEJORADO: Maneja diferentes tipos de configuraciones de Redis
+        """
+        try:
+            # Opción 1: Usar URL directamente (más simple y robusto)
+            if hasattr(self.redis_client, 'connection_pool'):
+                pool = self.redis_client.connection_pool
+                connection_kwargs = pool.connection_kwargs
+                
+                return {
+                    "url": REDIS_URL,  # Usar URL directamente
+                    "ttl": 604800  # 7 días
+                }
+            
+            # Opción 2: Fallback a parámetros por defecto
+            return {
+                "url": REDIS_URL,
+                "ttl": 604800
+            }
+            
+        except Exception as e:
+            logger.warning(f"Could not extract Redis params, using defaults: {e}")
+            return {
+                "url": REDIS_URL,
+                "ttl": 604800
+            }
     
     def _get_or_create_redis_history(self, tenant_id: str, user_id: str) -> BaseChatMessageHistory:
-        """Crear/obtener RedisChatMessageHistory con namespace de tenant"""
-        cache_key = f"{tenant_id}:{user_id}"
+        """
+        REFACTORED: Método interno para crear/obtener RedisChatMessageHistory
+        Centraliza la lógica de creación de objetos de historia Redis
+        """
+        if not user_id:
+            raise ValueError("user_id cannot be empty")
         
+        # Usar caché en memoria para evitar recrear objetos
+        cache_key = f"{tenant_id}:{user_id}"
         if cache_key not in self.message_histories:
             try:
                 redis_params = self._get_redis_connection_params()
                 
+                # Crear RedisChatMessageHistory con parámetros mejorados y namespace
                 self.message_histories[cache_key] = RedisChatMessageHistory(
                     session_id=user_id,
                     url=redis_params["url"],
-                    key_prefix=f"tenant:{tenant_id}:chat_history:",
+                    key_prefix=f"tenant_{tenant_id}:chat_history:",
                     ttl=redis_params["ttl"]
                 )
                 
-                logger.info(f"✅ Created Redis message history for tenant:{tenant_id} user:{user_id}")
+                logger.info(f"✅ Created Redis message history for tenant {tenant_id} user {user_id}")
                 
             except Exception as e:
-                logger.error(f"❌ Error creating Redis message history: {e}")
+                logger.error(f"❌ Error creating Redis message history for tenant {tenant_id} user {user_id}: {e}")
+                # Crear una historia en memoria como fallback
                 from langchain_core.chat_history import InMemoryChatMessageHistory
                 self.message_histories[cache_key] = InMemoryChatMessageHistory()
-                logger.warning(f"⚠️ Using in-memory fallback for tenant:{tenant_id} user:{user_id}")
+                logger.warning(f"⚠️ Using in-memory fallback for tenant {tenant_id} user {user_id}")
             
+            # Aplicar límite de mensajes (ventana deslizante)
             self._apply_message_window(tenant_id, user_id)
         
         return self.message_histories[cache_key]
     
     def get_chat_history(self, tenant_id: str, user_id: str, format_type: str = "dict") -> Any:
-        """Obtener historial de chat con identificación de tenant"""
-        if not tenant_id or not user_id:
-            return [] if format_type == "dict" else []
+        """
+        REFACTORED: Método unificado para obtener chat history en diferentes formatos
+        con soporte multi-tenant
+        
+        Args:
+            tenant_id: ID del tenant
+            user_id: ID del usuario
+            format_type: Formato de salida
+                - "dict": Lista de diccionarios con role/content (DEFAULT - compatibilidad)
+                - "langchain": Objeto BaseChatMessageHistory nativo de LangChain
+                - "messages": Lista de objetos BaseMessage de LangChain
+        
+        Returns:
+            Chat history en el formato especificado
+        """
+        if not user_id or not tenant_id:
+            if format_type == "dict":
+                return []
+            elif format_type == "langchain":
+                from langchain_core.chat_history import InMemoryChatMessageHistory
+                return InMemoryChatMessageHistory()
+            elif format_type == "messages":
+                return []
+            else:
+                return []
         
         try:
+            # Obtener el objeto Redis history (centralizado)
             redis_history = self._get_or_create_redis_history(tenant_id, user_id)
             
+            # Retornar según el formato solicitado
             if format_type == "langchain":
+                # Formato nativo LangChain - para uso con RunnableWithMessageHistory
                 return redis_history
             
             elif format_type == "messages":
+                # Lista de objetos BaseMessage - para casos avanzados
                 return redis_history.messages
             
             elif format_type == "dict":
+                # Formato diccionario - para compatibilidad con código existente
+                messages = redis_history.messages
+                
                 chat_history = []
-                for msg in redis_history.messages:
+                for msg in messages:
                     if isinstance(msg, HumanMessage):
-                        chat_history.append({"role": "user", "content": msg.content})
+                        chat_history.append({
+                            "role": "user",
+                            "content": msg.content
+                        })
                     elif isinstance(msg, AIMessage):
-                        chat_history.append({"role": "assistant", "content": msg.content})
+                        chat_history.append({
+                            "role": "assistant", 
+                            "content": msg.content
+                        })
+                
                 return chat_history
             
             else:
+                logger.warning(f"Unknown format_type: {format_type}, defaulting to dict")
                 return self.get_chat_history(tenant_id, user_id, "dict")
                 
         except Exception as e:
-            logger.error(f"Error getting chat history: {e}")
-            return [] if format_type == "dict" else []
+            logger.error(f"Error getting chat history for tenant {tenant_id} user {user_id}: {e}")
+            # Retornar valores por defecto según el formato
+            if format_type == "dict":
+                return []
+            elif format_type == "langchain":
+                from langchain_core.chat_history import InMemoryChatMessageHistory
+                return InMemoryChatMessageHistory()
+            elif format_type == "messages":
+                return []
+            else:
+                return []
     
     def _apply_message_window(self, tenant_id: str, user_id: str):
-        """Mantener solo los últimos N mensajes"""
+        """
+        Aplica ventana deslizante de mensajes para mantener solo los últimos N mensajes
+        MEJORADO: Mejor manejo de errores
+        """
         try:
             cache_key = f"{tenant_id}:{user_id}"
             history = self.message_histories[cache_key]
             messages = history.messages
             
             if len(messages) > self.max_messages:
+                # Mantener solo los últimos max_messages
                 messages_to_keep = messages[-self.max_messages:]
+                
+                # Limpiar el historial existente
                 history.clear()
+                
+                # Agregar solo los mensajes que queremos mantener
                 for message in messages_to_keep:
                     history.add_message(message)
                 
-                logger.info(f"✅ Applied message window for tenant:{tenant_id} user:{user_id}")
+                logger.info(f"✅ Tenant {tenant_id} - Applied message window for user {user_id}: kept {len(messages_to_keep)} messages")
         
         except Exception as e:
-            logger.error(f"Error applying message window: {e}")
+            logger.error(f"❌ Tenant {tenant_id} - Error applying message window for user {user_id}: {e}")
     
     def add_message(self, tenant_id: str, user_id: str, role: str, content: str) -> bool:
-        """Agregar mensaje con gestión de tenant"""
-        if not tenant_id or not user_id or not content.strip():
+        """
+        Add message with automatic window management
+        MEJORADO: Mejor validación y manejo de errores
+        """
+        if not user_id or not content.strip() or not tenant_id:
+            logger.warning("Invalid tenant_id, user_id or content for message")
             return False
         
         try:
-            history = self._get_or_create_redis_history(tenant_id, user_id)
+            # Usar el método unificado para obtener history
+            history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
             
+            # Add message to history
             if role == "user":
                 history.add_user_message(content)
             elif role == "assistant":
                 history.add_ai_message(content)
             else:
+                logger.warning(f"Unknown role: {role}")
                 return False
             
-            self._apply_message_window(tenant_id, user_id)
+            # Update cache and apply window management
+            cache_key = f"{tenant_id}:{user_id}"
+            if cache_key in self.message_histories:
+                self._apply_message_window(tenant_id, user_id)
+            
+            # Update metadata
             self._update_conversation_metadata(tenant_id, user_id)
+            
+            logger.info(f"✅ Tenant {tenant_id} - Message added for user {user_id} (role: {role})")
             return True
             
         except Exception as e:
-            logger.error(f"Error adding message: {e}")
+            logger.error(f"❌ Tenant {tenant_id} - Error adding message for user {user_id}: {e}")
             return False
     
     def _update_conversation_metadata(self, tenant_id: str, user_id: str):
-        """Actualizar metadatos con namespace de tenant"""
+        """Update conversation metadata in Redis con namespace de tenant"""
         try:
             conversation_key = self._get_conversation_key(tenant_id, user_id)
             metadata = {
@@ -481,38 +572,93 @@ class ModernConversationManager:
             }
             
             self.redis_client.hset(conversation_key, mapping=metadata)
-            self.redis_client.expire(conversation_key, 604800)
+            self.redis_client.expire(conversation_key, 604800)  # 7 días TTL
             
         except Exception as e:
-            logger.error(f"Error updating metadata: {e}")
+            logger.error(f"Tenant {tenant_id} - Error updating metadata for user {user_id}: {e}")
+    
+    def load_conversations_from_redis(self, tenant_id: str):
+        """
+        Load conversations from Redis with modern approach
+        MEJORADO: Mejor manejo de errores y migración
+        Ahora específico por tenant
+        """
+        try:
+            # Buscar claves de conversación existentes para este tenant
+            pattern = f"tenant_{tenant_id}:conversation:*"
+            conversation_keys = self.redis_client.keys(pattern)
+            pattern = f"tenant_{tenant_id}:chat_history:*"
+            chat_history_keys = self.redis_client.keys(pattern)
+            
+            loaded_count = 0
+            
+            # Migrar datos existentes si es necesario
+            for key in conversation_keys:
+                try:
+                    # Extraer user_id de la key
+                    parts = key.split(':')
+                    if len(parts) < 4:
+                        continue
+                    user_id = parts[3]
+                    
+                    context_data = self.redis_client.hgetall(key)
+                    
+                    if context_data and 'messages' in context_data:
+                        # Migrar mensajes antiguos al nuevo formato
+                        old_messages = json.loads(context_data['messages'])
+                        history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
+                        
+                        # Verificar si ya migró
+                        if len(history.messages) == 0 and old_messages:
+                            for msg in old_messages:
+                                if msg.get('role') == 'user':
+                                    history.add_user_message(msg['content'])
+                                elif msg.get('role') == 'assistant':
+                                    history.add_ai_message(msg['content'])
+                            
+                            self._apply_message_window(tenant_id, user_id)
+                            loaded_count += 1
+                            logger.info(f"✅ Tenant {tenant_id} - Migrated conversation for user {user_id}")
+                
+                except Exception as e:
+                    logger.warning(f"Tenant {tenant_id} - Failed to migrate conversation {key}: {e}")
+                    continue
+            
+            # Contar conversaciones ya en nuevo formato
+            loaded_count += len(chat_history_keys)
+            
+            logger.info(f"✅ Tenant {tenant_id} - Loaded {loaded_count} conversation contexts from Redis")
+            
+        except Exception as e:
+            logger.error(f"❌ Tenant {tenant_id} - Error loading contexts from Redis: {e}")
     
     def get_message_count(self, tenant_id: str, user_id: str) -> int:
-        """Obtener conteo de mensajes por tenant"""
+        """Get total message count for a user"""
         try:
-            history = self._get_or_create_redis_history(tenant_id, user_id)
+            history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
             return len(history.messages)
         except Exception as e:
-            logger.error(f"Error getting message count: {e}")
+            logger.error(f"Tenant {tenant_id} - Error getting message count for user {user_id}: {e}")
             return 0
     
     def clear_conversation(self, tenant_id: str, user_id: str) -> bool:
-        """Limpiar conversación con identificación de tenant"""
+        """Clear conversation history for a user"""
         try:
-            cache_key = f"{tenant_id}:{user_id}"
-            if cache_key in self.message_histories:
-                history = self.message_histories[cache_key]
-                history.clear()
-                del self.message_histories[cache_key]
+            history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
+            history.clear()
             
+            # Limpiar metadata
             conversation_key = self._get_conversation_key(tenant_id, user_id)
             self.redis_client.delete(conversation_key)
             
-            logger.info(f"✅ Cleared conversation for tenant:{tenant_id} user:{user_id}")
+            # Limpiar caché
+            cache_key = f"{tenant_id}:{user_id}"
+            if cache_key in self.message_histories:
+                del self.message_histories[cache_key]
+            
+            logger.info(f"✅ Tenant {tenant_id} - Cleared conversation for user {user_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Error clearing conversation: {e}")
+            logger.error(f"❌ Tenant {tenant_id} - Error clearing conversation for user {user_id}: {e}")
             return False
-
-# Inicializar conversation manager
-conversation_manager = ModernConversationManager(redis_client, max_messages=MAX_CONTEXT_MESSAGES)
