@@ -1951,3 +1951,585 @@ try:
 except Exception as e:
     logger.error(f"❌ Error initializing modern components: {e}")
     sys.exit(1)
+
+# ===============================
+# Chat Response Handler
+# ===============================
+
+def get_modern_chat_response_multiagent(tenant_id: str, user_id: str, user_message: str) -> str:
+    """
+    Versión actualizada que usa sistema multi-agente
+    Reemplaza la función get_modern_chat_response existente
+    """
+    if not tenant_id or not user_id or not user_id.strip():
+        logger.error("Invalid tenant_id or user_id provided")
+        return "Error interno: ID de tenant o usuario inválido."
+    
+    if not user_message or not user_message.strip():
+        logger.error("Empty or invalid message content")
+        return "Por favor, envía un mensaje con contenido para poder ayudarte. 😊"
+    
+    try:
+        # Usar sistema multi-agente global
+        response, agent_used = modern_rag_system.multi_agent_system.get_response(tenant_id, user_message, user_id)
+        
+        logger.info(f"Tenant {tenant_id} - Multi-agent response for user {user_id}: {response[:100]}... (agent: {agent_used})")
+        
+        return response
+        
+    except Exception as e:
+        logger.exception(f"Tenant {tenant_id} - Error in multi-agent chat response for user {user_id}: {e}")
+        return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo en unos momentos. 🔧"
+
+# ===============================
+# CHATWOOT API FUNCTIONS
+# ===============================
+
+def send_message_to_chatwoot(tenant_id: str, conversation_id: str, message_content: str):
+    """Send message to Chatwoot using API"""
+    url = f"{CHATWOOT_BASE_URL}/api/v1/accounts/{tenant_id}/conversations/{conversation_id}/messages"
+
+    headers = {
+        "api_access_token": CHATWOOT_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "content": message_content,
+        "message_type": "outgoing",
+        "private": False
+    }
+
+    try:
+        response = requests.post(
+            url, 
+            json=payload, 
+            headers=headers, 
+            timeout=30,
+            verify=True
+        )
+
+        logger.info(f"Tenant {tenant_id} - Chatwoot API Response Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Tenant {tenant_id} - Message sent to conversation {conversation_id}")
+            return True
+        else:
+            logger.error(f"❌ Tenant {tenant_id} - Failed to send message: {response.status_code} - {response.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Tenant {tenant_id} - Error sending message to Chatwoot: {e}")
+        return False
+
+def extract_contact_id(data):
+    """
+    Extract contact_id with unified priority system and validation
+    Returns: (contact_id, method_used, is_valid)
+    """
+    conversation_data = data.get("conversation", {})
+    
+    # Priority order for contact extraction
+    extraction_methods = [
+        ("conversation.contact_inbox.contact_id", 
+         lambda: conversation_data.get("contact_inbox", {}).get("contact_id")),
+        ("conversation.meta.sender.id", 
+         lambda: conversation_data.get("meta", {}).get("sender", {}).get("id")),
+        ("root.sender.id", 
+         lambda: data.get("sender", {}).get("id") if data.get("sender", {}).get("type") != "agent" else None)
+    ]
+    
+    for method_name, extractor in extraction_methods:
+        try:
+            contact_id = extractor()
+            if contact_id and str(contact_id).strip():
+                # Validate contact_id format
+                contact_id = str(contact_id).strip()
+                if contact_id.isdigit() or contact_id.startswith("contact_"):
+                    logger.info(f"✅ Contact ID extracted: {contact_id} (method: {method_name})")
+                    return contact_id, method_name, True
+        except Exception as e:
+            logger.warning(f"Error in extraction method {method_name}: {e}")
+            continue
+    
+    logger.error("❌ No valid contact_id found in webhook data")
+    return None, "none", False
+    
+# ===============================
+# WEBHOOK HANDLERS - CORREGIDOS
+# ===============================
+
+class WebhookError(Exception):
+    """Custom exception for webhook errors"""
+    def __init__(self, message, status_code=400):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
+def validate_webhook_data(data):
+    """Validate webhook data structure"""
+    if not data:
+        raise WebhookError("No JSON data received", 400)
+    
+    event_type = data.get("event")
+    if not event_type:
+        raise WebhookError("Missing event type", 400)
+    
+    # Extract tenant_id from account_id in payload
+    tenant_id = data.get("account", {}).get("id")
+    if not tenant_id:
+        raise WebhookError("Missing account ID (tenant_id)", 400)
+    
+    return event_type, tenant_id
+
+def handle_conversation_updated(data, tenant_id):
+    """Handle conversation_updated events to update bot status"""
+    try:
+        conversation_id = data.get("id")
+        if not conversation_id:
+            logger.error(f"❌ Tenant {tenant_id} - Could not extract conversation_id from conversation_updated event")
+            return False
+        
+        conversation_status = data.get("status")
+        if not conversation_status:
+            logger.warning(f"⚠️ Tenant {tenant_id} - No status found in conversation_updated for {conversation_id}")
+            return False
+        
+        logger.info(f"📋 Tenant {tenant_id} - Conversation {conversation_id} updated to status: {conversation_status}")
+        update_bot_status(tenant_id, conversation_id, conversation_status)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error handling conversation_updated: {e}")
+        return False
+
+def process_incoming_message(data, tenant_id):
+    """Process incoming message with comprehensive validation and error handling"""
+    try:
+        # Validate message type
+        message_type = data.get("message_type")
+        if message_type != "incoming":
+            logger.info(f"🤖 Tenant {tenant_id} - Ignoring message type: {message_type}")
+            return {"status": "non_incoming_message", "ignored": True}
+
+        # Extract and validate conversation data
+        conversation_data = data.get("conversation", {})
+        if not conversation_data:
+            raise WebhookError("Missing conversation data", 400)
+
+        conversation_id = conversation_data.get("id")
+        conversation_status = conversation_data.get("status")
+        
+        if not conversation_id:
+            raise WebhookError("Missing conversation ID", 400)
+
+        # Validate conversation_id format
+        if not str(conversation_id).strip() or not str(conversation_id).isdigit():
+            raise WebhookError("Invalid conversation ID format", 400)
+
+        # Check if bot should respond
+        if not should_bot_respond(tenant_id, conversation_id, conversation_status):
+            return {
+                "status": "bot_inactive",
+                "message": f"Bot is inactive for status: {conversation_status}",
+                "active_only_for": BOT_ACTIVE_STATUSES
+            }
+
+        # Extract and validate message content
+        content = data.get("content", "").strip()
+        message_id = data.get("id")
+
+        if not content:
+            raise WebhookError("Missing message content", 400)
+
+        # Validate message content
+        if len(content) > 4000:  # Reasonable limit
+            logger.warning(f"Tenant {tenant_id} - Message content too long: {len(content)} characters")
+            content = content[:4000] + "..."
+
+        # Check for duplicate processing
+        if message_id and is_message_already_processed(tenant_id, message_id, conversation_id):
+            return {"status": "already_processed", "ignored": True}
+
+        # Extract contact information with improved validation
+        contact_id, extraction_method, is_valid = extract_contact_id(data)
+        if not is_valid or not contact_id:
+            raise WebhookError("Could not extract valid contact_id from webhook data", 400)
+
+        # Generate standardized user_id
+        user_id = modern_conversation_manager._create_user_id(contact_id)
+
+        logger.info(f"🔄 Tenant {tenant_id} - Processing message from conversation {conversation_id}")
+        logger.info(f"👤 Tenant {tenant_id} - User: {user_id} (contact: {contact_id}, method: {extraction_method})")
+        logger.info(f"💬 Tenant {tenant_id} - Message: {content[:100]}...")
+
+        # Generate response with validation - CORREGIDO
+        assistant_reply = get_modern_chat_response_multiagent(tenant_id, user_id, content)
+        
+        if not assistant_reply or not assistant_reply.strip():
+            assistant_reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías intentar de nuevo? 😊"
+        
+        logger.info(f"🤖 Tenant {tenant_id} - Assistant response: {assistant_reply[:100]}...")
+
+        # Send response to Chatwoot
+        success = send_message_to_chatwoot(tenant_id, conversation_id, assistant_reply)
+
+        if not success:
+            raise WebhookError("Failed to send response to Chatwoot", 500)
+
+        logger.info(f"✅ Tenant {tenant_id} - Successfully processed message for conversation {conversation_id}")
+        
+        return {
+            "status": "success",
+            "message": "Response sent successfully",
+            "tenant_id": tenant_id,
+            "conversation_id": str(conversation_id),
+            "user_id": user_id,
+            "contact_id": contact_id,
+            "contact_extraction_method": extraction_method,
+            "conversation_status": conversation_status,
+            "message_id": message_id,
+            "bot_active": True,
+            "model_used": MODEL_NAME,
+            "embedding_model": EMBEDDING_MODEL,
+            "vectorstore": "RedisVectorStore",
+            "message_length": len(content),
+            "response_length": len(assistant_reply)
+        }
+
+    
+    except Exception as e:
+        logger.exception(f"💥 Tenant {tenant_id} - Error procesando mensaje (ID: {message_id})")
+        raise WebhookError("Internal server error", 500)
+    except WebhookError:
+        raise
+
+
+@app.route("/webhook", methods=["POST"])
+def chatwoot_webhook():
+    try:
+        data = request.get_json()
+        event_type, tenant_id = validate_webhook_data(data)
+        
+        logger.info(f"🔔 WEBHOOK RECEIVED - Tenant: {tenant_id}, Event: {event_type}")
+
+        # Handle conversation updates
+        if event_type == "conversation_updated":
+            success = handle_conversation_updated(data, tenant_id)
+            status_code = 200 if success else 400
+            return jsonify({"status": "conversation_updated_processed", "success": success}), status_code
+
+        # Handle only message_created events
+        if event_type != "message_created":
+            logger.info(f"⏭️ Tenant {tenant_id} - Ignoring event type: {event_type}")
+            return jsonify({"status": "ignored_event_type", "event": event_type}), 200
+
+        # Process incoming message
+        result = process_incoming_message(data, tenant_id)
+        
+        if result.get("ignored"):
+            return jsonify(result), 200
+        
+        return jsonify(result), 200
+
+    except WebhookError as e:
+        logger.error(f"Webhook error: {e.message} (Status: {e.status_code})")
+        return jsonify({"status": "error", "message": "Error interno del servidor"}), e.status_code
+    except Exception as e:
+        logger.exception("Error no manejado en webhook")
+        return jsonify({"status": "error", "message": "Error interno del servidor"}), 500
+
+# ===============================
+# DOCUMENT MANAGEMENT ENDPOINTS - CORREGIDOS
+# ===============================
+
+def create_success_response(data, status_code=200):
+    """Create standardized success response"""
+    return jsonify({"status": "success", **data}), status_code
+
+def create_error_response(message, status_code=400):
+    """Create standardized error response"""
+    return jsonify({"status": "error", "message": message}), status_code
+
+def validate_document_data(data):
+    """Validate document data"""
+    if not data or 'content' not in data:
+        raise ValueError("Content is required")
+    
+    content = data['content'].strip()
+    if not content:
+        raise ValueError("Content cannot be empty")
+    
+    # Parsear metadata si es string
+    metadata = data.get('metadata', {})
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            raise ValueError("Invalid JSON metadata")
+    
+    return content, metadata
+
+@app.route("/documents", methods=["POST"])
+def add_document():
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+        
+        data = request.get_json()
+        content, metadata = validate_document_data(data)
+        
+        # Generar doc_id
+        doc_id = hashlib.md5(content.encode()).hexdigest()
+        
+        # Agregar doc_id a los metadatos
+        metadata['doc_id'] = doc_id
+        
+        # Obtener vectorstore específico del tenant
+        tenant_vectorstore = get_vectorstore(tenant_id)
+        
+        # Usar modern_rag_system
+        num_chunks = modern_rag_system.add_documents([content], [metadata])
+        
+        # Crear clave del documento con namespace de tenant
+        doc_key = f"tenant_{tenant_id}:document:{doc_id}"
+        
+        # Guardar en Redis
+        doc_data = {
+            'content': content,
+            'metadata': json.dumps(metadata),
+            'created_at': str(datetime.utcnow().isoformat()),
+            'chunk_count': str(num_chunks),
+            'tenant_id': tenant_id
+        }
+        
+        redis_client.hset(doc_key, mapping=doc_data)
+        redis_client.expire(doc_key, 604800)  # 7 días TTL
+        
+        # Registrar cambio en documento
+        document_change_tracker.register_document_change(tenant_id, doc_id, 'added')
+        
+        logger.info(f"✅ Tenant {tenant_id} - Document {doc_id} added with {num_chunks} chunks")
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "document_id": doc_id,
+            "chunk_count": num_chunks,
+            "message": f"Document added with {num_chunks} chunks"
+        }, 201)
+        
+    except ValueError as e:
+        return create_error_response(str(e), 400)
+    except Exception as e:
+        logger.exception("Error adding document")
+        return create_error_response("Failed to add document", 500)
+
+
+@app.route("/documents", methods=["GET"])
+def list_documents():
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        page = int(request.args.get('page', 1))
+        page_size = min(int(request.args.get('page_size', 50)), 100)
+        
+        # Obtener claves de documentos con namespace de tenant
+        doc_pattern = f"tenant_{tenant_id}:document:*"
+        doc_keys = redis_client.keys(doc_pattern)
+        
+        # Obtener claves de vectores con namespace de tenant
+        vector_pattern = f"tenant_{tenant_id}:documents:*"
+        vector_keys = redis_client.keys(vector_pattern)
+        
+        # Organizar vectores por doc_id (solo usando metadata)
+        vectors_by_doc = {}
+        for vector_key in vector_keys:
+            try:
+                # Obtener SOLO el campo metadata (evita campos binarios)
+                metadata_str = redis_client.hget(vector_key, 'metadata')
+                if metadata_str:
+                    metadata = json.loads(metadata_str)
+                    doc_id = metadata.get('doc_id')
+                    if doc_id:
+                        if doc_id not in vectors_by_doc:
+                            vectors_by_doc[doc_id] = []
+                        # Filtrar metadata para excluir campos problemáticos
+                        safe_metadata = {k: v for k, v in metadata.items() if k != 'embedding'}
+                        vectors_by_doc[doc_id].append({
+                            "vector_key": vector_key,
+                            "metadata": safe_metadata
+                        })
+            except Exception as e:
+                logger.warning(f"Tenant {tenant_id} - Error parsing vector {vector_key}: {e}")
+                continue
+        
+        # Aplicar paginación a documentos
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_doc_keys = doc_keys[start_idx:end_idx]
+        
+        # Construir respuesta
+        documents = []
+        for key in paginated_doc_keys:
+            try:
+                doc_data = redis_client.hgetall(key)
+                if doc_data:
+                    doc_id = key.split(':')[2] if len(key.split(':')) > 2 else key
+                    content = doc_data.get('content', '')
+                    metadata = json.loads(doc_data.get('metadata', '{}'))
+                    
+                    # Obtener vectores de este documento
+                    doc_vectors = vectors_by_doc.get(doc_id, [])
+                    
+                    documents.append({
+                        "tenant_id": tenant_id,
+                        "id": doc_id,
+                        "content": content[:200] + "..." if len(content) > 200 else content,
+                        "metadata": metadata,
+                        "created_at": doc_data.get('created_at'),
+                        "chunk_count": int(doc_data.get('chunk_count', 0)),
+                        "vectors": {
+                            "count": len(doc_vectors),
+                            "sample_vectors": doc_vectors[:3]  # Limitar a 3
+                        }
+                    })
+            except Exception as e:
+                logger.warning(f"Tenant {tenant_id} - Error parsing document {key}: {e}")
+                continue
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "total_documents": len(doc_keys),
+            "total_vectors": len(vector_keys),
+            "page": page,
+            "page_size": page_size,
+            "documents": documents
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error listing documents: {e}")
+        return create_error_response("Failed to list documents", 500)
+
+@app.route("/documents/search", methods=["POST"])
+def search_documents():
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        data = request.get_json()
+        if not data or 'query' not in data:
+            return create_error_response("Query is required", 400)
+        
+        query = data['query'].strip()
+        if not query:
+            return create_error_response("Query cannot be empty", 400)
+        
+        k = min(data.get('k', MAX_RETRIEVED_DOCS), 20)  # Limit max results
+        
+        # Obtener vectorstore específico del tenant
+        tenant_vectorstore = get_vectorstore(tenant_id)
+        
+        # CORREGIDO: Usar modern_rag_system
+        docs = modern_rag_system.search_documents(query, k)
+        
+        results = []
+        for doc in docs:
+            results.append({
+                "content": doc.page_content,
+                "metadata": getattr(doc, 'metadata', {}),
+                "score": getattr(doc, 'score', None)
+            })
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "query": query,
+            "results_count": len(results),
+            "results": results
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error searching documents: {e}")
+        return create_error_response("Failed to search documents", 500)
+
+@app.route("/documents/bulk", methods=["POST"])
+def bulk_add_documents():
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        data = request.get_json()
+        if not data or 'documents' not in data:
+            return create_error_response("Documents array is required", 400)
+
+        documents = data['documents']
+        if not isinstance(documents, list) or not documents:
+            return create_error_response("Documents must be a non-empty array", 400)
+
+        added_docs = 0
+        total_chunks = 0
+        errors = []
+        added_doc_ids = []  # Rastrear IDs agregados
+
+        for i, doc_data in enumerate(documents):
+            try:
+                content, metadata = validate_document_data(doc_data)
+
+                # Generar doc_id
+                doc_id = hashlib.md5(content.encode()).hexdigest()
+                metadata['doc_id'] = doc_id
+
+                # Usar modern_rag_system
+                num_chunks = modern_rag_system.add_documents([content], [metadata])
+                total_chunks += num_chunks
+
+                # Save to Redis
+                doc_key = f"tenant_{tenant_id}:document:{doc_id}"
+                doc_redis_data = {
+                    'content': content,
+                    'metadata': json.dumps(metadata),
+                    'created_at': str(datetime.utcnow().isoformat()),
+                    'chunk_count': str(num_chunks),
+                    'tenant_id': tenant_id
+                }
+
+                redis_client.hset(doc_key, mapping=doc_redis_data)
+                redis_client.expire(doc_key, 604800)  # 7 days TTL
+
+                added_docs += 1
+                added_doc_ids.append(doc_id)  # Guardar ID
+
+            except Exception as e:
+                errors.append(f"Document {i}: {str(e)}")
+                continue
+
+        # Registrar cambios en batch
+        for doc_id in added_doc_ids:
+            document_change_tracker.register_document_change(tenant_id, doc_id, 'added')
+
+        response_data = {
+            "tenant_id": tenant_id,
+            "documents_added": added_docs,
+            "total_chunks": total_chunks,
+            "message": f"Added {added_docs} documents with {total_chunks} chunks"
+        }
+
+        if errors:
+            response_data["errors"] = errors
+            response_data["message"] += f". {len(errors)} documents failed."
+
+        logger.info(f"✅ Tenant {tenant_id} - Bulk added {added_docs} documents with {total_chunks} chunks")
+
+        return create_success_response(response_data, 201)
+
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error bulk adding documents: {e}")
+        return create_error_response("Failed to bulk add documents", 500)
