@@ -2533,3 +2533,505 @@ def bulk_add_documents():
     except Exception as e:
         logger.error(f"Tenant {tenant_id} - Error bulk adding documents: {e}")
         return create_error_response("Failed to bulk add documents", 500)
+
+@app.route("/documents/<doc_id>", methods=["DELETE"])
+def delete_document(doc_id):
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        doc_key = f"tenant_{tenant_id}:document:{doc_id}"
+        if not redis_client.exists(doc_key):
+            return create_error_response("Document not found", 404)
+        
+        index_name = f"tenant_{tenant_id}:documents"
+        pattern = f"{index_name}:*"
+        keys = redis_client.keys(pattern)
+        
+        vectors_to_delete = []
+        for key in keys:
+            # Verificar el campo 'doc_id' directamente en el hash
+            doc_id_in_hash = redis_client.hget(key, 'doc_id')
+            if doc_id_in_hash == doc_id:
+                vectors_to_delete.append(key)
+        
+        # Eliminar vectores si se encontraron
+        if vectors_to_delete:
+            redis_client.delete(*vectors_to_delete)
+            logger.info(f"Tenant {tenant_id} - Removed {len(vectors_to_delete)} vectors for doc {doc_id}")
+        
+        # Eliminar documento y registrar cambio
+        redis_client.delete(doc_key)
+        document_change_tracker.register_document_change(tenant_id, doc_id, 'deleted')
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "message": "Document deleted successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error deleting document: {e}")
+        return create_error_response("Failed to delete document", 500)
+
+# ===============================
+# CONVERSATION MANAGEMENT ENDPOINTS - CORREGIDOS
+# ===============================
+
+@app.route("/conversations", methods=["GET"])
+def list_conversations():
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        page = int(request.args.get('page', 1))
+        page_size = min(int(request.args.get('page_size', 50)), 100)
+        
+        # Get conversation keys from Redis using modern pattern
+        pattern = f"tenant_{tenant_id}:conversation:*"
+        keys = redis_client.keys(pattern)
+        
+        # Apply pagination
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_keys = keys[start_idx:end_idx]
+        
+        conversations = []
+        for key in paginated_keys:
+            try:
+                # Extract user_id from key
+                parts = key.split(':')
+                if len(parts) < 3:
+                    continue
+                user_id = parts[2]
+                
+                messages = modern_conversation_manager.get_chat_history(tenant_id, user_id)
+                
+                conversations.append({
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "message_count": len(messages),
+                    "last_updated": redis_client.hget(key, 'last_updated')
+                })
+            except Exception as e:
+                logger.warning(f"Tenant {tenant_id} - Error parsing conversation {key}: {e}")
+                continue
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "total_conversations": len(keys),
+            "page": page,
+            "page_size": page_size,
+            "conversations": conversations
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error listing conversations: {e}")
+        return create_error_response("Failed to list conversations", 500)
+
+@app.route("/conversations/<user_id>", methods=["GET"])
+def get_conversation(user_id):
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        messages = modern_conversation_manager.get_chat_history(tenant_id, user_id)
+        
+        # Get last updated timestamp
+        conversation_key = modern_conversation_manager._get_conversation_key(tenant_id, user_id)
+        last_updated = redis_client.hget(conversation_key, 'last_updated') if conversation_key else None
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "message_count": len(messages),
+            "messages": messages,
+            "last_updated": last_updated
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error getting conversation: {e}")
+        return create_error_response("Failed to get conversation", 500)
+
+@app.route("/conversations/<user_id>", methods=["DELETE"])
+def delete_conversation(user_id):
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        modern_conversation_manager.clear_conversation(tenant_id, user_id)
+        
+        logger.info(f"✅ Tenant {tenant_id} - Conversation {user_id} deleted")
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "message": f"Conversation {user_id} deleted"
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error deleting conversation: {e}")
+        return create_error_response("Failed to delete conversation", 500)
+
+@app.route("/conversations/<user_id>/test", methods=["POST"])
+def test_conversation(user_id):
+    try:
+        # Get tenant_id from headers
+        tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            return create_error_response("Missing X-Tenant-ID header", 400)
+            
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return create_error_response("Message is required", 400)
+        
+        message = data['message'].strip()
+        if not message:
+            return create_error_response("Message cannot be empty", 400)
+        
+        # Get bot response
+        response = get_modern_chat_response_multiagent(tenant_id, user_id, message)
+        
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "user_message": message,
+            "bot_response": response,
+            "timestamp": time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Tenant {tenant_id} - Error testing conversation: {e}")
+        return create_error_response("Failed to test conversation", 500)
+
+# ===============================
+# SYSTEM STATUS ENDPOINTS - CORREGIDOS
+# ===============================
+
+def check_component_health():
+    """Check health of system components"""
+    components = {}
+    
+    # Check Redis
+    try:
+        redis_client.ping()
+        components["redis"] = "connected"
+    except Exception as e:
+        components["redis"] = f"error: {str(e)}"
+    
+    # Check OpenAI
+    try:
+        embeddings.embed_query("test")
+        components["openai"] = "connected"
+    except Exception as e:
+        components["openai"] = f"error: {str(e)}"
+    
+    # Check vectorstore
+    try:
+        # We can't check all tenants, so check a sample tenant
+        sample_vectorstore = get_vectorstore("sample")
+        sample_vectorstore.similarity_search("test", k=1)
+        components["vectorstore"] = "connected"
+    except Exception as e:
+        components["vectorstore"] = f"error: {str(e)}"
+    
+    return components
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    try:
+        components = check_component_health()
+        
+        # Get global stats
+        conversation_keys = redis_client.keys("tenant_*:conversation:*")
+        document_keys = redis_client.keys("tenant_*:document:*")
+        bot_status_keys = redis_client.keys("tenant_*:bot_status:*")
+        
+        # Determine overall health
+        healthy = all("error" not in str(status) for status in components.values())
+        
+        response_data = {
+            "timestamp": time.time(),
+            "components": {
+                **components,
+                "conversations": len(conversation_keys),
+                "documents": len(document_keys),
+                "bot_statuses": len(bot_status_keys)
+            },
+            "configuration": {
+                "model": MODEL_NAME,
+                "embedding_model": EMBEDDING_MODEL,
+                "max_tokens": MAX_TOKENS,
+                "temperature": TEMPERATURE,
+                "max_context_messages": MAX_CONTEXT_MESSAGES,
+                "similarity_threshold": SIMILARITY_THRESHOLD,
+                "max_retrieved_docs": MAX_RETRIEVED_DOCS
+            }
+        }
+        
+        if healthy:
+            return jsonify({"status": "healthy", **response_data}), 200
+        else:
+            return jsonify({"status": "unhealthy", **response_data}), 503
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": time.time()
+        }), 503
+
+@app.route("/status", methods=["GET"])
+def get_status():
+    try:
+        # Get tenant_id from headers (optional)
+        tenant_id = request.headers.get("X-Tenant-ID")
+        
+        # Get global stats
+        conversation_keys = redis_client.keys("tenant_*:conversation:*")
+        document_keys = redis_client.keys("tenant_*:document:*")
+        bot_status_keys = redis_client.keys("tenant_*:bot_status:*")
+        
+        # Count active bots
+        active_bots = 0
+        for key in bot_status_keys:
+            try:
+                status_data = redis_client.hgetall(key)
+                if status_data.get('active') == 'True':
+                    active_bots += 1
+            except Exception:
+                continue
+        
+        # Get processed message count
+        processed_message_count = len(redis_client.keys("tenant_*:processed_message:*"))
+        
+        # Build response
+        response_data = {
+            "timestamp": time.time(),
+            "statistics": {
+                "total_conversations": len(conversation_keys),
+                "active_bots": active_bots,
+                "total_bot_statuses": len(bot_status_keys),
+                "processed_messages": processed_message_count,
+                "total_documents": len(document_keys)
+            },
+            "environment": {
+                "chatwoot_url": CHATWOOT_BASE_URL,
+                "model": MODEL_NAME,
+                "embedding_model": EMBEDDING_MODEL,
+                "redis_url": REDIS_URL
+            }
+        }
+        
+        # Add tenant-specific stats if tenant_id provided
+        if tenant_id:
+            # Count tenant-specific resources
+            tenant_conversation_keys = redis_client.keys(f"tenant_{tenant_id}:conversation:*")
+            tenant_document_keys = redis_client.keys(f"tenant_{tenant_id}:document:*")
+            tenant_bot_status_keys = redis_client.keys(f"tenant_{tenant_id}:bot_status:*")
+            
+            tenant_active_bots = 0
+            for key in tenant_bot_status_keys:
+                try:
+                    status_data = redis_client.hgetall(key)
+                    if status_data.get('active') == 'True':
+                        tenant_active_bots += 1
+                except Exception:
+                    continue
+            
+            tenant_processed_messages = len(redis_client.keys(f"tenant_{tenant_id}:processed_message:*"))
+            
+            response_data["tenant_statistics"] = {
+                "tenant_id": tenant_id,
+                "conversations": len(tenant_conversation_keys),
+                "active_bots": tenant_active_bots,
+                "bot_statuses": len(tenant_bot_status_keys),
+                "processed_messages": tenant_processed_messages,
+                "documents": len(tenant_document_keys)
+            }
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Status check failed: {e}")
+        return create_error_response("Failed to get status", 500)
+
+@app.route("/reset", methods=["POST"])
+def reset_system():
+    try:
+        # Get tenant_id from headers (optional)
+        tenant_id = request.headers.get("X-Tenant-ID")
+        
+        if tenant_id:
+            # Reset only for specific tenant
+            patterns = [
+                f"tenant_{tenant_id}:processed_message:*",
+                f"tenant_{tenant_id}:bot_status:*",
+                f"tenant_{tenant_id}:conversation:*",
+                f"tenant_{tenant_id}:document:*",
+                f"tenant_{tenant_id}:chat_history:*"
+            ]
+            
+            for pattern in patterns:
+                keys = redis_client.keys(pattern)
+                if keys:
+                    redis_client.delete(*keys)
+            
+            logger.info(f"✅ Tenant {tenant_id} - System reset completed")
+            return create_success_response({
+                "tenant_id": tenant_id,
+                "message": "System reset completed for tenant",
+                "timestamp": time.time()
+            })
+        else:
+            # Reset entire system (all tenants)
+            patterns = [
+                "tenant_*:processed_message:*",
+                "tenant_*:bot_status:*",
+                "tenant_*:conversation:*",
+                "tenant_*:document:*",
+                "tenant_*:chat_history:*"
+            ]
+            
+            for pattern in patterns:
+                keys = redis_client.keys(pattern)
+                if keys:
+                    redis_client.delete(*keys)
+            
+            logger.info("✅ Full system reset completed")
+            return create_success_response({
+                "message": "Full system reset completed",
+                "timestamp": time.time()
+            })
+        
+    except Exception as e:
+        tenant_msg = f" for tenant {tenant_id}" if tenant_id else ""
+        logger.error(f"System reset failed{tenant_msg}: {e}")
+        return create_error_response("Failed to reset system", 500)
+
+# ===============================
+# STATIC FILE SERVING
+# ===============================
+
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('.', filename)
+
+@app.route('/')
+def serve_frontend():
+    return send_file('index.html')
+
+# ===============================
+# ERROR HANDLERS - MEJORADOS
+# ===============================
+
+@app.errorhandler(404)
+def not_found(error):
+    return create_error_response("Endpoint not found", 404)
+
+@app.errorhandler(405)
+def method_not_allowed(error):
+    return create_error_response("Method not allowed", 405)
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}")
+    return create_error_response("Internal server error", 500)
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"Unhandled exception: {e}")
+    return create_error_response("An unexpected error occurred", 500)
+
+# ===============================
+# STARTUP AND CLEANUP - ACTUALIZADOS
+# ===============================
+
+def startup_checks():
+    """Startup verification checks"""
+    try:
+        logger.info("🚀 Starting Multi-Tenant ChatBot with Modern Architecture...")
+        
+        # Check Redis connection
+        redis_client.ping()
+        logger.info("✅ Redis connection verified")
+        
+        # Check OpenAI connection
+        embeddings.embed_query("test startup")
+        logger.info("✅ OpenAI connection verified")
+        
+        # Check vectorstore for a sample tenant
+        sample_vectorstore = get_vectorstore("sample")
+        sample_vectorstore.similarity_search("test", k=1)
+        logger.info("✅ Vectorstore connection verified")
+        
+        # Initialize conversation manager
+        logger.info("✅ Modern conversation manager initialized")
+        
+        # Display configuration
+        logger.info("📋 Configuration:")
+        logger.info(f"   Model: {MODEL_NAME}")
+        logger.info(f"   Embedding Model: {EMBEDDING_MODEL}")
+        logger.info(f"   Max Tokens: {MAX_TOKENS}")
+        logger.info(f"   Temperature: {TEMPERATURE}")
+        logger.info(f"   Max Context Messages: {MAX_CONTEXT_MESSAGES}")
+        logger.info(f"   Similarity Threshold: {SIMILARITY_THRESHOLD}")
+        logger.info(f"   Max Retrieved Docs: {MAX_RETRIEVED_DOCS}")
+        logger.info(f"   Redis URL: {REDIS_URL}")
+        
+        logger.info("🎉 Multi-Tenant ChatBot startup completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup check failed: {e}")
+        raise
+
+def cleanup():
+    """Clean up resources on shutdown"""
+    try:
+        logger.info("🧹 Cleaning up resources...")
+        # Cleanup is handled automatically by Redis TTLs
+        logger.info("💾 All resources cleaned up")
+        logger.info("👋 ChatBot shutdown completed")
+    except Exception as e:
+        logger.error(f"❌ Cleanup failed: {e}")
+
+# ===============================
+# MAIN EXECUTION
+# ===============================
+
+if __name__ == "__main__":
+    try:
+        # Run startup checks
+        startup_checks()
+        
+        # Setup cleanup handler
+        import atexit
+        atexit.register(cleanup)
+        
+        # Start server
+        logger.info(f"🌐 Starting server on port {PORT}")
+        logger.info(f"📡 Webhook endpoint: http://localhost:{PORT}/webhook")
+        logger.info(f"🔍 Health check: http://localhost:{PORT}/health")
+        logger.info(f"📊 Status: http://localhost:{PORT}/status")
+        
+        app.run(
+            host="0.0.0.0",
+            port=PORT,
+            debug=os.getenv("ENVIRONMENT") != "production",
+            threaded=True
+        )
+        
+    except KeyboardInterrupt:
+        logger.info("🛑 Received shutdown signal")
+        cleanup()
+    except Exception as e:
+        logger.error(f"❌ Failed to start server: {e}")
+        cleanup()
+        sys.exit(1)
