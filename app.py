@@ -1848,6 +1848,92 @@ def create_enhanced_multiagent_system(chat_model, vectorstore, conversation_mana
     return MultiTenantMultiAgentSystem(chat_model, vectorstore, conversation_manager)
 
 # ===============================
+# modern_rag_system_with_multiagent
+# ===============================
+def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings, conversation_manager):
+    """
+    Crear sistema RAG moderno con arquitectura multi-agente
+    Reemplaza la clase ModernBenovaRAGSystem manteniendo compatibilidad
+    """
+    class ModernRAGSystemMultiAgent:
+        """
+        Wrapper que mantiene compatibilidad con el sistema existente
+        pero usa arquitectura multi-agente internamente
+        """
+        
+        def __init__(self, vectorstore, chat_model, embeddings, conversation_manager):
+            self.vectorstore = vectorstore
+            self.chat_model = chat_model
+            self.embeddings = embeddings
+            self.conversation_manager = conversation_manager
+            self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            
+            # Inicializar sistema multi-agente
+            self.multi_agent_system = MultiTenantMultiAgentSystem(
+                chat_model, vectorstore, conversation_manager
+            )
+        
+        def get_response(self, tenant_id: str, question: str, user_id: str) -> Tuple[str, List]:
+            """
+            Método compatible con la interfaz existente - FIXED: Usar invoke
+            """
+            try:
+                # Usar sistema multi-agente
+                response, agent_used = self.multi_agent_system.get_response(tenant_id, question, user_id)
+                
+                # Obtener documentos para compatibilidad
+                docs = self.retriever.invoke(question)
+                
+                logger.info(f"Multi-agent response: {response[:100]}... (agent: {agent_used})")
+                
+                return response, docs
+                
+            except Exception as e:
+                logger.error(f"Error in multi-agent RAG system: {e}")
+                return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", []
+        
+        def add_documents(self, documents: List[str], metadatas: List[Dict] = None):
+            """
+            ACTUALIZADO: Agregar documentos usando sistema de chunking avanzado
+            """
+            if not documents:
+                return 0
+            
+            try:
+                all_texts = []
+                all_metas = []
+                
+                for i, doc in enumerate(documents):
+                    if doc and doc.strip():
+                        # Usar sistema de chunking avanzado
+                        texts, auto_metadatas = advanced_chunk_processing(doc)
+                        
+                        # Combinar metadata automática con metadata proporcionada
+                        base_metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
+                        
+                        for j, (text, auto_meta) in enumerate(zip(texts, auto_metadatas)):
+                            if text.strip():
+                                all_texts.append(text)
+                                # Combinar metadatas
+                                combined_meta = base_metadata.copy()
+                                combined_meta.update(auto_meta)
+                                combined_meta.update({"chunk_index": j, "doc_index": i})
+                                all_metas.append(combined_meta)
+                
+                # Agregar al vectorstore
+                if all_texts:
+                    self.vectorstore.add_texts(all_texts, metadatas=all_metas)
+                    logger.info(f"Added {len(all_texts)} advanced chunks to vectorstore")
+                
+                return len(all_texts)
+                
+            except Exception as e:
+                logger.error(f"Error adding documents with advanced chunking: {e}")
+                return 0
+    
+    return ModernRAGSystemMultiAgent(vectorstore, chat_model, embeddings, conversation_manager)
+
+# ===============================
 # Initialize Modern Components
 # ===============================
 
