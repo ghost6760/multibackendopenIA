@@ -664,6 +664,69 @@ class ModernConversationManager:
             return False
 
 
+##############################################################
+document tracker
+####################################################################
+
+class MultiTenantDocumentChangeTracker:
+    """
+    Sistema multi-tenant para rastrear cambios en documentos y invalidar cache
+    """
+    
+    def __init__(self, redis_client):
+        self.redis_client = redis_client
+    
+    def get_current_version(self, tenant_id: str) -> int:
+        """Obtener versión actual del vectorstore para un tenant específico"""
+        version_key = f"tenant_{tenant_id}:vectorstore_version"
+        try:
+            version = self.redis_client.get(version_key)
+            return int(version) if version else 0
+        except:
+            return 0
+    
+    def increment_version(self, tenant_id: str):
+        """Incrementar versión del vectorstore para un tenant específico"""
+        version_key = f"tenant_{tenant_id}:vectorstore_version"
+        try:
+            self.redis_client.incr(version_key)
+            logger.info(f"Tenant {tenant_id} - Vectorstore version incremented to {self.get_current_version(tenant_id)}")
+        except Exception as e:
+            logger.error(f"Tenant {tenant_id} - Error incrementing version: {e}")
+    
+    def register_document_change(self, tenant_id: str, doc_id: str, change_type: str):
+        """
+        Registrar cambio en documento para un tenant específico
+        change_type: 'added', 'updated', 'deleted'
+        """
+        try:
+            change_data = {
+                'doc_id': doc_id,
+                'change_type': change_type,
+                'timestamp': datetime.utcnow().isoformat(),
+                'tenant_id': tenant_id
+            }
+            
+            # Registrar cambio con clave específica del tenant
+            change_key = f"tenant_{tenant_id}:doc_change:{doc_id}:{int(time.time())}"
+            self.redis_client.setex(change_key, 3600, json.dumps(change_data))  # 1 hour TTL
+            
+            # Incrementar versión global del tenant
+            self.increment_version(tenant_id)
+            
+            logger.info(f"Tenant {tenant_id} - Document change registered: {doc_id} - {change_type}")
+            
+        except Exception as e:
+            logger.error(f"Tenant {tenant_id} - Error registering document change: {e}")
+    
+    def should_invalidate_cache(self, tenant_id: str, last_version: int) -> bool:
+        """Determinar si se debe invalidar cache para un tenant específico"""
+        current_version = self.get_current_version(tenant_id)
+        return current_version > last_version
+
+# Instanciar el tracker multi-tenant
+document_change_tracker = MultiTenantDocumentChangeTracker(redis_client)
+
 # ===============================
 # multiagentSystem - ACTUALIZADO PARA USAR CHAT HISTORY UNIFICADO Y MULTI-TENANT
 # ===============================
