@@ -671,14 +671,13 @@ class ModernConversationManager:
 class MultiTenantMultiAgentSystem:
     """
     Sistema multi-agente integrado con agente de schedule mejorado
-    Incluye microservicio de Selenium para agendamiento automático
+    Ahora completamente multi-tenant con aislamiento de datos por empresa
     """
     
-    def __init__(self, chat_model, vectorstore, conversation_manager):
+    def __init__(self, chat_model, get_vectorstore_func, conversation_manager):
         self.chat_model = chat_model
-        self.vectorstore = vectorstore
+        self.get_vectorstore_func = get_vectorstore_func  # Función para obtener vectorstore por tenant
         self.conversation_manager = conversation_manager
-        self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
         
         # URL del microservicio de schedule (configuración para local)
         self.schedule_service_url = os.getenv('SCHEDULE_SERVICE_URL', 'http://127.0.0.1:4040')
@@ -700,14 +699,18 @@ class MultiTenantMultiAgentSystem:
         self.sales_agent = self._create_sales_agent()
         self.support_agent = self._create_support_agent()
         self.schedule_agent = self._create_enhanced_schedule_agent()
-        # Initialize availability agent
         self.availability_agent = self._create_availability_agent()
-        # Crear orquestador principal
         
+        # Crear orquestador principal
         self.orchestrator = self._create_orchestrator()
         
         # Inicializar conexión con microservicio local
         self._initialize_local_selenium_connection()
+    
+    def _get_tenant_retriever(self, tenant_id: str):
+        """Obtener retriever específico para cada tenant"""
+        tenant_vectorstore = self.get_vectorstore_func(tenant_id)
+        return tenant_vectorstore.as_retriever(search_kwargs={"k": 3})
     
     def _verify_selenium_service(self, force_check: bool = False) -> bool:
         """
@@ -876,8 +879,10 @@ Pregunta del usuario: {question}"""),
         def get_sales_context(inputs):
             """Obtener contexto RAG para ventas"""
             try:
+                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
-                docs = self.retriever.invoke(question)
+                retriever = self._get_tenant_retriever(tenant_id)
+                docs = retriever.invoke(question)
                 
                 if not docs:
                     return """Información básica del centro:
@@ -897,7 +902,8 @@ Para información específica de tratamientos, te conectaré con un especialista
             {
                 "context": get_sales_context,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", [])
+                "chat_history": lambda x: x.get("chat_history", []),
+                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
             }
             | sales_prompt
             | self.chat_model
@@ -943,8 +949,10 @@ Consulta del usuario: {question}"""),
         def get_support_context(inputs):
             """Obtener contexto RAG para soporte"""
             try:
+                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
-                docs = self.retriever.invoke(question)
+                retriever = self._get_tenant_retriever(tenant_id)
+                docs = retriever.invoke(question)
                 
                 if not docs:
                     return """Información general del centro:
@@ -964,14 +972,14 @@ Para información específica, te conectaré con un especialista."""
             {
                 "context": get_support_context,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", [])
+                "chat_history": lambda x: x.get("chat_history", []),
+                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
             }
             | support_prompt
             | self.chat_model
             | StrOutputParser()
         )
 
-###########################################################################################################################################
     def _create_availability_agent(self):
         """Agente que verifica disponibilidad MEJORADO con comunicación robusta"""
         availability_prompt = ChatPromptTemplate.from_messages([
@@ -1014,13 +1022,13 @@ Para información específica, te conectaré con un especialista."""
         def process_availability(inputs):
             """Procesar consulta de disponibilidad MEJORADA"""
             try:
+                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
                 chat_history = inputs.get("chat_history", [])
                 selenium_status = inputs.get("selenium_status", "")
                 
                 logger.info(f"=== AVAILABILITY AGENT - PROCESANDO ===")
-                logger.info(f"Pregunta: {question}")
-                logger.info(f"Estado Selenium: {selenium_status}")
+                logger.info(f"Tenant: {tenant_id}, Pregunta: {question}")
                 
                 # 1. VERIFICAR SERVICIO DISPONIBLE PRIMERO
                 if not self._verify_selenium_service():
@@ -1037,7 +1045,7 @@ Para información específica, te conectaré con un especialista."""
                 logger.info(f"Fecha extraída: {date}, Tratamiento: {treatment}")
                 
                 # Obtener duración del tratamiento desde RAG
-                duration = self._get_treatment_duration(treatment)
+                duration = self._get_treatment_duration(tenant_id, treatment)
                 logger.info(f"Duración del tratamiento: {duration} minutos")
                 
                 # 2. LLAMAR ENDPOINT CON MÉTODO MEJORADO
@@ -1073,7 +1081,8 @@ Para información específica, te conectaré con un especialista."""
             {
                 "selenium_status": get_availability_selenium_status,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", [])
+                "chat_history": lambda x: x.get("chat_history", []),
+                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
             }
             | RunnableLambda(process_availability)
         )
@@ -1146,11 +1155,12 @@ Para información específica, te conectaré con un especialista."""
         
         return "tratamiento general"
     
-    def _get_treatment_duration(self, treatment):
+    def _get_treatment_duration(self, tenant_id: str, treatment: str) -> int:
         """Obtener duración del tratamiento desde RAG o configuración por defecto"""
         try:
             # Consultar RAG para obtener duración específica
-            docs = self.retriever.invoke(f"duración tiempo {treatment}")
+            retriever = self._get_tenant_retriever(tenant_id)
+            docs = retriever.invoke(f"duración tiempo {treatment}")
             
             for doc in docs:
                 content = doc.page_content.lower()
@@ -1307,7 +1317,6 @@ Para información específica, te conectaré con un especialista."""
         slots_text = "\n".join(f"- {slot}" for slot in slots)
         return f"Horarios disponibles para {date} (tratamiento de {duration} min):\n{slots_text}"
 
-#########################################################################################################################################################
     def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list) -> Dict[str, Any]:
         """Llamar al microservicio de schedule LOCAL"""
         try:
@@ -1427,8 +1436,10 @@ Para información específica, te conectaré con un especialista."""
         def get_schedule_context(inputs):
             """Obtener contexto RAG para agenda"""
             try:
+                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
-                docs = self.retriever.invoke(question)
+                retriever = self._get_tenant_retriever(tenant_id)
+                docs = retriever.invoke(question)
                 
                 if not docs:
                     return """Información básica de agenda:
@@ -1455,6 +1466,7 @@ Para información específica, te conectaré con un especialista."""
         def process_schedule_with_selenium(inputs):
             """Procesar solicitud de agenda con integración de disponibilidad MEJORADA"""
             try:
+                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
                 user_id = inputs.get("user_id", "default_user")
                 chat_history = inputs.get("chat_history", [])
@@ -1468,7 +1480,10 @@ Para información específica, te conectaré con un especialista."""
                 if self._contains_schedule_intent(question):
                     logger.info("Detectado intent de agendamiento - verificando disponibilidad")
                     try:
-                        availability_response = self.availability_agent.invoke({"question": question,})
+                        availability_response = self.availability_agent.invoke({
+                            "question": question,
+                            "tenant_id": tenant_id
+                        })
                         available_slots = availability_response
                         logger.info(f"Disponibilidad obtenida: {available_slots}")
                     except Exception as e:
@@ -1521,7 +1536,8 @@ Para información específica, te conectaré con un especialista."""
                 "selenium_status": get_selenium_status,
                 "question": lambda x: x.get("question", ""),
                 "chat_history": lambda x: x.get("chat_history", []),
-                "user_id": lambda x: x.get("user_id", "default_user")
+                "user_id": lambda x: x.get("user_id", "default_user"),
+                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
             }
             | RunnableLambda(process_schedule_with_selenium)
         )
@@ -1587,8 +1603,6 @@ Para información específica, te conectaré con un especialista."""
         # Si solo pregunta por disponibilidad y no confirma agendamiento
         return has_availability_check and not has_schedule_confirmation
     
-    # También necesitas agregar estos métodos de logging adicionales:
-    
     def _log_schedule_decision_process(self, question: str, availability: str, will_use_selenium: bool):
         """Log detallado del proceso de decisión para agendamiento"""
         logger.info(f"=== PROCESO DE DECISIÓN DE AGENDAMIENTO ===")
@@ -1650,8 +1664,6 @@ Puedes:
         has_date_indicator = any(word in message_lower for word in ["fecha", "día", "mañana", "hoy"])
         
         return has_name_indicator and has_phone_indicator and has_date_indicator
-    
-
     
     def _notify_appointment_success(self, user_id: str, appointment_data: Dict[str, Any]):
         """Notificar al sistema principal sobre cita exitosa"""
@@ -1735,8 +1747,9 @@ Puedes:
             # Obtener historial de conversación
             chat_history = self.conversation_manager.get_chat_history(tenant_id, user_id, format_type="messages")
             
-            # Preparar inputs
+            # Preparar inputs con tenant_id
             inputs = {
+                "tenant_id": tenant_id,  # Nuevo campo crítico
                 "question": question.strip(),
                 "chat_history": chat_history,
                 "user_id": user_id
@@ -1754,7 +1767,7 @@ Puedes:
             # Determinar qué agente se utilizó (para logging)
             agent_used = self._determine_agent_used(response)
             
-            logger.info(f"Multi-agent response generated for tenant {tenant_id} user {user_id} using {agent_used}")
+            logger.info(f"Tenant {tenant_id} - Multi-agent response generated for user {user_id} using {agent_used}")
             
             return response, agent_used
             
@@ -1815,7 +1828,6 @@ Puedes:
                 "environment": os.getenv('ENVIRONMENT', 'production'),
                 "error": str(e)
             }
-    
     
     def get_system_stats(self) -> Dict[str, Any]:
         """
