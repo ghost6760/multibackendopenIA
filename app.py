@@ -1850,7 +1850,7 @@ def create_enhanced_multiagent_system(chat_model, vectorstore, conversation_mana
 # ===============================
 # modern_rag_system_with_multiagent
 # ===============================
-def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings, conversation_manager):
+def create_modern_rag_system_with_multiagent(get_vectorstore_func, chat_model, embeddings, conversation_manager):
     """
     Crear sistema RAG moderno con arquitectura multi-agente
     Reemplaza la clase ModernBenovaRAGSystem manteniendo compatibilidad
@@ -1861,40 +1861,44 @@ def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings
         pero usa arquitectura multi-agente internamente
         """
         
-        def __init__(self, vectorstore, chat_model, embeddings, conversation_manager):
-            self.vectorstore = vectorstore
+        def __init__(self, get_vectorstore_func, chat_model, embeddings, conversation_manager):
+            self.get_vectorstore_func = get_vectorstore_func
             self.chat_model = chat_model
             self.embeddings = embeddings
             self.conversation_manager = conversation_manager
-            self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
             
-            # Inicializar sistema multi-agente
+            # Inicializar sistema multi-agente con función de vectorstore
             self.multi_agent_system = MultiTenantMultiAgentSystem(
-                chat_model, vectorstore, conversation_manager
+                chat_model, 
+                get_vectorstore_func, 
+                conversation_manager
             )
         
         def get_response(self, tenant_id: str, question: str, user_id: str) -> Tuple[str, List]:
             """
-            Método compatible con la interfaz existente - FIXED: Usar invoke
+            Método compatible con la interfaz existente
             """
             try:
-                # Usar sistema multi-agente
+                # Usar sistema multi-agente con tenant_id
                 response, agent_used = self.multi_agent_system.get_response(tenant_id, question, user_id)
                 
-                # Obtener documentos para compatibilidad
-                docs = self.retriever.invoke(question)
+                # Obtener documentos usando vectorstore específico del tenant
+                tenant_vectorstore = self.get_vectorstore_func(tenant_id)
+                retriever = tenant_vectorstore.as_retriever(search_kwargs={"k": 3})
+                docs = retriever.invoke(question)
                 
-                logger.info(f"Multi-agent response: {response[:100]}... (agent: {agent_used})")
+                logger.info(f"Tenant {tenant_id} - Multi-agent response: {response[:100]}... (agent: {agent_used})")
                 
                 return response, docs
                 
             except Exception as e:
-                logger.error(f"Error in multi-agent RAG system: {e}")
+                logger.error(f"Tenant {tenant_id} - Error in multi-agent RAG system: {e}")
                 return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", []
         
-        def add_documents(self, documents: List[str], metadatas: List[Dict] = None):
+        def add_documents(self, tenant_id: str, documents: List[str], metadatas: List[Dict] = None) -> int:
             """
             ACTUALIZADO: Agregar documentos usando sistema de chunking avanzado
+            con soporte multi-tenant
             """
             if not documents:
                 return 0
@@ -1917,21 +1921,38 @@ def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings
                                 # Combinar metadatas
                                 combined_meta = base_metadata.copy()
                                 combined_meta.update(auto_meta)
-                                combined_meta.update({"chunk_index": j, "doc_index": i})
+                                combined_meta.update({
+                                    "tenant_id": tenant_id,
+                                    "chunk_index": j, 
+                                    "doc_index": i
+                                })
                                 all_metas.append(combined_meta)
                 
-                # Agregar al vectorstore
+                # Agregar al vectorstore específico del tenant
                 if all_texts:
-                    self.vectorstore.add_texts(all_texts, metadatas=all_metas)
-                    logger.info(f"Added {len(all_texts)} advanced chunks to vectorstore")
+                    tenant_vectorstore = self.get_vectorstore_func(tenant_id)
+                    tenant_vectorstore.add_texts(all_texts, metadatas=all_metas)
+                    logger.info(f"✅ Tenant {tenant_id} - Added {len(all_texts)} advanced chunks to vectorstore")
                 
                 return len(all_texts)
                 
             except Exception as e:
-                logger.error(f"Error adding documents with advanced chunking: {e}")
+                logger.error(f"❌ Tenant {tenant_id} - Error adding documents: {e}")
                 return 0
+        
+        def search_documents(self, tenant_id: str, query: str, k: int = 3) -> List:
+            """
+            Nueva función: Búsqueda de documentos específica por tenant
+            """
+            try:
+                tenant_vectorstore = self.get_vectorstore_func(tenant_id)
+                retriever = tenant_vectorstore.as_retriever(search_kwargs={"k": k})
+                return retriever.invoke(query)
+            except Exception as e:
+                logger.error(f"Tenant {tenant_id} - Error searching documents: {e}")
+                return []
     
-    return ModernRAGSystemMultiAgent(vectorstore, chat_model, embeddings, conversation_manager)
+    return ModernRAGSystemMultiAgent(get_vectorstore_func, chat_model, embeddings, conversation_manager)
 
 # ===============================
 # Initialize Modern Components
