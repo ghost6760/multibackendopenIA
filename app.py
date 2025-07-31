@@ -2151,7 +2151,7 @@ def create_modern_rag_system_with_multiagent(get_vectorstore_func, chat_model, e
         
         def search_documents(self, tenant_id: str, query: str, k: int = 3) -> List:
             """
-            Nueva función: Búsqueda de documentos específica por tenant
+            Búsqueda de documentos específica por tenant
             """
             try:
                 tenant_vectorstore = self.get_vectorstore_func(tenant_id)
@@ -2514,8 +2514,6 @@ def add_document():
     try:
         # Get tenant_id from headers
         tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
         
         data = request.get_json()
         content, metadata = validate_document_data(data)
@@ -2526,11 +2524,8 @@ def add_document():
         # Agregar doc_id a los metadatos
         metadata['doc_id'] = doc_id
         
-        # Obtener vectorstore específico del tenant
-        tenant_vectorstore = get_vectorstore(tenant_id)
-        
-        # Usar modern_rag_system
-        num_chunks = modern_rag_system.add_documents([content], [metadata])
+        # CORRECCIÓN: Pasar tenant_id como primer parámetro
+        num_chunks = modern_rag_system.add_documents(tenant_id, [content], [metadata])
         
         # Crear clave del documento con namespace de tenant
         doc_key = f"tenant_{tenant_id}:document:{doc_id}"
@@ -2564,7 +2559,6 @@ def add_document():
     except Exception as e:
         logger.exception("Error adding document")
         return create_error_response("Failed to add document", 500)
-
 
 @app.route("/documents", methods=["GET"])
 @tenant_required
@@ -2705,9 +2699,7 @@ def bulk_add_documents():
     try:
         # Get tenant_id from headers
         tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
+        
         data = request.get_json()
         if not data or 'documents' not in data:
             return create_error_response("Documents array is required", 400)
@@ -2729,8 +2721,8 @@ def bulk_add_documents():
                 doc_id = hashlib.md5(content.encode()).hexdigest()
                 metadata['doc_id'] = doc_id
 
-                # Usar modern_rag_system
-                num_chunks = modern_rag_system.add_documents([content], [metadata])
+                # CORRECCIÓN: Pasar tenant_id como primer parámetro
+                num_chunks = modern_rag_system.add_documents(tenant_id, [content], [metadata])
                 total_chunks += num_chunks
 
                 # Save to Redis
