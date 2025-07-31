@@ -2172,7 +2172,7 @@ try:
     modern_conversation_manager = ModernConversationManager(redis_client, MAX_CONTEXT_MESSAGES)
     
     modern_rag_system = create_modern_rag_system_with_multiagent(
-        vectorstore, 
+        get_vectorstore, 
         chat_model, 
         embeddings, 
         modern_conversation_manager
