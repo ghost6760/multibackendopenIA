@@ -255,6 +255,140 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
         logger.error(f"Error in advanced chunk processing: {e}")
         return [], []
 
+
+# ===============================
+# TENANT REGISTRY SYSTEM
+# ===============================
+
+class TenantRegistry:
+    """
+    Sistema de registro centralizado para tenants con verificación de existencia
+    y manejo de metadata básica
+    """
+    
+    def __init__(self, redis_client):
+        self.redis = redis_client
+        self.registry_key = "tenant_registry"
+    
+    def register_tenant(self, tenant_id: str, metadata: Optional[Dict] = None) -> bool:
+        """Registrar un nuevo tenant con metadata básica"""
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("Invalid tenant ID")
+        
+        metadata = metadata or {}
+        metadata.update({
+            "created_at": datetime.utcnow().isoformat(),
+            "last_active": datetime.utcnow().isoformat(),
+            "status": "active"
+        })
+        
+        try:
+            # Usar HSET para almacenar metadata del tenant
+            self.redis.hset(
+                self.registry_key, 
+                tenant_id, 
+                json.dumps(metadata)
+            logger.info(f"✅ Tenant {tenant_id} registered successfully")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to register tenant {tenant_id}: {e}")
+            return False
+    
+    def unregister_tenant(self, tenant_id: str) -> bool:
+        """Eliminar registro de tenant (no elimina datos asociados)"""
+        try:
+            removed = self.redis.hdel(self.registry_key, tenant_id)
+            if removed > 0:
+                logger.info(f"✅ Tenant {tenant_id} unregistered")
+                return True
+            logger.warning(f"⚠️ Tenant {tenant_id} not found in registry")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Failed to unregister tenant {tenant_id}: {e}")
+            return False
+    
+    def is_tenant_registered(self, tenant_id: str) -> bool:
+        """Verificar si un tenant está registrado"""
+        try:
+            return self.redis.hexists(self.registry_key, tenant_id)
+        except Exception as e:
+            logger.error(f"❌ Tenant verification failed for {tenant_id}: {e}")
+            return False
+    
+    def get_tenant_metadata(self, tenant_id: str) -> Optional[Dict]:
+        """Obtener metadata del tenant"""
+        try:
+            meta_json = self.redis.hget(self.registry_key, tenant_id)
+            return json.loads(meta_json) if meta_json else None
+        except Exception as e:
+            logger.error(f"❌ Failed to get metadata for tenant {tenant_id}: {e}")
+            return None
+    
+    def update_tenant_activity(self, tenant_id: str) -> bool:
+        """Actualizar timestamp de última actividad"""
+        if not self.is_tenant_registered(tenant_id):
+            logger.warning(f"⚠️ Activity update for unregistered tenant: {tenant_id}")
+            return False
+        
+        try:
+            meta = self.get_tenant_metadata(tenant_id) or {}
+            meta["last_active"] = datetime.utcnow().isoformat()
+            self.redis.hset(self.registry_key, tenant_id, json.dumps(meta))
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to update activity for tenant {tenant_id}: {e}")
+            return False
+    
+    def list_registered_tenants(self) -> List[Dict]:
+        """Listar todos los tenants registrados con metadata básica"""
+        try:
+            all_tenants = []
+            tenant_map = self.redis.hgetall(self.registry_key)
+            
+            for tenant_id, meta_json in tenant_map.items():
+                try:
+                    meta = json.loads(meta_json)
+                    all_tenants.append({
+                        "tenant_id": tenant_id,
+                        "created_at": meta.get("created_at"),
+                        "last_active": meta.get("last_active"),
+                        "status": meta.get("status", "unknown")
+                    })
+                except json.JSONDecodeError:
+                    logger.warning(f"⚠️ Corrupted metadata for tenant {tenant_id}")
+            
+            return all_tenants
+        except Exception as e:
+            logger.error(f"❌ Failed to list tenants: {e}")
+            return []
+
+# Inicializar el registro de tenants
+tenant_registry = TenantRegistry(redis_client)
+
+# ===============================
+# MIDDLEWARE DE VERIFICACIÓN DE TENANT
+# ===============================
+
+def tenant_required(func):
+    """Decorator para verificar tenant registrado antes de procesar requests"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        tenant_id = request.headers.get("X-Tenant-ID")
+        
+        if not tenant_id:
+            logger.error("❌ Missing X-Tenant-ID header")
+            return create_error_response("Tenant ID is required", 400)
+        
+        if not tenant_registry.is_tenant_registered(tenant_id):
+            logger.error(f"❌ Unregistered tenant access attempt: {tenant_id}")
+            return create_error_response("Tenant not registered", 403)
+        
+        # Actualizar actividad del tenant
+        tenant_registry.update_tenant_activity(tenant_id)
+        
+        return func(*args, **kwargs)
+    return wrapper
+
 # ===============================
 # BOT ACTIVATION LOGIC
 # ===============================
@@ -2309,6 +2443,14 @@ def chatwoot_webhook():
         
         logger.info(f"🔔 WEBHOOK RECEIVED - Tenant: {tenant_id}, Event: {event_type}")
 
+        # VERIFICAR TENANT REGISTRADO
+        if not tenant_registry.is_tenant_registered(tenant_id):
+            logger.error(f"❌ Unregistered tenant webhook: {tenant_id}")
+            return jsonify({
+                "status": "error",
+                "message": "Tenant not registered"
+            }), 403
+
         # Handle conversation updates
         if event_type == "conversation_updated":
             success = handle_conversation_updated(data, tenant_id)
@@ -2367,6 +2509,7 @@ def validate_document_data(data):
     return content, metadata
 
 @app.route("/documents", methods=["POST"])
+@tenant_required
 def add_document():
     try:
         # Get tenant_id from headers
@@ -2424,6 +2567,7 @@ def add_document():
 
 
 @app.route("/documents", methods=["GET"])
+@tenant_required
 def list_documents():
     try:
         # Get tenant_id from headers
@@ -2512,6 +2656,7 @@ def list_documents():
         return create_error_response("Failed to list documents", 500)
 
 @app.route("/documents/search", methods=["POST"])
+@tenant_required
 def search_documents():
     try:
         # Get tenant_id from headers
@@ -2555,6 +2700,7 @@ def search_documents():
         return create_error_response("Failed to search documents", 500)
 
 @app.route("/documents/bulk", methods=["POST"])
+@tenant_required
 def bulk_add_documents():
     try:
         # Get tenant_id from headers
@@ -2631,6 +2777,7 @@ def bulk_add_documents():
         return create_error_response("Failed to bulk add documents", 500)
 
 @app.route("/documents/<doc_id>", methods=["DELETE"])
+@tenant_required
 def delete_document(doc_id):
     try:
         # Get tenant_id from headers
@@ -2676,6 +2823,7 @@ def delete_document(doc_id):
 # ===============================
 
 @app.route("/conversations", methods=["GET"])
+@tenant_required
 def list_conversations():
     try:
         # Get tenant_id from headers
@@ -2729,6 +2877,7 @@ def list_conversations():
         return create_error_response("Failed to list conversations", 500)
 
 @app.route("/conversations/<user_id>", methods=["GET"])
+@tenant_required
 def get_conversation(user_id):
     try:
         # Get tenant_id from headers
@@ -2755,6 +2904,7 @@ def get_conversation(user_id):
         return create_error_response("Failed to get conversation", 500)
 
 @app.route("/conversations/<user_id>", methods=["DELETE"])
+@tenant_required
 def delete_conversation(user_id):
     try:
         # Get tenant_id from headers
@@ -2776,6 +2926,7 @@ def delete_conversation(user_id):
         return create_error_response("Failed to delete conversation", 500)
 
 @app.route("/conversations/<user_id>/test", methods=["POST"])
+@tenant_required
 def test_conversation(user_id):
     try:
         # Get tenant_id from headers
@@ -3012,6 +3163,54 @@ def reset_system():
         logger.error(f"System reset failed{tenant_msg}: {e}")
         return create_error_response("Failed to reset system", 500)
 
+
+# ===============================
+# ENDPOINTS DE ADMINISTRACIÓN DE TENANTS
+# ===============================
+
+@app.route("/tenants", methods=["POST"])
+def register_tenant():
+    try:
+        data = request.get_json()
+        if not data or 'tenant_id' not in data:
+            return create_error_response("Tenant ID is required", 400)
+        
+        tenant_id = data['tenant_id']
+        metadata = data.get('metadata', {})
+        
+        if tenant_registry.register_tenant(tenant_id, metadata):
+            return create_success_response({
+                "tenant_id": tenant_id,
+                "message": "Tenant registered successfully"
+            }, 201)
+        
+        return create_error_response("Failed to register tenant", 500)
+    
+    except Exception as e:
+        logger.error(f"Tenant registration error: {e}")
+        return create_error_response("Internal server error", 500)
+
+@app.route("/tenants/<tenant_id>", methods=["DELETE"])
+def unregister_tenant(tenant_id):
+    if tenant_registry.unregister_tenant(tenant_id):
+        return create_success_response({
+            "tenant_id": tenant_id,
+            "message": "Tenant unregistered"
+        })
+    
+    return create_error_response("Tenant not found or already unregistered", 404)
+
+@app.route("/tenants", methods=["GET"])
+def list_tenants():
+    try:
+        tenants = tenant_registry.list_registered_tenants()
+        return create_success_response({
+            "count": len(tenants),
+            "tenants": tenants
+        })
+    except Exception as e:
+        logger.error(f"Tenant listing error: {e}")
+        return create_error_response("Failed to list tenants", 500)
 # ===============================
 # STATIC FILE SERVING
 # ===============================
