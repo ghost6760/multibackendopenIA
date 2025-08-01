@@ -289,6 +289,7 @@ class TenantRegistry:
                 self.registry_key, 
                 tenant_id, 
                 json.dumps(metadata)
+            )
             logger.info(f"✅ Tenant {tenant_id} registered successfully")
             return True
         except Exception as e:
