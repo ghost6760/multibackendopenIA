@@ -1,46 +1,35 @@
-# Dockerfile optimizado para Railway
+# Dockerfile optimizado para Railway con solución OpenBLAS
 FROM python:3.11-slim
 
-# Configurar variables de entorno
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=random \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=100 \
+# Configurar variables de entorno CRÍTICAS para OpenBLAS
+ENV OPENBLAS_NUM_THREADS=1 \
+    GOTO_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    VECLIB_MAXIMUM_THREADS=1 \
+    PYTHONUNBUFFERED=1 \
     PORT=8080
 
-# Instalar dependencias del sistema y limpiar en un solo paso para reducir tamaño de imagen
+# Instalar solo dependencias esenciales
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libssl-dev \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements e instalar dependencias Python
+# Copiar requirements primero para mejor caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && apt-get purge -y --auto-remove build-essential libssl-dev
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código de la aplicación
+# Copiar aplicación
 COPY . .
 
-# Crear usuario no-root para seguridad
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+# Usar usuario no-root
+RUN useradd --create-home app && chown -R app:app /app
 USER app
 
-# Exponer puerto (Railway lo asigna dinámicamente)
 EXPOSE $PORT
 
-# Comando optimizado para Railway con variables de entorno
-CMD gunicorn --bind 0.0.0.0:$PORT \
-    --workers $(( $(nproc) * 2 + 1 )) \
-    --threads 4 \
-    --timeout 120 \
-    --keep-alive 5 \
-    --worker-class gthread \
-    --access-logfile - \
-    --error-logfile - \
-    app:app
+# Usar Gunicorn con configuración optimizada
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --worker-class gthread app:app"]
