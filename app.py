@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import threading
 import numpy as np
 from datetime import datetime, timedelta
+from functools import wraps
 import hashlib
 import redis
 
@@ -2672,7 +2673,7 @@ def search_documents():
         tenant_vectorstore = get_vectorstore(tenant_id)
         
         # CORREGIDO: Usar modern_rag_system
-        docs = modern_rag_system.search_documents(query, k)
+        docs = modern_rag_system.search_documents(tenant_id, query, k)
         
         results = []
         for doc in docs:
