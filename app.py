@@ -2214,22 +2214,22 @@ def get_modern_chat_response_multiagent(tenant_id: str, user_id: str, user_messa
         return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo en unos momentos. 🔧"
 
 # ===============================
-# CHATWOOT API FUNCTIONS
+# PLATAFORM API FUNCTIONS
 # ===============================
 
-def send_message_to_chatwoot(tenant_id: str, conversation_id: str, message_content: str):
-    """Send message to Chatwoot using API"""
-    url = f"{CHATWOOT_BASE_URL}/api/v1/accounts/{tenant_id}/conversations/{conversation_id}/messages"
+def send_message_to_platform(tenant_id: str, conversation_id: str, message_content: str):
+    """Send message to your platform API"""
+    url = f"{PLATFORM_BASE_URL}/conversations/{conversation_id}/messages"
 
     headers = {
-        "api_access_token": CHATWOOT_API_KEY,
+        "Authorization": f"Bearer {PLATFORM_API_KEY}",
         "Content-Type": "application/json"
     }
 
     payload = {
+        "tenant_id": tenant_id,
         "content": message_content,
-        "message_type": "outgoing",
-        "private": False
+        "role": "assistant"
     }
 
     try:
@@ -2237,21 +2237,18 @@ def send_message_to_chatwoot(tenant_id: str, conversation_id: str, message_conte
             url, 
             json=payload, 
             headers=headers, 
-            timeout=30,
-            verify=True
+            timeout=30
         )
 
-        logger.info(f"Tenant {tenant_id} - Chatwoot API Response Status: {response.status_code}")
-        
         if response.status_code == 200:
-            logger.info(f"✅ Tenant {tenant_id} - Message sent to conversation {conversation_id}")
+            logger.info(f"✅ Message sent to platform: {conversation_id}")
             return True
         else:
-            logger.error(f"❌ Tenant {tenant_id} - Failed to send message: {response.status_code} - {response.text}")
+            logger.error(f"❌ Failed to send message: {response.status_code}")
             return False
 
     except Exception as e:
-        logger.error(f"❌ Tenant {tenant_id} - Error sending message to Chatwoot: {e}")
+        logger.error(f"❌ Error sending to platform: {e}")
         return False
 
 def extract_contact_id(data):
