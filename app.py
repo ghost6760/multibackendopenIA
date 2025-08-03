@@ -40,9 +40,9 @@ load_dotenv()
 # ===============================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-CHATWOOT_API_KEY = os.getenv("CHATWOOT_API_KEY")
-CHATWOOT_BASE_URL = os.getenv("CHATWOOT_BASE_URL", "https://chatwoot-production-0f1d.up.railway.app")
-ACCOUNT_ID = os.getenv("ACCOUNT_ID", "7")
+# Agregar
+PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY")
+PLATFORM_BASE_URL = os.getenv("PLATFORM_BASE_URL", "https://plataforma-production-8bce.up.railway.app/")
 PORT = int(os.getenv("PORT", 8080))
 
 # Model configuration
