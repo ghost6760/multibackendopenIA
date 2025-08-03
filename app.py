@@ -31,9 +31,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableBranch, RunnableLambda
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain.text_splitter import MarkdownHeaderTextSplitter
-from flask_jwt_extended import (
-    JWTManager, create_access_token, jwt_required, get_jwt_identity
-)
+
 # Load environment variables
 load_dotenv()
 
@@ -374,10 +372,22 @@ tenant_registry = TenantRegistry(redis_client)
 # ===============================
 
 def tenant_required(func):
+    """Decorator para verificar tenant registrado antes de procesar requests"""
     @wraps(func)
     def wrapper(*args, **kwargs):
-        if not hasattr(g, 'tenant_id'):
-            return create_error_response("Tenant ID missing", 400)
+        tenant_id = request.headers.get("X-Tenant-ID")
+        
+        if not tenant_id:
+            logger.error("❌ Missing X-Tenant-ID header")
+            return create_error_response("Tenant ID is required", 400)
+        
+        if not tenant_registry.is_tenant_registered(tenant_id):
+            logger.error(f"❌ Unregistered tenant access attempt: {tenant_id}")
+            return create_error_response("Tenant not registered", 403)
+        
+        # Actualizar actividad del tenant
+        tenant_registry.update_tenant_activity(tenant_id)
+        
         return func(*args, **kwargs)
     return wrapper
 
@@ -450,44 +460,10 @@ def is_message_already_processed(tenant_id: str, message_id: str, conversation_i
         logger.error(f"Error checking processed message in Redis: {e}")
         return False
 
-##########################################################################################33
-# Modelo de usuario en Redis
-class UserService:
-    def __init__(self, redis_client):
-        self.redis = redis_client
-    
-    def create_user(self, email, password, role, tenant_id):
-        user_key = f"user:{email}"
-        if self.redis.exists(user_key):
-            return None
-        
-        user_data = {
-            "email": email,
-            "password": bcrypt.hashpw(password.encode('utf-8'), 
-            "role": role,
-            "tenant_id": tenant_id,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        self.redis.hset(user_key, mapping=user_data)
-        return user_data
-
-    def authenticate(self, email, password):
-        user_key = f"user:{email}"
-        user_data = self.redis.hgetall(user_key)
-        if not user_data:
-            return None
-        
-        if bcrypt.checkpw(password.encode('utf-8'), user_data["password"].encode('utf-8')):
-            return user_data
-        return None
-
-# Inicializar servicio de usuarios
-user_service = UserService(redis_client)
-#########################################################################################################
-
 # ===============================
 # REFACTORED Modern Conversation Manager - UNIFIED CHAT HISTORY
 # ===============================
+
 class ModernConversationManager:
     """
     REFACTORED: Conversation Manager moderno con métodos unificados de chat history
@@ -3182,116 +3158,7 @@ def reset_system():
 # ===============================
 # ENDPOINTS DE ADMINISTRACIÓN DE TENANTS
 # ===============================
-############################################################################################################33
-# Endpoint de login
-@app.route('/auth/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    user = user_service.authenticate(data['email'], data['password'])
-    
-    if not user:
-        return jsonify({"error": "Invalid credentials"}), 401
-    
-    access_token = create_access_token(identity={
-        "email": user["email"],
-        "role": user["role"],
-        "tenant_id": user["tenant_id"]
-    })
-    
-    return jsonify({
-        "token": access_token,
-        "role": user["role"],
-        "tenant_id": user["tenant_id"]
-    }), 200
 
-# Middleware para proteger endpoints
-@app.before_request
-def protect_routes():
-    excluded_paths = ['/auth/login', '/health', '/status']
-    if request.path in excluded_paths:
-        return
-    
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Missing token"}), 401
-    
-    try:
-        token = auth_header.split()[1]
-        user = get_jwt_identity()
-        g.current_user = user
-        g.tenant_id = user["tenant_id"]
-    except Exception as e:
-        return jsonify({"error": "Invalid token"}), 401
-
-
-# Endpoints para Dashboard
-@app.route('/api/dashboard/stats', methods=['GET'])
-@jwt_required()
-def dashboard_stats():
-    tenant_id = g.tenant_id
-    
-    # Obtener estadísticas desde Redis
-    active_conversations = len(redis_client.keys(f"tenant_{tenant_id}:bot_status:*"))
-    total_messages = redis_client.get(f"tenant_{tenant_id}:message_count") or 0
-    
-    return jsonify({
-        "system_health": {
-            "redis": "active",
-            "openai": "active"
-        },
-        "active_conversations": active_conversations,
-        "total_messages": int(total_messages),
-        "resolved_conversations": 0,  # Implementar lógica
-        "avg_response_time": 1.2
-    })
-
-# Endpoints para gestión de prompts
-@app.route('/api/prompts', methods=['GET', 'PUT'])
-@jwt_required()
-def manage_prompts():
-    tenant_id = g.tenant_id
-    if request.method == 'GET':
-        agents = ["sales_agent", "emergency_agent", "schedule_agent", "support_agent"]
-        prompts = {}
-        for agent in agents:
-            prompt = redis_client.get(f"tenant_{tenant_id}:prompt:{agent}")
-            prompts[agent] = prompt.decode() if prompt else ""
-        return jsonify(prompts)
-    
-    if request.method == 'PUT':
-        data = request.get_json()
-        for agent, prompt in data.items():
-            redis_client.set(f"tenant_{tenant_id}:prompt:{agent}", prompt)
-        return jsonify({"status": "success"})
-
-# Endpoints para conversaciones
-@app.route('/api/conversations', methods=['GET'])
-@jwt_required()
-def get_conversations():
-    tenant_id = g.tenant_id
-    pattern = f"tenant_{tenant_id}:conversation:*"
-    keys = redis_client.keys(pattern)
-    
-    conversations = []
-    for key in keys:
-        convo_data = redis_client.hgetall(key)
-        conversations.append({
-            "id": key.split(":")[-1],
-            "contact": convo_data.get("contact_name", ""),
-            "last_message": convo_data.get("last_message", ""),
-            "status": convo_data.get("status", "active")
-        })
-    
-    return jsonify(conversations)
-
-# Endpoints para documentos
-@app.route('/api/documents', methods=['GET', 'POST', 'DELETE'])
-@jwt_required()
-def manage_documents():
-    # Implementar lógica existente pero con tenant_id de g.tenant_id
-    pass
-
-###############################################################################################################3
 @app.route("/tenants", methods=["POST"])
 def register_tenant():
     try:
