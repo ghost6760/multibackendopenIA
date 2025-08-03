@@ -460,6 +460,39 @@ def is_message_already_processed(tenant_id: str, message_id: str, conversation_i
         logger.error(f"Error checking processed message in Redis: {e}")
         return False
 
+############################################################################################33
+# Nuevo módulo: messaging_adapters.py
+class MessagingAdapter:
+    def __init__(self, platform):
+        self.platform = platform
+    
+    def parse_incoming(self, data):
+        """Parsear mensajes entrantes de diferentes plataformas"""
+        if self.platform == "twilio":
+            return {
+                "content": data.get("Body"),
+                "sender_id": data.get("From"),
+                "platform_id": data.get("MessageSid")
+            }
+        elif self.platform == "instagram":
+            return {
+                "content": data.get("message"),
+                "sender_id": data.get("user_id"),
+                "platform_id": data.get("message_id")
+            }
+        # ... otros servicios
+
+    def send_message(self, recipient_id, content):
+        """Enviar mensajes a diferentes plataformas"""
+        if self.platform == "twilio":
+            # Implementar lógica de Twilio
+            pass
+        elif self.platform == "instagram":
+            # Implementar lógica de Instagram
+            pass
+        # ... otros servicios
+
+############################################################################################################################3
 # ===============================
 # REFACTORED Modern Conversation Manager - UNIFIED CHAT HISTORY
 # ===============================
@@ -2432,8 +2465,25 @@ def process_incoming_message(data, tenant_id):
         raise WebhookError("Internal server error", 500)
     except WebhookError:
         raise
+###############################################################################################################################
+@app.route("/webhook/<platform>", methods=["POST"])
+def unified_webhook(platform):
+    adapter = MessagingAdapter(platform)
+    message_data = adapter.parse_incoming(request.json)
+    
+    # Procesamiento común
+    tenant_id = detect_tenant_from_sender(message_data['sender_id'])
+    response = get_modern_chat_response_multiagent(
+        tenant_id, 
+        message_data['sender_id'], 
+        message_data['content']
+    )
+    
+    # Enviar respuesta
+    adapter.send_message(message_data['sender_id'], response)
+    return jsonify({"status": "success"})
 
-
+#################################################################################################################
 @app.route("/webhook", methods=["POST"])
 def chatwoot_webhook():
     try:
@@ -2978,6 +3028,17 @@ def check_component_health():
         components["vectorstore"] = "connected"
     except Exception as e:
         components["vectorstore"] = f"error: {str(e)}"
+
+def check_external_services():
+    return {
+        "twilio": check_twilio_connection(),
+        "instagram": check_instagram_connection(),
+        # ... otros servicios
+    }
+
+# En la respuesta /health
+response_data["external_services"] = check_external_services()
+
     
     return components
 
