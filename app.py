@@ -2571,7 +2571,7 @@ def add_document():
         doc_id = hashlib.md5(content.encode()).hexdigest()
         
         # Agregar doc_id a los metadatos
-        metadata['doc_id'] = doc_id
+        metadata["platforms"] = request.json.get("platforms", ["all"])
         
         # CORRECCIÓN: Pasar tenant_id como primer parámetro
         num_chunks = modern_rag_system.add_documents(tenant_id, [content], [metadata])
