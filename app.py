@@ -3028,17 +3028,6 @@ def check_component_health():
         components["vectorstore"] = "connected"
     except Exception as e:
         components["vectorstore"] = f"error: {str(e)}"
-
-def check_external_services():
-    return {
-        "twilio": check_twilio_connection(),
-        "instagram": check_instagram_connection(),
-        # ... otros servicios
-    }
-
-# En la respuesta /health
-response_data["external_services"] = check_external_services()
-
     
     return components
 
