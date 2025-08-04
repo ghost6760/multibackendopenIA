@@ -63,7 +63,7 @@ if not OPENAI_API_KEY:
 
 print("Environment loaded successfully")
 print(f"plataforma URL: {PLATFORM_BASE_URL}")
-print(f"Account ID: {ACCOUNT_ID}")
+###print(f"Account ID: {ACCOUNT_ID}")
 print(f"Model: {MODEL_NAME}")
 print(f"Embedding Model: {EMBEDDING_MODEL}")
 print(f"Redis URL: {REDIS_URL}")
