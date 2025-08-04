@@ -56,13 +56,13 @@ MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", 10))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", 0.7))
 MAX_RETRIEVED_DOCS = int(os.getenv("MAX_RETRIEVED_DOCS", 3))
 
-if not OPENAI_API_KEY or not CHATWOOT_API_KEY:
+if not OPENAI_API_KEY:
     print("ERROR: Missing required environment variables")
-    print("Required: OPENAI_API_KEY, CHATWOOT_API_KEY")
+    print("Required: OPENAI_API_KEY")
     sys.exit(1)
 
 print("Environment loaded successfully")
-print(f"Chatwoot URL: {CHATWOOT_BASE_URL}")
+print(f"plataforma URL: {PLATFORM_BASE_URL}")
 print(f"Account ID: {ACCOUNT_ID}")
 print(f"Model: {MODEL_NAME}")
 print(f"Embedding Model: {EMBEDDING_MODEL}")
