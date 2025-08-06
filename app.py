@@ -43,7 +43,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:cldThejhiRcrdiAgSyCGKrdULZxmwwgq@centerbeam.proxy.rlwy.net:15511")
 # Agregar
 PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY")
-frontend_url = os.getenv("FRONTEND_URL", "https://plataforma-production-8bce.up.railway.app/")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://plataforma-production-8bce.up.railway.app/")
 PORT = int(os.getenv("PORT", 8080))
 
 # Model configuration
@@ -63,7 +63,7 @@ if not OPENAI_API_KEY:
     sys.exit(1)
 
 print("Environment loaded successfully")
-print(f"plataforma URL: {PLATFORM_BASE_URL}")
+print(f"frontend_url: {FRONTEND_URL}")
 ###print(f"Account ID: {ACCOUNT_ID}")
 print(f"Model: {MODEL_NAME}")
 print(f"Embedding Model: {EMBEDDING_MODEL}")
@@ -2260,7 +2260,7 @@ def get_modern_chat_response_multiagent(tenant_id: str, user_id: str, user_messa
 
 def send_message_to_platform(tenant_id: str, conversation_id: str, message_content: str):
     """Send message to your platform API"""
-    url = f"{PLATFORM_BASE_URL}/conversations/{conversation_id}/messages"
+    url = f"{FRONTEND_URL}/conversations/{conversation_id}/messages"
 
     headers = {
         "Authorization": f"Bearer {PLATFORM_API_KEY}",
