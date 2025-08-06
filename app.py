@@ -3260,6 +3260,20 @@ def list_tenants():
     except Exception as e:
         logger.error(f"Tenant listing error: {e}")
         return create_error_response("Failed to list tenants", 500)
+
+
+@app.route("/tenants/check", methods=["GET"])
+def check_tenants():
+    try:
+        tenants = tenant_registry.list_registered_tenants()
+        return create_success_response({
+            "count": len(tenants),
+            "tenants": tenants
+        })
+    except Exception as e:
+        logger.error(f"Tenant check error: {e}")
+        return create_error_response("Failed to check tenants", 500)
+
 # ===============================
 # STATIC FILE SERVING
 # ===============================
@@ -3330,21 +3344,26 @@ def startup_checks():
         logger.info(f"   Max Retrieved Docs: {MAX_RETRIEVED_DOCS}")
         logger.info(f"   Redis URL: {REDIS_URL}")
         
+        # Registrar tenant admin si no existe
+        ADMIN_TENANT_ID = "admin"
+        if not tenant_registry.is_tenant_registered(ADMIN_TENANT_ID):
+            logger.info("⚠️ Admin tenant not found - creating...")
+            tenant_registry.register_tenant(
+                ADMIN_TENANT_ID,
+                {
+                    "name": "Administrador Principal",
+                    "role": "admin",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "is_default": True
+                }
+            )
+            logger.info(f"✅ Admin tenant '{ADMIN_TENANT_ID}' created successfully")
+        
         logger.info("🎉 Multi-Tenant ChatBot startup completed successfully!")
         
     except Exception as e:
         logger.error(f"❌ Startup check failed: {e}")
         raise
-
-def cleanup():
-    """Clean up resources on shutdown"""
-    try:
-        logger.info("🧹 Cleaning up resources...")
-        # Cleanup is handled automatically by Redis TTLs
-        logger.info("💾 All resources cleaned up")
-        logger.info("👋 ChatBot shutdown completed")
-    except Exception as e:
-        logger.error(f"❌ Cleanup failed: {e}")
 
 # ===============================
 # MAIN EXECUTION
