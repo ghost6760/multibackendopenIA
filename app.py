@@ -39,7 +39,7 @@ load_dotenv()
 # Environment Setup
 # ===============================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("REDIS_URL")
 # Agregar
 PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY")
 PLATFORM_BASE_URL = os.getenv("PLATFORM_BASE_URL", "https://plataforma-production-8bce.up.railway.app/")
