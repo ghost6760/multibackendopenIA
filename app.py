@@ -6,6 +6,7 @@ import requests
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
 import threading
