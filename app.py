@@ -63,7 +63,7 @@ if not OPENAI_API_KEY:
     sys.exit(1)
 
 print("Environment loaded successfully")
-print(f"frontend_url: {FRONTEND_URL}")
+print(f"FRONTEND_URL: {FRONTEND_URL}")
 ###print(f"Account ID: {ACCOUNT_ID}")
 print(f"Model: {MODEL_NAME}")
 print(f"Embedding Model: {EMBEDDING_MODEL}")
@@ -73,10 +73,10 @@ print(f"Redis URL: {REDIS_URL}")
 app = Flask(__name__, static_url_path='', static_folder='.')
 
 CORS(app, resources={
-    r"/api/*": {"origins": frontend_url},
+    r"/api/*": {"origins": FRONTEND_URL},
     r"/webhook/*": {"origins": "*"},
-    r"/documents/*": {"origins": frontend_url},
-    r"/conversations/*": {"origins": frontend_url}
+    r"/documents/*": {"origins": FRONTEND_URL},
+    r"/conversations/*": {"origins": FRONTEND_URL}
 })
 
 # Initialize Redis - MEJORADO
