@@ -43,7 +43,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:cldThejhiRcrdiAgSyCGKrdULZxmwwgq@centerbeam.proxy.rlwy.net:15511")
 # Agregar
 PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY")
-PLATFORM_BASE_URL = os.getenv("PLATFORM_BASE_URL", "https://plataforma-production-8bce.up.railway.app/")
+frontend_url = os.getenv("FRONTEND_URL", "https://plataforma-production-8bce.up.railway.app/")
 PORT = int(os.getenv("PORT", 8080))
 
 # Model configuration
@@ -71,6 +71,13 @@ print(f"Redis URL: {REDIS_URL}")
 
 # Initialize Flask
 app = Flask(__name__, static_url_path='', static_folder='.')
+
+CORS(app, resources={
+    r"/api/*": {"origins": frontend_url},
+    r"/webhook/*": {"origins": "*"},
+    r"/documents/*": {"origins": frontend_url},
+    r"/conversations/*": {"origins": frontend_url}
+})
 
 # Initialize Redis - MEJORADO
 try:
