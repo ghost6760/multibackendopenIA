@@ -1218,23 +1218,40 @@ print("✅ Document change tracking system initialized")
 print("✅ Bot activation logic adapted for multi-company environment")
 
 # ===============================
-# Multi-Agent System
+# PASO 7: SISTEMA MULTI-AGENTE ADAPTADO PARA MÚLTIPLES EMPRESAS
 # ===============================
+
 class MultiAgentSystem:
     """
-    Sistema multi-agente para múltiples empresas
+    ✅ ADAPTADO: Sistema multi-agente integrado para múltiples empresas
+    - Configuración dinámica por empresa
+    - Prompts personalizados por empresa
+    - Aislamiento de datos por empresa
+    - Microservicio de agendamiento por empresa
     """
     
-    def __init__(self, chat_model, vectorstore, conversation_manager, company_config):
+    def __init__(self, chat_model, conversation_manager, company_config: CompanyConfig):
+        """
+        Inicializar sistema multi-agente para una empresa específica
+        
+        Args:
+            chat_model: Modelo de chat de LangChain
+            conversation_manager: Gestor de conversaciones
+            company_config: Configuración específica de la empresa
+        """
         self.chat_model = chat_model
-        self.vectorstore = vectorstore
         self.conversation_manager = conversation_manager
-        self.company_config = company_config
-        self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        self.company_config = company_config  # ✅ NUEVO: Configuración por empresa
+        
+        # ✅ ADAPTADO: Vector store específico por empresa
+        self.vectorstore = vector_store_manager.get_vectorstore(company_config)
+        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+        
+        # Configuración multimedia por empresa
         self.voice_enabled = os.getenv("VOICE_ENABLED", "false").lower() == "true"
         self.image_enabled = os.getenv("IMAGE_ENABLED", "false").lower() == "true"
         
-        # URL del microservicio de schedule
+        # ✅ ADAPTADO: URL del microservicio específico por empresa
         self.schedule_service_url = company_config.schedule_service_url
         
         # Configuración para entorno local
@@ -1243,12 +1260,13 @@ class MultiAgentSystem:
         # Timeout específico para conexiones locales
         self.selenium_timeout = 30 if self.is_local_development else 60
         
-        # Cache del estado de Selenium con timestamp
+        # ✅ ADAPTADO: Cache del estado de Selenium con identificación por empresa
+        selenium_cache_key = f"selenium_service_{company_config.company_id}"
         self.selenium_service_available = False
         self.selenium_status_last_check = 0
         self.selenium_status_cache_duration = 30  # 30 segundos de cache
         
-        # Inicializar agentes especializados
+        # ✅ ADAPTADO: Inicializar agentes especializados con configuración por empresa
         self.router_agent = self._create_router_agent()
         self.emergency_agent = self._create_emergency_agent()
         self.sales_agent = self._create_sales_agent()
@@ -1259,20 +1277,22 @@ class MultiAgentSystem:
         # Crear orquestador principal
         self.orchestrator = self._create_orchestrator()
         
-        # Inicializar conexión con microservicio
-        self._initialize_service_connection()
+        # ✅ ADAPTADO: Inicializar conexión con microservicio específico de empresa
+        self._initialize_company_selenium_connection()
     
     def _verify_selenium_service(self, force_check: bool = False) -> bool:
         """
-        Verificar disponibilidad del servicio Selenium local con cache inteligente
+        ✅ ADAPTADO: Verificar disponibilidad del servicio Selenium por empresa con cache inteligente
         """
         import time
         
         current_time = time.time()
         
+        # Si no es verificación forzada y el cache es válido, usar el valor cacheado
         if not force_check and (current_time - self.selenium_status_last_check) < self.selenium_status_cache_duration:
             return self.selenium_service_available
         
+        # Realizar nueva verificación
         try:
             response = requests.get(
                 f"{self.schedule_service_url}/health",
@@ -1289,33 +1309,43 @@ class MultiAgentSystem:
                 return False
                 
         except Exception as e:
-            logger.warning(f"Selenium service verification failed: {e}")
+            logger.warning(f"[{self.company_config.company_id}] Selenium service verification failed: {e}")
             self.selenium_service_available = False
             self.selenium_status_last_check = current_time
             return False
     
-    def _initialize_service_connection(self):
-        """Inicializar y verificar conexión con microservicio"""
+    def _initialize_company_selenium_connection(self):
+        """✅ ADAPTADO: Inicializar y verificar conexión con microservicio específico de empresa"""
         try:
-            logger.info(f"Intentando conectar con microservicio en: {self.schedule_service_url}")
+            logger.info(f"[{self.company_config.company_id}] Conectando con microservicio de Selenium en: {self.schedule_service_url}")
             
+            # Verificar disponibilidad del servicio (forzar verificación inicial)
             is_available = self._verify_selenium_service(force_check=True)
             
             if is_available:
-                logger.info("✅ Conexión exitosa con microservicio")
+                logger.info(f"✅ [{self.company_config.company_id}] Conexión exitosa con microservicio de Selenium")
             else:
-                logger.warning("⚠️ Servicio no disponible")
+                logger.warning(f"⚠️ [{self.company_config.company_id}] Servicio de Selenium no disponible")
                 
         except Exception as e:
-            logger.error(f"❌ Error inicializando conexión: {e}")
+            logger.error(f"❌ [{self.company_config.company_id}] Error inicializando conexión con Selenium: {e}")
             self.selenium_service_available = False
     
     def _create_router_agent(self):
         """
-        Agente Router: Clasifica la intención del usuario
+        ✅ ADAPTADO: Agente Router con prompts personalizados por empresa
         """
-        router_prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""Eres un clasificador de intenciones para {self.company_config.company_id}.
+        # ✅ NUEVO: Obtener prompts personalizados si están disponibles
+        custom_router_prompt = self.company_config.custom_prompts.get("router")
+        
+        if custom_router_prompt:
+            router_system_message = custom_router_prompt.format(
+                company_name=self.company_config.company_name,
+                services=self.company_config.services
+            )
+        else:
+            # Prompt por defecto adaptado por empresa
+            router_system_message = f"""Eres un clasificador de intenciones para {self.company_config.company_name}.
 
 ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categorías:
 
@@ -1339,19 +1369,22 @@ ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categor
    - Reagendar citas
 
 4. **SUPPORT** - Soporte general:
-   - Información general del centro
+   - Información general de {self.company_config.company_name}
    - Consultas sobre procesos
    - Cualquier otra consulta
 
 RESPONDE SOLO con el formato JSON:
-{{
+{{{{
     "intent": "EMERGENCY|SALES|SCHEDULE|SUPPORT",
     "confidence": 0.0-1.0,
     "keywords": ["palabra1", "palabra2"],
     "reasoning": "breve explicación"
-}}
+}}}}
 
-Mensaje del usuario: {{question}}"""),
+Mensaje del usuario: {{question}}"""
+        
+        router_prompt = ChatPromptTemplate.from_messages([
+            ("system", router_system_message),
             ("human", "{question}")
         ])
         
@@ -1359,10 +1392,20 @@ Mensaje del usuario: {{question}}"""),
     
     def _create_emergency_agent(self):
         """
-        Agente de Emergencias: Maneja urgencias médicas
+        ✅ ADAPTADO: Agente de Emergencias con configuración por empresa
         """
-        emergency_prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""Eres {self.company_config.sales_agent_name}, especialista en emergencias médicas de {self.company_config.company_id}.
+        # ✅ NUEVO: Obtener prompts personalizados si están disponibles
+        custom_emergency_prompt = self.company_config.custom_prompts.get("emergency")
+        
+        if custom_emergency_prompt:
+            emergency_system_message = custom_emergency_prompt.format(
+                company_name=self.company_config.company_name,
+                sales_agent_name=self.company_config.sales_agent_name,
+                phone=self.company_config.phone
+            )
+        else:
+            # Prompt por defecto adaptado por empresa
+            emergency_system_message = f"""Eres {self.company_config.sales_agent_name}, especialista en emergencias médicas de {self.company_config.company_name}.
 
 SITUACIÓN DETECTADA: Posible emergencia médica.
 
@@ -1371,6 +1414,7 @@ PROTOCOLO DE RESPUESTA:
 2. Solicita información básica del síntoma
 3. Indica que el caso será escalado de emergencia
 4. Proporciona información de contacto directo si es necesario
+{f"Teléfono de emergencia: {self.company_config.phone}" if self.company_config.phone else ""}
 
 TONO: Profesional, empático, tranquilizador pero urgente.
 EMOJIS: Máximo 3 por respuesta.
@@ -1381,7 +1425,10 @@ FINALIZA SIEMPRE con: "Escalando tu caso de emergencia ahora mismo. 🚨"
 Historial de conversación:
 {{chat_history}}
 
-Mensaje del usuario: {{question}}"""),
+Mensaje del usuario: {{question}}"""
+        
+        emergency_prompt = ChatPromptTemplate.from_messages([
+            ("system", emergency_system_message),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
@@ -1390,19 +1437,29 @@ Mensaje del usuario: {{question}}"""),
     
     def _create_sales_agent(self):
         """
-        Agente de Ventas: Especializado en información comercial
+        ✅ ADAPTADO: Agente de Ventas específico por empresa
         """
-        sales_prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""Eres {self.company_config.sales_agent_name}, asesora comercial especializada de {self.company_config.company_id}.
+        # ✅ NUEVO: Obtener prompts personalizados si están disponibles
+        custom_sales_prompt = self.company_config.custom_prompts.get("sales")
+        
+        if custom_sales_prompt:
+            sales_system_message = custom_sales_prompt.format(
+                company_name=self.company_config.company_name,
+                sales_agent_name=self.company_config.sales_agent_name,
+                services=self.company_config.services
+            )
+        else:
+            # Prompt por defecto adaptado por empresa
+            sales_system_message = f"""Eres {self.company_config.sales_agent_name}, asesora comercial especializada de {self.company_config.company_name}.
 
-OBJETIVO: Proporcionar información comercial precisa y persuasiva.
+OBJETIVO: Proporcionar información comercial precisa y persuasiva sobre {self.company_config.services}.
 
 INFORMACIÓN DISPONIBLE:
 {{context}}
 
 ESTRUCTURA DE RESPUESTA:
 1. Saludo personalizado (si es nuevo cliente)
-2. Información del {self.company_config.services} solicitado
+2. Información del tratamiento solicitado
 3. Beneficios principales (máximo 3)
 4. Inversión (si disponible)
 5. Llamada a la acción para agendar
@@ -1416,32 +1473,39 @@ FINALIZA SIEMPRE con: "¿Te gustaría agendar tu cita? 📅"
 Historial de conversación:
 {{chat_history}}
 
-Pregunta del usuario: {{question}}"""),
+Pregunta del usuario: {{question}}"""
+        
+        sales_prompt = ChatPromptTemplate.from_messages([
+            ("system", sales_system_message),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
         
         def get_sales_context(inputs):
-            """Obtener contexto RAG para ventas"""
+            """✅ ADAPTADO: Obtener contexto RAG para ventas con filtrado por empresa"""
             try:
                 question = inputs.get("question", "")
+                # Log de uso del retriever
                 self._log_retriever_usage(question, [])
                 
+                # ✅ ADAPTADO: Filtrar documentos por empresa automáticamente
                 docs = self.retriever.invoke(question)
                 self._log_retriever_usage(question, docs)
                 
                 if not docs:
-                    return f"""Información básica de {self.company_config.company_id}:
-- Centro especializado en {self.company_config.services}
+                    return f"""Información básica de {self.company_config.company_name}:
+- Especializado en {self.company_config.services}
 - Atención personalizada
 - Profesionales certificados
-Para información específica, te conectaré con un especialista."""
+- Horarios: {self.company_config.business_hours}
+{f"- Ubicación: {self.company_config.address}" if self.company_config.address else ""}
+Para información específica de tratamientos, te conectaré con un especialista."""
                 
                 return "\n\n".join(doc.page_content for doc in docs)
                 
             except Exception as e:
-                logger.error(f"Error retrieving sales context: {e}")
-                return "Información básica disponible. Te conectaré con un especialista para detalles específicos."
+                logger.error(f"[{self.company_config.company_id}] Error retrieving sales context: {e}")
+                return f"Información básica de {self.company_config.company_name} disponible. Te conectaré con un especialista para detalles específicos."
         
         return (
             {
@@ -1456,12 +1520,31 @@ Para información específica, te conectaré con un especialista."""
     
     def _create_support_agent(self):
         """
-        Agente de Soporte: Consultas generales y escalación
+        ✅ ADAPTADO: Agente de Soporte específico por empresa
         """
-        support_prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""Eres {self.company_config.sales_agent_name}, especialista en soporte al cliente de {self.company_config.company_id}.
+        # ✅ NUEVO: Obtener prompts personalizados si están disponibles
+        custom_support_prompt = self.company_config.custom_prompts.get("support")
+        
+        if custom_support_prompt:
+            support_system_message = custom_support_prompt.format(
+                company_name=self.company_config.company_name,
+                sales_agent_name=self.company_config.sales_agent_name,
+                business_hours=self.company_config.business_hours,
+                address=self.company_config.address,
+                phone=self.company_config.phone
+            )
+        else:
+            # Prompt por defecto adaptado por empresa
+            support_system_message = f"""Eres {self.company_config.sales_agent_name}, especialista en soporte al cliente de {self.company_config.company_name}.
 
 OBJETIVO: Resolver consultas generales y facilitar navegación.
+
+INFORMACIÓN DE LA EMPRESA:
+- Nombre: {self.company_config.company_name}
+- Servicios: {self.company_config.services}
+- Horarios: {self.company_config.business_hours}
+{f"- Teléfono: {self.company_config.phone}" if self.company_config.phone else ""}
+{f"- Dirección: {self.company_config.address}" if self.company_config.address else ""}
 
 TIPOS DE CONSULTA:
 - Información del centro (ubicación, horarios)
@@ -1486,23 +1569,28 @@ Si no puedes resolver completamente: "Te conectaré con un especialista para res
 Historial de conversación:
 {{chat_history}}
 
-Consulta del usuario: {{question}}"""),
+Consulta del usuario: {{question}}"""
+        
+        support_prompt = ChatPromptTemplate.from_messages([
+            ("system", support_system_message),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
         
         def get_support_context(inputs):
-            """Obtener contexto RAG para soporte"""
+            """✅ ADAPTADO: Obtener contexto RAG para soporte con filtrado por empresa"""
             try:
                 question = inputs.get("question", "")
+                # Log de uso del retriever
                 self._log_retriever_usage(question, [])
                 
+                # ✅ ADAPTADO: Filtrar documentos por empresa automáticamente
                 docs = self.retriever.invoke(question)
                 self._log_retriever_usage(question, docs)
                 
                 if not docs:
-                    return f"""Información general de {self.company_config.company_id}:
-- Horarios de atención
+                    return f"""Información general de {self.company_config.company_name}:
+- Horarios de atención: {self.company_config.business_hours}
 - Información general del centro
 - Consultas sobre procesos
 - Información institucional
@@ -1511,8 +1599,8 @@ Para información específica, te conectaré con un especialista."""
                 return "\n\n".join(doc.page_content for doc in docs)
                 
             except Exception as e:
-                logger.error(f"Error retrieving support context: {e}")
-                return "Información general disponible. Te conectaré con un especialista para consultas específicas."
+                logger.error(f"[{self.company_config.company_id}] Error retrieving support context: {e}")
+                return f"Información general de {self.company_config.company_name} disponible. Te conectaré con un especialista para consultas específicas."
         
         return (
             {
@@ -1524,11 +1612,11 @@ Para información específica, te conectaré con un especialista."""
             | self.chat_model
             | StrOutputParser()
         )
-    
+
     def _create_availability_agent(self):
-        """Agente que verifica disponibilidad"""
+        """✅ ADAPTADO: Agente que verifica disponibilidad con configuración por empresa"""
         availability_prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""Eres un agente de disponibilidad de {self.company_config.company_id}.
+            ("system", f"""Eres un agente de disponibilidad de {self.company_config.company_name}.
     
     ESTADO DEL SISTEMA:
     {{selenium_status}}
@@ -1555,28 +1643,29 @@ Para información específica, te conectaré con un especialista."""
         ])
         
         def get_availability_selenium_status(inputs):
-            """Obtener estado del sistema Selenium para availability"""
+            """✅ ADAPTADO: Obtener estado del sistema Selenium para availability por empresa"""
+            # Verificar estado del servicio antes de cada consulta
             is_available = self._verify_selenium_service()
             
             if is_available:
-                return f"✅ Sistema de disponibilidad ACTIVO (Conectado a {self.schedule_service_url})"
+                return f"✅ [{self.company_config.company_id}] Sistema de disponibilidad ACTIVO (Conectado a {self.schedule_service_url})"
             else:
-                return f"⚠️ Sistema de disponibilidad NO DISPONIBLE (Verificar conexión: {self.schedule_service_url})"
+                return f"⚠️ [{self.company_config.company_id}] Sistema de disponibilidad NO DISPONIBLE (Verificar conexión: {self.schedule_service_url})"
         
         def process_availability(inputs):
-            """Procesar consulta de disponibilidad"""
+            """✅ ADAPTADO: Procesar consulta de disponibilidad por empresa"""
             try:
                 question = inputs.get("question", "")
                 chat_history = inputs.get("chat_history", [])
                 selenium_status = inputs.get("selenium_status", "")
                 
-                logger.info(f"=== AVAILABILITY AGENT - PROCESANDO ===")
+                logger.info(f"=== [{self.company_config.company_id}] AVAILABILITY AGENT - PROCESANDO ===")
                 logger.info(f"Pregunta: {question}")
                 logger.info(f"Estado Selenium: {selenium_status}")
                 
                 # 1. VERIFICAR SERVICIO DISPONIBLE PRIMERO
                 if not self._verify_selenium_service():
-                    logger.error("Servicio Selenium no disponible para availability agent")
+                    logger.error(f"[{self.company_config.company_id}] Servicio Selenium no disponible para availability agent")
                     return "Error consultando disponibilidad. Te conectaré con un especialista para verificar horarios. 👩‍⚕️"
                 
                 # Extract date from question and history
@@ -1586,21 +1675,21 @@ Para información específica, te conectaré con un especialista."""
                 if not date:
                     return "Por favor especifica la fecha en formato DD-MM-YYYY para consultar disponibilidad."
                 
-                logger.info(f"Fecha extraída: {date}, Tratamiento: {treatment}")
+                logger.info(f"[{self.company_config.company_id}] Fecha extraída: {date}, Tratamiento: {treatment}")
                 
                 # Obtener duración del tratamiento desde RAG
                 duration = self._get_treatment_duration(treatment)
-                logger.info(f"Duración del tratamiento: {duration} minutos")
+                logger.info(f"[{self.company_config.company_id}] Duración del tratamiento: {duration} minutos")
                 
                 # 2. LLAMAR ENDPOINT CON MÉTODO MEJORADO
                 availability_data = self._call_check_availability(date)
                 
                 if not availability_data:
-                    logger.warning("No se obtuvieron datos de disponibilidad")
+                    logger.warning(f"[{self.company_config.company_id}] No se obtuvieron datos de disponibilidad")
                     return "Error consultando disponibilidad. Te conectaré con un especialista."
                 
                 if not availability_data.get("available_slots"):
-                    logger.info("No hay slots disponibles para la fecha solicitada")
+                    logger.info(f"[{self.company_config.company_id}] No hay slots disponibles para la fecha solicitada")
                     return f"No hay horarios disponibles para {date}."
                 
                 # Filtrar slots según duración
@@ -1609,15 +1698,15 @@ Para información específica, te conectaré con un especialista."""
                     duration
                 )
                 
-                logger.info(f"Slots filtrados: {filtered_slots}")
+                logger.info(f"[{self.company_config.company_id}] Slots filtrados: {filtered_slots}")
                 
                 # Formatear respuesta
                 response = self._format_slots_response(filtered_slots, date, duration)
-                logger.info(f"=== AVAILABILITY AGENT - RESPUESTA GENERADA ===")
+                logger.info(f"=== [{self.company_config.company_id}] AVAILABILITY AGENT - RESPUESTA GENERADA ===")
                 return response
                 
             except Exception as e:
-                logger.error(f"Error en agente de disponibilidad: {e}")
+                logger.error(f"[{self.company_config.company_id}] Error en agente de disponibilidad: {e}")
                 logger.exception("Stack trace completo:")
                 return "Error consultando disponibilidad. Te conectaré con un especialista."
     
@@ -1630,253 +1719,88 @@ Para información específica, te conectaré con un especialista."""
             | RunnableLambda(process_availability)
         )
     
-    def _extract_date_from_question(self, question, chat_history=None):
-        """Extract date from question or chat history"""
-        import re
-        
-        # Check current question first
-        date_str = self._find_date_in_text(question)
-        if date_str:
-            return date_str
-        
-        # Check chat history if provided
-        if chat_history:
-            history_text = " ".join([
-                msg.content if hasattr(msg, 'content') else str(msg) 
-                for msg in chat_history
-            ])
-            date_str = self._find_date_in_text(history_text)
-            if date_str:
-                return date_str
-        
-        return None
-    
-    def _find_date_in_text(self, text):
-        """Helper to find date in text"""
-        import re
-        from datetime import datetime, timedelta
-        
-        # Check for DD-MM-YYYY format
-        match = re.search(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b', text)
-        if match:
-            return match.group(0).replace('/', '-')
-        
-        # Check for relative dates
-        text_lower = text.lower()
-        today = datetime.now()
-        
-        if "hoy" in text_lower:
-            return today.strftime("%d-%m-%Y")
-        elif "mañana" in text_lower:
-            tomorrow = today + timedelta(days=1)
-            return tomorrow.strftime("%d-%m-%Y")
-        elif "pasado mañana" in text_lower:
-            day_after = today + timedelta(days=2)
-            return day_after.strftime("%d-%m-%Y")
-        
-        return None
-    
-    def _extract_treatment_from_question(self, question):
-        """Extraer tratamiento del mensaje"""
-        question_lower = question.lower()
-        
-        # Diccionario de tratamientos conocidos
-        treatments_keywords = {
-            "limpieza facial": ["limpieza", "facial", "limpieza facial"],
-            "masaje": ["masaje", "masajes", "relajante"],
-            "microagujas": ["microagujas", "micro agujas", "microneedling"],
-            "botox": ["botox", "toxina"],
-            "rellenos": ["relleno", "rellenos", "ácido hialurónico"],
-            "peeling": ["peeling", "exfoliación"],
-            "radiofrecuencia": ["radiofrecuencia", "rf"],
-            "depilación": ["depilación", "láser"]
-        }
-        
-        for treatment, keywords in treatments_keywords.items():
-            if any(keyword in question_lower for keyword in keywords):
-                return treatment
-        
-        return "tratamiento general"
-    
-    def _get_treatment_duration(self, treatment):
-        """Obtener duración del tratamiento desde RAG o configuración por defecto"""
+    def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list) -> Dict[str, Any]:
+        """✅ ADAPTADO: Llamar al microservicio de schedule específico por empresa"""
         try:
-            # Consultar RAG para obtener duración específica
-            docs = self.retriever.invoke(f"duración tiempo {treatment}")
+            logger.info(f"[{self.company_config.company_id}] Llamando a microservicio en: {self.schedule_service_url}")
             
-            for doc in docs:
-                content = doc.page_content.lower()
-                if "duración" in content or "tiempo" in content:
-                    # Buscar números seguidos de "minutos" o "min"
-                    import re
-                    duration_match = re.search(r'(\d+)\s*(?:minutos?|min)', content)
-                    if duration_match:
-                        return int(duration_match.group(1))
-            
-            # Duraciones por defecto según tipo de tratamiento
-            default_durations = {
-                "limpieza facial": 60,
-                "masaje": 60,
-                "microagujas": 90,
-                "botox": 30,
-                "rellenos": 45,
-                "peeling": 45,
-                "radiofrecuencia": 60,
-                "depilación": 30,
-                "tratamiento general": 60
-            }
-            
-            return default_durations.get(treatment, 60)  # 60 min por defecto
-            
-        except Exception as e:
-            logger.error(f"Error obteniendo duración del tratamiento: {e}")
-            return 60  # Duración por defecto
-    
-    def _call_check_availability(self, date):
-        """Llamar al endpoint de disponibilidad"""
-        try:
-            # 1. VERIFICAR ESTADO DEL SERVICIO PRIMERO
-            if not self._verify_selenium_service():
-                logger.warning("Servicio Selenium no disponible para availability check")
-                return None
-            
-            logger.info(f"Consultando disponibilidad en: {self.schedule_service_url}/check-availability para fecha: {date}")
-            
-            # 2. USAR LA MISMA CONFIGURACIÓN QUE SCHEDULE_AGENT
             response = requests.post(
-                f"{self.schedule_service_url}/check-availability",
-                json={"date": date},
-                headers={"Content-Type": "application/json"},
+                f"{self.schedule_service_url}/schedule-request",
+                json={
+                    "message": question,
+                    "user_id": user_id,
+                    "company_id": self.company_config.company_id,  # ✅ NUEVO: Incluir company_id
+                    "chat_history": [
+                        {
+                            "content": msg.content if hasattr(msg, 'content') else str(msg),
+                            "type": getattr(msg, 'type', 'user')
+                        } for msg in chat_history
+                    ]
+                },
                 timeout=self.selenium_timeout
             )
             
-            logger.info(f"Respuesta de availability endpoint - Status: {response.status_code}")
-            
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Datos de disponibilidad obtenidos exitosamente: {result.get('success', False)}")
-                return result.get("data", {})
+                
+                # Si se agendó exitosamente, notificar al sistema principal
+                if result.get('success') and result.get('appointment_data'):
+                    self._notify_appointment_success(user_id, result.get('appointment_data'))
+                
+                logger.info(f"[{self.company_config.company_id}] Respuesta exitosa del microservicio: {result.get('success', False)}")
+                return result
             else:
-                logger.warning(f"Endpoint de disponibilidad retornó código {response.status_code}")
-                logger.warning(f"Respuesta: {response.text}")
-                # Marcar servicio como no disponible si hay error
+                logger.warning(f"[{self.company_config.company_id}] Microservicio retornó código {response.status_code}")
+                # Marcar servicio como no disponible para evitar llamadas adicionales
                 self.selenium_service_available = False
-                return None
+                return {"success": False, "message": "Servicio no disponible"}
                 
         except requests.exceptions.Timeout:
-            logger.error(f"Timeout conectando con endpoint de disponibilidad ({self.selenium_timeout}s)")
+            logger.error(f"[{self.company_config.company_id}] Timeout conectando con microservicio ({self.selenium_timeout}s)")
             self.selenium_service_available = False
-            return None
+            return {"success": False, "message": "Timeout del servicio"}
         
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"No se pudo conectar con endpoint de disponibilidad: {self.schedule_service_url}")
-            logger.error(f"Error de conexión: {e}")
-            logger.error("Verifica que el microservicio esté ejecutándose en tu máquina local")
+        except requests.exceptions.ConnectionError:
+            logger.error(f"[{self.company_config.company_id}] No se pudo conectar con microservicio: {self.schedule_service_url}")
             self.selenium_service_available = False
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error llamando endpoint de disponibilidad: {e}")
-            self.selenium_service_available = False
-            return None
-    
-    def _filter_slots_by_duration(self, available_slots, required_duration):
-        """Filtrar slots que pueden acomodar la duración requerida"""
-        try:
-            if not available_slots:
-                return []
-            
-            # Convertir duración requerida a número de slots (asumiendo 30 min por slot)
-            required_slots = max(1, required_duration // 30)
-            
-            # Extraer horarios y ordenarlos
-            times = []
-            for slot in available_slots:
-                if isinstance(slot, dict) and "time" in slot:
-                    times.append(slot["time"])
-                elif isinstance(slot, str):
-                    times.append(slot)
-            
-            times.sort()
-            filtered = []
-            
-            # Para tratamientos de 30 min o menos, todos los slots son válidos
-            if required_slots == 1:
-                return [f"{time} - {self._add_minutes_to_time(time, required_duration)}" for time in times]
-            
-            # Para tratamientos más largos, buscar slots consecutivos
-            for i in range(len(times) - required_slots + 1):
-                consecutive_times = times[i:i + required_slots]
-                if self._are_consecutive_times(consecutive_times):
-                    start_time = consecutive_times[0]
-                    end_time = self._add_minutes_to_time(start_time, required_duration)
-                    filtered.append(f"{start_time} - {end_time}")
-            
-            return filtered
-            
-        except Exception as e:
-            logger.error(f"Error filtrando slots: {e}")
-            return []
-    
-    def _are_consecutive_times(self, times):
-        """Verificar si los horarios son consecutivos (diferencia de 30 min)"""
-        for i in range(len(times) - 1):
-            current_minutes = self._time_to_minutes(times[i])
-            next_minutes = self._time_to_minutes(times[i + 1])
-            if next_minutes - current_minutes != 30:
-                return False
-        return True
-    
-    def _time_to_minutes(self, time_str):
-        """Convertir hora a minutos desde medianoche"""
-        try:
-            # Manejar formato "HH:MM" o "H:MM"
-            time_clean = time_str.strip()
-            if ':' in time_clean:
-                parts = time_clean.split(':')
-                hours = int(parts[0])
-                minutes = int(parts[1])
-                return hours * 60 + minutes
-            return 0
-        except (ValueError, IndexError):
-            return 0
-    
-    def _add_minutes_to_time(self, time_str, minutes_to_add):
-        """Sumar minutos a una hora y retornar en formato HH:MM"""
-        try:
-            total_minutes = self._time_to_minutes(time_str) + minutes_to_add
-            hours = (total_minutes // 60) % 24
-            minutes = total_minutes % 60
-            return f"{hours:02d}:{minutes:02d}"
-        except:
-            return time_str
-    
-    def _format_slots_response(self, slots, date, duration):
-        """Formatear respuesta con horarios disponibles"""
-        if not slots:
-            return f"No hay horarios disponibles para {date} (tratamiento de {duration} min)."
+            return {"success": False, "message": "Servicio no disponible"}
         
-        slots_text = "\n".join(f"- {slot}" for slot in slots)
-        return f"Horarios disponibles para {date} (tratamiento de {duration} min):\n{slots_text}"
-
+        except Exception as e:
+            logger.error(f"[{self.company_config.company_id}] Error llamando microservicio: {e}")
+            self.selenium_service_available = False
+            return {"success": False, "message": "Error del servicio"}
+            
     def _create_enhanced_schedule_agent(self):
-        """Agente de Schedule mejorado con integración de disponibilidad"""
-        schedule_prompt = ChatPromptTemplate.from_messages([
-            ("system", f"""Eres {self.company_config.sales_agent_name}, especialista en gestión de citas de {self.company_config.company_id}.
+        """✅ ADAPTADO: Agente de Schedule con configuración por empresa"""
+        # ✅ NUEVO: Obtener prompts personalizados si están disponibles
+        custom_schedule_prompt = self.company_config.custom_prompts.get("schedule")
+        
+        if custom_schedule_prompt:
+            schedule_system_message = custom_schedule_prompt.format(
+                company_name=self.company_config.company_name,
+                sales_agent_name=self.company_config.sales_agent_name,
+                services=self.company_config.services,
+                business_hours=self.company_config.business_hours
+            )
+        else:
+            # Prompt por defecto adaptado por empresa
+            schedule_system_message = f"""Eres {self.company_config.sales_agent_name}, especialista en gestión de citas de {self.company_config.company_name}.
     
-    OBJETIVO: Facilitar la gestión completa de citas y horarios usando herramientas avanzadas.
+    OBJETIVO: Facilitar la gestión completa de citas y horarios para {self.company_config.services}.
+    
+    HORARIOS DE ATENCIÓN: {self.company_config.business_hours}
     
     INFORMACIÓN DISPONIBLE:
-    {context}
+    {{context}}
     
     ESTADO DEL SISTEMA DE AGENDAMIENTO:
-    {selenium_status}
+    {{selenium_status}}
     
     DISPONIBILIDAD CONSULTADA:
-    {available_slots}
+    {{available_slots}}
     
     FUNCIONES PRINCIPALES:
-    - Agendar nuevas citas (con automatización completa via Selenium LOCAL)
+    - Agendar nuevas citas (con automatización completa via Selenium)
     - Modificar citas existentes
     - Cancelar citas
     - Consultar disponibilidad
@@ -1888,7 +1812,7 @@ Para información específica, te conectaré con un especialista."""
     2. Mostrar horarios disponibles al usuario
     3. Extraer información del paciente del contexto
     4. Validar datos requeridos
-    5. Solo usar herramienta de Selenium LOCAL después de confirmar disponibilidad
+    5. Solo usar herramienta de Selenium después de confirmar disponibilidad
     6. Confirmar resultado al cliente
     
     DATOS REQUERIDOS PARA AGENDAR:
@@ -1917,46 +1841,51 @@ Para información específica, te conectaré con un especialista."""
     LONGITUD: Máximo 6 oraciones.
     
     Historial de conversación:
-    {chat_history}
+    {{chat_history}}
     
-    Solicitud del usuario: {question}"""),
+    Solicitud del usuario: {{question}}"""
+        
+        schedule_prompt = ChatPromptTemplate.from_messages([
+            ("system", schedule_system_message),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
         
         def get_schedule_context(inputs):
-            """Obtener contexto RAG para agenda"""
+            """✅ ADAPTADO: Obtener contexto RAG para agenda por empresa"""
             try:
                 question = inputs.get("question", "")
+                # Log de uso del retriever
                 self._log_retriever_usage(question, [])
                 
+                # ✅ ADAPTADO: Filtrar documentos por empresa automáticamente
                 docs = self.retriever.invoke(question)
                 self._log_retriever_usage(question, docs)
                 
                 if not docs:
-                    return f"""Información básica de agenda {self.company_config.company_id}:
-    - Horarios de atención: Lunes a Viernes 8:00 AM - 6:00 PM, Sábados 8:00 AM - 4:00 PM
-    - Servicios agendables: Consultas médicas, Tratamientos estéticos, Procedimientos de belleza
+                    return f"""Información básica de agenda {self.company_config.company_name}:
+    - Horarios de atención: {self.company_config.business_hours}
+    - Servicios agendables: {self.company_config.services}
     - Políticas de cancelación: 24 horas de anticipación
     - Reagendamiento disponible sin costo
-    - Sistema de agendamiento automático con Selenium LOCAL disponible
+    - Sistema de agendamiento automático disponible
     - Datos requeridos: Nombre, cédula, teléfono, fecha y hora deseada"""
                 
                 return "\n\n".join(doc.page_content for doc in docs)
                 
             except Exception as e:
-                logger.error(f"Error retrieving schedule context: {e}")
-                return "Información básica de agenda disponible. Sistema de agendamiento automático disponible."
-        
+                logger.error(f"[{self.company_config.company_id}] Error retrieving schedule context: {e}")
+                return f"Información básica de agenda de {self.company_config.company_name} disponible. Sistema de agendamiento automático disponible."
+        #####
         def get_selenium_status(inputs):
-            """Obtener estado del sistema Selenium local usando cache"""
+            """✅ ADAPTADO: Obtener estado del sistema Selenium por empresa"""
             if self.selenium_service_available:
-                return f"✅ Sistema de agendamiento automático ACTIVO (Conectado a {self.schedule_service_url})"
+                return f"✅ [{self.company_config.company_id}] Sistema de agendamiento automático ACTIVO (Conectado a {self.schedule_service_url})"
             else:
-                return "⚠️ Sistema de agendamiento automático NO DISPONIBLE (Verificar conexión local)"
+                return f"⚠️ [{self.company_config.company_id}] Sistema de agendamiento automático NO DISPONIBLE (Verificar conexión: {self.schedule_service_url})"
         
         def process_schedule_with_selenium(inputs):
-            """Procesar solicitud de agenda con integración de disponibilidad MEJORADA"""
+            """✅ ADAPTADO: Procesar solicitud de agenda con integración por empresa"""
             try:
                 question = inputs.get("question", "")
                 user_id = inputs.get("user_id", "default_user")
@@ -1964,18 +1893,18 @@ Para información específica, te conectaré con un especialista."""
                 context = inputs.get("context", "")
                 selenium_status = inputs.get("selenium_status", "")
                 
-                logger.info(f"Procesando solicitud de agenda: {question}")
+                logger.info(f"[{self.company_config.company_id}] Procesando solicitud de agenda: {question}")
                 
                 # PASO 1: SIEMPRE verificar disponibilidad si se menciona agendamiento
                 available_slots = ""
                 if self._contains_schedule_intent(question):
-                    logger.info("Detectado intent de agendamiento - verificando disponibilidad")
+                    logger.info(f"[{self.company_config.company_id}] Detectado intent de agendamiento - verificando disponibilidad")
                     try:
-                        availability_response = self.availability_agent.invoke({"question": question,})
+                        availability_response = self.availability_agent.invoke({"question": question, "chat_history": chat_history})
                         available_slots = availability_response
-                        logger.info(f"Disponibilidad obtenida: {available_slots}")
+                        logger.info(f"[{self.company_config.company_id}] Disponibilidad obtenida: {available_slots}")
                     except Exception as e:
-                        logger.error(f"Error verificando disponibilidad: {e}")
+                        logger.error(f"[{self.company_config.company_id}] Error verificando disponibilidad: {e}")
                         available_slots = "Error consultando disponibilidad. Verificaré manualmente."
                 
                 # Preparar inputs para el prompt
@@ -1988,7 +1917,7 @@ Para información específica, te conectaré con un especialista."""
                 }
                 
                 # PASO 2: Generar respuesta base con información de disponibilidad
-                logger.info("Generando respuesta base con disponibilidad")
+                logger.info(f"[{self.company_config.company_id}] Generando respuesta base con disponibilidad")
                 base_response = (schedule_prompt | self.chat_model | StrOutputParser()).invoke(base_inputs)
                 
                 # PASO 3: Determinar si proceder con Selenium (solo después de verificar disponibilidad)
@@ -1999,10 +1928,10 @@ Para información específica, te conectaré con un especialista."""
                     not self._is_just_availability_check(question)
                 )
                 
-                logger.info(f"¿Proceder con Selenium? {should_proceed_selenium}")
+                logger.info(f"[{self.company_config.company_id}] ¿Proceder con Selenium? {should_proceed_selenium}")
                 
                 if should_proceed_selenium:
-                    logger.info("Procediendo con agendamiento automático via Selenium")
+                    logger.info(f"[{self.company_config.company_id}] Procediendo con agendamiento automático via Selenium")
                     selenium_result = self._call_local_schedule_microservice(question, user_id, chat_history)
                     
                     if selenium_result.get('success'):
@@ -2015,7 +1944,7 @@ Para información específica, te conectaré con un especialista."""
                 return base_response
                 
             except Exception as e:
-                logger.error(f"Error en agendamiento: {e}")
+                logger.error(f"[{self.company_config.company_id}] Error en agendamiento: {e}")
                 return "Error procesando tu solicitud. Conectando con especialista... 📋"
         
         return (
@@ -2030,7 +1959,7 @@ Para información específica, te conectaré con un especialista."""
         )
     
     def _contains_schedule_intent(self, question: str) -> bool:
-        """Detectar si la pregunta contiene intención de agendamiento"""
+        """✅ ADAPTADO: Detectar si la pregunta contiene intención de agendamiento"""
         schedule_keywords = [
             "agendar", "reservar", "programar", "cita", "appointment",
             "agenda", "disponibilidad", "horario", "fecha", "hora",
@@ -2039,7 +1968,7 @@ Para información específica, te conectaré con un especialista."""
         return any(keyword in question.lower() for keyword in schedule_keywords)
     
     def _has_available_slots_confirmation(self, availability_response: str) -> bool:
-        """Verificar si la respuesta de disponibilidad contiene slots válidos"""
+        """✅ ADAPTADO: Verificar si la respuesta de disponibilidad contiene slots válidos"""
         if not availability_response:
             return False
         
@@ -2073,7 +2002,7 @@ Para información específica, te conectaré con un especialista."""
         return has_positive and not has_negative
     
     def _is_just_availability_check(self, question: str) -> bool:
-        """Determinar si solo se está consultando disponibilidad sin agendar"""
+        """✅ ADAPTADO: Determinar si solo se está consultando disponibilidad sin agendar"""
         availability_only_keywords = [
             "disponibilidad para", "horarios disponibles", "qué horarios",
             "cuándo hay", "hay disponibilidad", "ver horarios"
@@ -2090,82 +2019,74 @@ Para información específica, te conectaré con un especialista."""
         # Si solo pregunta por disponibilidad y no confirma agendamiento
         return has_availability_check and not has_schedule_confirmation
     
-    def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list) -> Dict[str, Any]:
-        """Llamar al microservicio de schedule LOCAL"""
-        try:
-            logger.info(f"Llamando a microservicio local en: {self.schedule_service_url}")
-            
-            response = requests.post(
-                f"{self.schedule_service_url}/schedule-request",
-                json={
-                    "message": question,
-                    "user_id": user_id,
-                    "chat_history": [
-                        {
-                            "content": msg.content if hasattr(msg, 'content') else str(msg),
-                            "type": getattr(msg, 'type', 'user')
-                        } for msg in chat_history
-                    ]
-                },
-                timeout=self.selenium_timeout
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # Si se agendó exitosamente, notificar al sistema principal
-                if result.get('success') and result.get('appointment_data'):
-                    self._notify_appointment_success(user_id, result.get('appointment_data'))
-                
-                logger.info(f"Respuesta exitosa del microservicio local: {result.get('success', False)}")
-                return result
-            else:
-                logger.warning(f"Microservicio local retornó código {response.status_code}")
-                # Marcar servicio como no disponible para evitar llamadas adicionales
-                self.selenium_service_available = False
-                return {"success": False, "message": "Servicio local no disponible"}
-                
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout conectando con microservicio local ({self.selenium_timeout}s)")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Timeout del servicio local"}
+    def _should_use_selenium(self, question: str, chat_history: list) -> bool:
+        """✅ ADAPTADO: Determinar si se debe usar el microservicio de Selenium por empresa"""
+        question_lower = question.lower()
         
-        except requests.exceptions.ConnectionError:
-            logger.error(f"No se pudo conectar con microservicio local: {self.schedule_service_url}")
-            logger.error("Verifica que el microservicio esté ejecutándose en tu máquina local")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Servicio local no disponible"}
+        # Palabras clave que indican necesidad de agendamiento
+        schedule_keywords = [
+            "agendar", "reservar", "programar", "cita", "appointment",
+            "agenda", "disponibilidad", "horario", "fecha", "hora"
+        ]
         
-        except Exception as e:
-            logger.error(f"Error llamando microservicio local: {e}")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Error del servicio local"}
-            
+        # Verificar si la pregunta contiene palabras clave de agendamiento
+        has_schedule_intent = any(keyword in question_lower for keyword in schedule_keywords)
+        
+        # Verificar si hay suficiente información en el historial
+        has_patient_info = self._extract_patient_info_from_history(chat_history)
+        
+        return has_schedule_intent and (has_patient_info or self._has_complete_info_in_message(question))
+    
+    def _extract_patient_info_from_history(self, chat_history: list) -> bool:
+        """✅ ADAPTADO: Extraer información del paciente del historial"""
+        # Buscar información básica en el historial
+        history_text = " ".join([msg.content if hasattr(msg, 'content') else str(msg) for msg in chat_history])
+        
+        # Verificar si hay información básica disponible
+        has_name = any(word in history_text.lower() for word in ["nombre", "llamo", "soy"])
+        has_phone = any(char.isdigit() for char in history_text) and len([c for c in history_text if c.isdigit()]) >= 7
+        has_date = any(word in history_text.lower() for word in ["fecha", "día", "mañana", "hoy"])
+        
+        return has_name and (has_phone or has_date)
+    
+    def _has_complete_info_in_message(self, message: str) -> bool:
+        """✅ ADAPTADO: Verificar si el mensaje tiene información completa"""
+        message_lower = message.lower()
+        
+        # Verificar elementos básicos
+        has_name_indicator = any(word in message_lower for word in ["nombre", "llamo", "soy"])
+        has_phone_indicator = any(char.isdigit() for char in message) and len([c for c in message if c.isdigit()]) >= 7
+        has_date_indicator = any(word in message_lower for word in ["fecha", "día", "mañana", "hoy"])
+        
+        return has_name_indicator and has_phone_indicator and has_date_indicator
+    
     def _notify_appointment_success(self, user_id: str, appointment_data: Dict[str, Any]):
-        """Notificar al sistema principal sobre cita exitosa"""
+        """✅ ADAPTADO: Notificar al sistema principal sobre cita exitosa por empresa"""
         try:
-            # Enviar notificación al sistema principal (si es necesario)
-            main_system_url = os.getenv('MAIN_SYSTEM_URL')
+            # Enviar notificación al sistema principal específico de la empresa si es necesario
+            main_system_url = self.company_config.main_system_url if hasattr(self.company_config, 'main_system_url') else os.getenv('MAIN_SYSTEM_URL')
+            
             if main_system_url:
                 requests.post(
                     f"{main_system_url}/appointment-notification",
                     json={
+                        "company_id": self.company_config.company_id,  # ✅ NUEVO: Incluir company_id
                         "user_id": user_id,
                         "event": "appointment_scheduled",
                         "data": appointment_data
                     },
                     timeout=5
                 )
-                logger.info(f"Notificación enviada al sistema principal para usuario {user_id}")
+                logger.info(f"[{self.company_config.company_id}] Notificación enviada al sistema principal para usuario {user_id}")
         except Exception as e:
-            logger.error(f"Error notificando cita exitosa: {e}")
+            logger.error(f"[{self.company_config.company_id}] Error notificando cita exitosa: {e}")
     
     def _create_orchestrator(self):
         """
-        Orquestador principal que coordina los agentes
+        ✅ ADAPTADO: Orquestador principal que coordina los agentes por empresa
         """
         def route_to_agent(inputs):
-            """Enrutar a agente específico basado en clasificación"""
+            """✅ ADAPTADO: Enrutar a agente específico basado en clasificación por empresa"""
             try:
                 # Obtener clasificación del router
                 router_response = self.router_agent.invoke(inputs)
@@ -2176,13 +2097,13 @@ Para información específica, te conectaré con un especialista."""
                     intent = classification.get("intent", "SUPPORT")
                     confidence = classification.get("confidence", 0.5)
                     
-                    logger.info(f"Intent classified: {intent} (confidence: {confidence})")
+                    logger.info(f"[{self.company_config.company_id}] Intent classified: {intent} (confidence: {confidence})")
                     
                 except json.JSONDecodeError:
                     # Fallback si no es JSON válido
                     intent = "SUPPORT"
                     confidence = 0.3
-                    logger.warning("Router response was not valid JSON, defaulting to SUPPORT")
+                    logger.warning(f"[{self.company_config.company_id}] Router response was not valid JSON, defaulting to SUPPORT")
                 
                 # Agregar user_id a inputs para el agente de schedule
                 inputs["user_id"] = inputs.get("user_id", "default_user")
@@ -2202,7 +2123,7 @@ Para información específica, te conectaré con un especialista."""
                     return self.support_agent.invoke(inputs)
                     
             except Exception as e:
-                logger.error(f"Error in orchestrator: {e}")
+                logger.error(f"[{self.company_config.company_id}] Error in orchestrator: {e}")
                 # Fallback a soporte en caso de error
                 return self.support_agent.invoke(inputs)
         
@@ -2210,7 +2131,17 @@ Para información específica, te conectaré con un especialista."""
     
     def get_response(self, question: str, user_id: str, media_type: str = "text", media_context: str = None) -> Tuple[str, str]:
         """
-        Método principal para obtener respuesta del sistema multi-agente
+        ✅ ADAPTADO: Método principal para obtener respuesta del sistema multi-agente por empresa
+        Soporta entradas multimedia (voz e imágenes) con configuración específica
+        
+        Args:
+            question: Texto de la pregunta/prompt
+            user_id: Identificador único del usuario
+            media_type: Tipo de medio ('text', 'voice', 'image')
+            media_context: Contexto adicional del medio (transcripción o descripción)
+        
+        Returns:
+            Tuple[str, str]: (respuesta, agente_utilizado)
         """
         # Procesar según el tipo de multimedia
         if media_type == "image" and media_context:
@@ -2220,15 +2151,15 @@ Para información específica, te conectaré con un especialista."""
         else:
             processed_question = question
     
-        # Validaciones
+        # Validaciones (usando processed_question para incluir contexto multimedia)
         if not processed_question or not processed_question.strip():
-            return "Por favor, envía un mensaje específico para poder ayudarte. 😊", "support"
+            return f"Por favor, envía un mensaje específico para poder ayudarte desde {self.company_config.company_name}. 😊", "support"
         
         if not user_id or not user_id.strip():
             return "Error interno: ID de usuario inválido.", "error"
         
         try:
-            # Obtener historial de conversación
+            # Obtener historial de conversación específico por empresa
             chat_history = self.conversation_manager.get_chat_history(user_id, format_type="messages")
             
             # Preparar inputs usando la pregunta procesada
@@ -2242,16 +2173,16 @@ Para información específica, te conectaré con un especialista."""
             might_need_rag = self._might_need_rag(processed_question)
             
             # Log inicial de la consulta
-            logger.info(f"🔍 CONSULTA INICIADA - Company: {self.company_config.company_id}, User: {user_id}, Pregunta: {processed_question[:100]}...")
+            logger.info(f"[{self.company_config.company_id}] 🔍 CONSULTA INICIADA - User: {user_id}, Pregunta: {processed_question[:100]}...")
             if might_need_rag:
-                logger.info("   → Posible consulta RAG detectada")
+                logger.info(f"[{self.company_config.company_id}]    → Posible consulta RAG detectada")
             
             # Obtener respuesta del orquestador
             response = self.orchestrator.invoke(inputs)
             
             # Log de la respuesta
-            logger.info(f"🤖 RESPUESTA GENERADA - Agente: {self._determine_agent_used(response)}")
-            logger.info(f"   → Longitud respuesta: {len(response)} caracteres")
+            logger.info(f"[{self.company_config.company_id}] 🤖 RESPUESTA GENERADA - Agente: {self._determine_agent_used(response)}")
+            logger.info(f"[{self.company_config.company_id}]    → Longitud respuesta: {len(response)} caracteres")
             
             # Agregar mensaje del usuario al historial (usando processed_question)
             self.conversation_manager.add_message(user_id, "user", processed_question)
@@ -2262,16 +2193,16 @@ Para información específica, te conectaré con un especialista."""
             # Determinar qué agente se utilizó (para logging)
             agent_used = self._determine_agent_used(response)
             
-            logger.info(f"Multi-agent response generated for user {user_id} using {agent_used}")
+            logger.info(f"[{self.company_config.company_id}] Multi-agent response generated for user {user_id} using {agent_used}")
             
             return response, agent_used
             
         except Exception as e:
-            logger.exception(f"Error en sistema multi-agente (Company: {self.company_config.company_id}, User: {user_id})")
+            logger.exception(f"[{self.company_config.company_id}] Error en sistema multi-agente (User: {user_id})")
             return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", "error"
     
     def _might_need_rag(self, question: str) -> bool:
-        """Determina si una consulta podría necesitar RAG basado en keywords"""
+        """✅ ADAPTADO: Determina si una consulta podría necesitar RAG basado en keywords"""
         rag_keywords = [
             "precio", "costo", "inversión", "duración", "tiempo", 
             "tratamiento", "procedimiento", "servicio", "beneficio",
@@ -2280,35 +2211,35 @@ Para información específica, te conectaré con un especialista."""
         return any(keyword in question.lower() for keyword in rag_keywords)
     
     def _log_retriever_usage(self, question: str, docs: List) -> None:
-        """Log detallado del uso del retriever"""
+        """✅ ADAPTADO: Log detallado del uso del retriever por empresa"""
         if not docs:
-            logger.info("   → RAG: No se recuperaron documentos")
+            logger.info(f"[{self.company_config.company_id}]    → RAG: No se recuperaron documentos")
             return
         
-        logger.info(f"   → RAG: Recuperados {len(docs)} documentos")
-        logger.info(f"   → Pregunta: {question[:50]}...")
+        logger.info(f"[{self.company_config.company_id}]    → RAG: Recuperados {len(docs)} documentos")
+        logger.info(f"[{self.company_config.company_id}]    → Pregunta: {question[:50]}...")
         
         for i, doc in enumerate(docs[:3]):  # Limitar a 3 para no saturar logs
             content_preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
             metadata = getattr(doc, 'metadata', {})
             score = getattr(doc, 'score', None)
             
-            logger.info(f"   → Doc {i+1}:")
-            logger.info(f"      - Contenido: {content_preview}")
+            logger.info(f"[{self.company_config.company_id}]    → Doc {i+1}:")
+            logger.info(f"[{self.company_config.company_id}]       - Contenido: {content_preview}")
             if metadata:
-                logger.info(f"      - Metadata: {dict(list(metadata.items())[:3])}...")  # Limitar metadata
+                logger.info(f"[{self.company_config.company_id}]       - Metadata: {dict(list(metadata.items())[:3])}...")
             if score is not None:
-                logger.info(f"      - Score: {score:.4f}")
+                logger.info(f"[{self.company_config.company_id}]       - Score: {score:.4f}")
     
     def _determine_agent_used(self, response: str) -> str:
         """
-        Determinar qué agente se utilizó basado en la respuesta
+        ✅ ADAPTADO: Determinar qué agente se utilizó basado en la respuesta
         """
         if "Escalando tu caso de emergencia" in response:
             return "emergency"
         elif "¿Te gustaría agendar tu cita?" in response:
             return "sales"
-        elif "Procesando tu solicitud de agenda" in response:
+        elif "Procesando tu solicitud de agenda" in response or "disponibilidad" in response.lower():
             return "schedule"
         elif "Te conectaré con un especialista" in response:
             return "support"
@@ -2317,7 +2248,7 @@ Para información específica, te conectaré con un especialista."""
     
     def health_check(self) -> Dict[str, Any]:
         """
-        Verificar salud del sistema multi-agente y microservicio
+        ✅ ADAPTADO: Verificar salud del sistema multi-agente y microservicio por empresa
         """
         try:
             # Usar el estado cacheado para el health check, solo verificar si está marcado como no disponible
@@ -2329,61 +2260,84 @@ Para información específica, te conectaré con un especialista."""
             
             return {
                 "system_healthy": True,
-                "agents_available": ["router", "emergency", "sales", "schedule", "support"],
+                "company_id": self.company_config.company_id,  # ✅ NUEVO
+                "company_name": self.company_config.company_name,  # ✅ NUEVO
+                "agents_available": ["router", "emergency", "sales", "schedule", "support", "availability"],
                 "schedule_service_healthy": service_healthy,
                 "schedule_service_url": self.schedule_service_url,
-                "schedule_service_type": "LOCAL",
-                "system_type": "multi-agent_enhanced",
+                "schedule_service_type": "MICROSERVICE_PER_COMPANY",  # ✅ ACTUALIZADO
+                "system_type": "multi-agent_enhanced_multi_company",  # ✅ ACTUALIZADO
                 "orchestrator_active": True,
                 "rag_enabled": True,
                 "selenium_integration": service_healthy,
-                "environment": os.getenv('ENVIRONMENT', 'production')
+                "environment": os.getenv('ENVIRONMENT', 'production'),
+                "vectorstore_company_isolated": True,  # ✅ NUEVO
+                "redis_prefix": f"{self.company_config.company_id}:"  # ✅ NUEVO
             }
         except Exception as e:
             return {
                 "system_healthy": True,
-                "agents_available": ["router", "emergency", "sales", "schedule", "support"],
+                "company_id": getattr(self.company_config, 'company_id', 'unknown'),
+                "company_name": getattr(self.company_config, 'company_name', 'Unknown Company'),
+                "agents_available": ["router", "emergency", "sales", "schedule", "support", "availability"],
                 "schedule_service_healthy": False,
                 "schedule_service_url": self.schedule_service_url,
-                "schedule_service_type": "LOCAL",
-                "system_type": "multi-agent_enhanced",
+                "schedule_service_type": "MICROSERVICE_PER_COMPANY",
+                "system_type": "multi-agent_enhanced_multi_company",
                 "orchestrator_active": True,
                 "rag_enabled": True,
                 "selenium_integration": False,
                 "environment": os.getenv('ENVIRONMENT', 'production'),
+                "vectorstore_company_isolated": True,
+                "redis_prefix": f"{getattr(self.company_config, 'company_id', 'unknown')}:",
                 "error": str(e)
             }
     
-    
     def get_system_stats(self) -> Dict[str, Any]:
         """
-        Obtener estadísticas del sistema multi-agente
+        ✅ ADAPTADO: Obtener estadísticas del sistema multi-agente por empresa
         """
         return {
-            "agents_available": ["router", "emergency", "sales", "schedule", "support"],
-            "system_type": "multi-agent_enhanced",
+            "company_id": self.company_config.company_id,  # ✅ NUEVO
+            "company_name": self.company_config.company_name,  # ✅ NUEVO
+            "agents_available": ["router", "emergency", "sales", "schedule", "support", "availability"],
+            "system_type": "multi-agent_enhanced_multi_company",  # ✅ ACTUALIZADO
             "orchestrator_active": True,
             "rag_enabled": True,
             "selenium_integration": getattr(self, 'selenium_service_available', False),
             "schedule_service_url": self.schedule_service_url,
-            "schedule_service_type": "LOCAL",
-            "environment": os.getenv('ENVIRONMENT', 'production')
+            "schedule_service_type": "MICROSERVICE_PER_COMPANY",  # ✅ ACTUALIZADO
+            "environment": os.getenv('ENVIRONMENT', 'production'),
+            "vectorstore_company_isolated": True,  # ✅ NUEVO
+            "redis_prefix": f"{self.company_config.company_id}:"  # ✅ NUEVO
         }
     
     def reconnect_selenium_service(self) -> bool:
         """
-        Método para reconectar con el servicio Selenium local
+        ✅ ADAPTADO: Método para reconectar con el servicio Selenium específico de empresa
         """
-        logger.info("Intentando reconectar con servicio Selenium local...")
-        self._initialize_service_connection()
+        logger.info(f"[{self.company_config.company_id}] Intentando reconectar con servicio Selenium...")
+        self._initialize_company_selenium_connection()
         return self.selenium_service_available
 
-# Función de utilidad para inicializar el sistema
-def create_enhanced_multiagent_system(chat_model, vectorstore, conversation_manager):
+
+# ===============================
+# FUNCIÓN DE UTILIDAD ADAPTADA PARA MÚLTIPLES EMPRESAS
+# ===============================
+
+def create_enhanced_multiagent_system(chat_model, conversation_manager, company_config: CompanyConfig):
     """
-    Crear instancia del sistema multi-agente mejorado con conexión local
+    ✅ ADAPTADO: Crear instancia del sistema multi-agente mejorado para múltiples empresas
+    
+    Args:
+        chat_model: Modelo de chat de LangChain
+        conversation_manager: Gestor de conversaciones
+        company_config: Configuración específica de la empresa
+        
+    Returns:
+        MultiAgentSystem: Sistema multi-agente configurado para la empresa específica
     """
-    return BenovaMultiAgentSystem(chat_model, vectorstore, conversation_manager)
+    return MultiAgentSystem(chat_model, conversation_manager, company_config)
 
 
 # ===============================
