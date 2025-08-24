@@ -6,24 +6,22 @@ import requests
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from flask import Flask, request, jsonify, send_file, send_from_directory
-from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
 import threading
 import numpy as np
 from datetime import datetime, timedelta
-from functools import wraps
 import hashlib
 import redis
 
-# LangChain imports - ACTUALIZADOS Y CORREGIDOS
+# LangChain imports
 from langchain.schema import Document as LangChainDocument
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_redis import RedisVectorStore
 
-# Nuevas importaciones para el sistema moderno - CORREGIDAS
+# Otras importaciones
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -37,13 +35,107 @@ from langchain.text_splitter import MarkdownHeaderTextSplitter
 load_dotenv()
 
 # ===============================
+# Company Configuration
+# ===============================
+class CompanyConfig:
+    """Configuración específica por empresa"""
+    
+    def __init__(self, company_id, redis_prefix, vectorstore_index, 
+                 schedule_service_url, sales_agent_name, services):
+        self.company_id = company_id
+        self.redis_prefix = redis_prefix
+        self.vectorstore_index = vectorstore_index
+        self.schedule_service_url = schedule_service_url
+        self.sales_agent_name = sales_agent_name
+        self.services = services
+    
+    @classmethod
+    def from_dict(cls, company_id, config_dict):
+        return cls(
+            company_id=company_id,
+            redis_prefix=config_dict.get("redis_prefix", f"{company_id}:"),
+            vectorstore_index=config_dict.get("vectorstore_index", f"{company_id}_documents"),
+            schedule_service_url=config_dict.get("schedule_service_url"),
+            sales_agent_name=config_dict.get("sales_agent_name", "Asistente"),
+            services=config_dict.get("services", "servicios")
+        )
+
+# Configuración de empresas
+COMPANIES_CONFIG = {
+    "benova": {
+        "redis_prefix": "benova:",
+        "vectorstore_index": "benova_documents",
+        "schedule_service_url": "http://benova-schedule-service:4040",
+        "sales_agent_name": "María",
+        "services": "tratamientos estéticos"
+    },
+    "empresa2": {
+        "redis_prefix": "empresa2:",
+        "vectorstore_index": "empresa2_documents",
+        "schedule_service_url": "http://empresa2-schedule:4040",
+        "sales_agent_name": "Asistente",
+        "services": "servicios generales"
+    }
+}
+
+def get_company_config(company_id):
+    """Obtener configuración para una empresa específica"""
+    if company_id not in COMPANIES_CONFIG:
+        logger.warning(f"Company {company_id} not found in config, using default")
+        return CompanyConfig.from_dict(company_id, {
+            "redis_prefix": f"{company_id}:",
+            "vectorstore_index": f"{company_id}_documents",
+            "schedule_service_url": f"http://{company_id}-schedule-service:4040",
+            "sales_agent_name": "Asistente",
+            "services": "servicios"
+        })
+    
+    return CompanyConfig.from_dict(company_id, COMPANIES_CONFIG[company_id])
+
+def validate_openai_setup():
+    """Validar que OpenAI está configurado correctamente"""
+    try:
+        import openai
+        from openai import OpenAI
+        
+        # Verificar versión de OpenAI
+        logger.info(f"🔍 OpenAI version: {openai.__version__}")
+        
+        # Verificar API key
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.error("❌ OPENAI_API_KEY not found in environment")
+            return False
+        
+        logger.info(f"✅ OpenAI API key found (length: {len(api_key)})")
+        
+        # Test básico de conexión
+        try:
+            client = OpenAI(api_key=api_key)
+            # Test simple con el modelo más barato
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=1
+            )
+            logger.info("✅ OpenAI connection test successful")
+            return True
+        except Exception as connection_error:
+            logger.error(f"❌ OpenAI connection test failed: {connection_error}")
+            return False
+            
+    except ImportError as e:
+        logger.error(f"❌ OpenAI import error: {e}")
+        return False
+
+# ===============================
 # Environment Setup
 # ===============================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-REDIS_URL = os.getenv("REDIS_URL", "redis://default:cldThejhiRcrdiAgSyCGKrdULZxmwwgq@centerbeam.proxy.rlwy.net:15511")
-# Agregar
-PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://plataforma-production-8bce.up.railway.app/")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+CHATWOOT_API_KEY = os.getenv("CHATWOOT_API_KEY")
+CHATWOOT_BASE_URL = os.getenv("CHATWOOT_BASE_URL", "https://chatwoot-production-0f1d.up.railway.app")
+ACCOUNT_ID = os.getenv("ACCOUNT_ID", "7")
 PORT = int(os.getenv("PORT", 8080))
 
 # Model configuration
@@ -57,14 +149,14 @@ MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", 10))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", 0.7))
 MAX_RETRIEVED_DOCS = int(os.getenv("MAX_RETRIEVED_DOCS", 3))
 
-if not OPENAI_API_KEY:
+if not OPENAI_API_KEY or not CHATWOOT_API_KEY:
     print("ERROR: Missing required environment variables")
-    print("Required: OPENAI_API_KEY")
+    print("Required: OPENAI_API_KEY, CHATWOOT_API_KEY")
     sys.exit(1)
 
 print("Environment loaded successfully")
-print(f"FRONTEND_URL: {FRONTEND_URL}")
-###print(f"Account ID: {ACCOUNT_ID}")
+print(f"Chatwoot URL: {CHATWOOT_BASE_URL}")
+print(f"Account ID: {ACCOUNT_ID}")
 print(f"Model: {MODEL_NAME}")
 print(f"Embedding Model: {EMBEDDING_MODEL}")
 print(f"Redis URL: {REDIS_URL}")
@@ -72,17 +164,9 @@ print(f"Redis URL: {REDIS_URL}")
 # Initialize Flask
 app = Flask(__name__, static_url_path='', static_folder='.')
 
-CORS(app, resources={
-    r"/api/*": {"origins": FRONTEND_URL},
-    r"/webhook/*": {"origins": "*"},
-    r"/documents/*": {"origins": FRONTEND_URL},
-    r"/conversations/*": {"origins": FRONTEND_URL}
-})
-
-# Initialize Redis - MEJORADO
+# Initialize Redis
 try:
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-    # Test connection
     redis_client.ping()
     print("✅ Redis connection successful")
 except Exception as e:
@@ -115,15 +199,12 @@ chat_model = ChatOpenAI(
     openai_api_key=OPENAI_API_KEY
 )
 
-# Vectorstore se inicializará dinámicamente por tenant
-def get_vectorstore(tenant_id: str) -> RedisVectorStore:
-    """Obtener vectorstore específico para cada tenant"""
-    return RedisVectorStore(
-        embeddings,
-        redis_url=REDIS_URL,
-        index_name=f"tenant_{tenant_id}_documents",
-        vector_dim=1536
-    )
+# Initialize Redis Vector Store (se creará dinámicamente por empresa)
+vectorstore = None  # Se inicializará por empresa
+
+
+
+###### Chunking#############
 
 
 def create_advanced_chunking_system():
@@ -265,139 +346,54 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
         return [], []
 
 
-# ===============================
-# TENANT REGISTRY SYSTEM
-# ===============================
-
-class TenantRegistry:
+def enhanced_add_documents_with_tracking(modern_rag_system, documents: List[str], metadatas: List[Dict] = None):
     """
-    Sistema de registro centralizado para tenants con verificación de existencia
-    y manejo de metadata básica
+    Versión mejorada de add_documents que garantiza consistencia
     """
+    if not documents:
+        return 0
     
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.registry_key = "tenant_registry"
-    
-    def register_tenant(self, tenant_id: str, metadata: Optional[Dict] = None) -> bool:
-        """Registrar un nuevo tenant con metadata básica"""
-        if not tenant_id or not tenant_id.strip():
-            raise ValueError("Invalid tenant ID")
+    try:
+        all_texts = []
+        all_metas = []
+        doc_ids_created = []
         
-        metadata = metadata or {}
-        metadata.update({
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active": datetime.utcnow().isoformat(),
-            "status": "active"
-        })
+        for i, doc in enumerate(documents):
+            if doc and doc.strip():
+                # Generar doc_id consistente
+                doc_id = hashlib.md5(doc.encode()).hexdigest()
+                doc_ids_created.append(doc_id)
+                
+                # Usar sistema de chunking avanzado
+                texts, auto_metadatas = advanced_chunk_processing(doc)
+                
+                # Combinar metadata
+                base_metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
+                
+                for j, (text, auto_meta) in enumerate(zip(texts, auto_metadatas)):
+                    if text.strip():
+                        all_texts.append(text)
+                        # IMPORTANTE: Asegurar que doc_id esté en metadata
+                        combined_meta = base_metadata.copy()
+                        combined_meta.update(auto_meta)
+                        combined_meta.update({
+                            "doc_id": doc_id,  # ✅ GARANTIZAR doc_id en metadata
+                            "chunk_index": j, 
+                            "doc_index": i
+                        })
+                        all_metas.append(combined_meta)
         
-        try:
-            # Usar HSET para almacenar metadata del tenant
-            self.redis.hset(
-                self.registry_key, 
-                tenant_id, 
-                json.dumps(metadata)
-            )
-            logger.info(f"✅ Tenant {tenant_id} registered successfully")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to register tenant {tenant_id}: {e}")
-            return False
-    
-    def unregister_tenant(self, tenant_id: str) -> bool:
-        """Eliminar registro de tenant (no elimina datos asociados)"""
-        try:
-            removed = self.redis.hdel(self.registry_key, tenant_id)
-            if removed > 0:
-                logger.info(f"✅ Tenant {tenant_id} unregistered")
-                return True
-            logger.warning(f"⚠️ Tenant {tenant_id} not found in registry")
-            return False
-        except Exception as e:
-            logger.error(f"❌ Failed to unregister tenant {tenant_id}: {e}")
-            return False
-    
-    def is_tenant_registered(self, tenant_id: str) -> bool:
-        """Verificar si un tenant está registrado"""
-        try:
-            return self.redis.hexists(self.registry_key, tenant_id)
-        except Exception as e:
-            logger.error(f"❌ Tenant verification failed for {tenant_id}: {e}")
-            return False
-    
-    def get_tenant_metadata(self, tenant_id: str) -> Optional[Dict]:
-        """Obtener metadata del tenant"""
-        try:
-            meta_json = self.redis.hget(self.registry_key, tenant_id)
-            return json.loads(meta_json) if meta_json else None
-        except Exception as e:
-            logger.error(f"❌ Failed to get metadata for tenant {tenant_id}: {e}")
-            return None
-    
-    def update_tenant_activity(self, tenant_id: str) -> bool:
-        """Actualizar timestamp de última actividad"""
-        if not self.is_tenant_registered(tenant_id):
-            logger.warning(f"⚠️ Activity update for unregistered tenant: {tenant_id}")
-            return False
+        # Agregar al vectorstore con metadata mejorada
+        if all_texts:
+            modern_rag_system.vectorstore.add_texts(all_texts, metadatas=all_metas)
+            logger.info(f"✅ Added {len(all_texts)} chunks with consistent doc_id tracking")
         
-        try:
-            meta = self.get_tenant_metadata(tenant_id) or {}
-            meta["last_active"] = datetime.utcnow().isoformat()
-            self.redis.hset(self.registry_key, tenant_id, json.dumps(meta))
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to update activity for tenant {tenant_id}: {e}")
-            return False
-    
-    def list_registered_tenants(self) -> List[Dict]:
-        """Listar todos los tenants registrados con metadata básica"""
-        try:
-            all_tenants = []
-            tenant_map = self.redis.hgetall(self.registry_key)
-            
-            for tenant_id, meta_json in tenant_map.items():
-                try:
-                    meta = json.loads(meta_json)
-                    all_tenants.append({
-                        "tenant_id": tenant_id,
-                        "created_at": meta.get("created_at"),
-                        "last_active": meta.get("last_active"),
-                        "status": meta.get("status", "unknown")
-                    })
-                except json.JSONDecodeError:
-                    logger.warning(f"⚠️ Corrupted metadata for tenant {tenant_id}")
-            
-            return all_tenants
-        except Exception as e:
-            logger.error(f"❌ Failed to list tenants: {e}")
-            return []
+        return len(all_texts)
+        
+    except Exception as e:
+        logger.error(f"Error in enhanced add_documents: {e}")
+        return 0
 
-# Inicializar el registro de tenants
-tenant_registry = TenantRegistry(redis_client)
-
-# ===============================
-# MIDDLEWARE DE VERIFICACIÓN DE TENANT
-# ===============================
-
-def tenant_required(func):
-    """Decorator para verificar tenant registrado antes de procesar requests"""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        tenant_id = request.headers.get("X-Tenant-ID")
-        
-        if not tenant_id:
-            logger.error("❌ Missing X-Tenant-ID header")
-            return create_error_response("Tenant ID is required", 400)
-        
-        if not tenant_registry.is_tenant_registered(tenant_id):
-            logger.error(f"❌ Unregistered tenant access attempt: {tenant_id}")
-            return create_error_response("Tenant not registered", 403)
-        
-        # Actualizar actividad del tenant
-        tenant_registry.update_tenant_activity(tenant_id)
-        
-        return func(*args, **kwargs)
-    return wrapper
 
 # ===============================
 # BOT ACTIVATION LOGIC
@@ -408,13 +404,13 @@ BOT_INACTIVE_STATUSES = ["pending", "resolved", "snoozed"]
 
 status_lock = threading.Lock()
 
-def update_bot_status(tenant_id: str, conversation_id: str, conversation_status: str):
-    """Update bot status for a specific conversation in Redis"""
+def update_bot_status(conversation_id, conversation_status, company_config):
+    """Update bot status for a specific conversation in Redis with company prefix"""
     with status_lock:
         is_active = conversation_status in BOT_ACTIVE_STATUSES
         
-        # Store in Redis with tenant namespace
-        status_key = f"tenant_{tenant_id}:bot_status:{conversation_id}"
+        # Store in Redis with company prefix
+        status_key = f"{company_config.redis_prefix}bot_status:{conversation_id}"
         status_data = {
             'active': str(is_active),
             'status': conversation_status,
@@ -428,104 +424,70 @@ def update_bot_status(tenant_id: str, conversation_id: str, conversation_status:
             
             if old_status != str(is_active):
                 status_text = "ACTIVO" if is_active else "INACTIVO"
-                logger.info(f"🔄 Tenant {tenant_id} - Conversation {conversation_id}: Bot {status_text} (status: {conversation_status})")
+                logger.info(f"🔄 Conversation {conversation_id}: Bot {status_text} (status: {conversation_status})")
                 
         except Exception as e:
             logger.error(f"Error updating bot status in Redis: {e}")
 
-def should_bot_respond(tenant_id: str, conversation_id: str, conversation_status: str):
+def should_bot_respond(conversation_id, conversation_status, company_config):
     """Determine if bot should respond based on conversation status"""
-    update_bot_status(tenant_id, conversation_id, conversation_status)
+    update_bot_status(conversation_id, conversation_status, company_config)
     is_active = conversation_status in BOT_ACTIVE_STATUSES
     
     if is_active:
-        logger.info(f"✅ Tenant {tenant_id} - Bot WILL respond to conversation {conversation_id} (status: {conversation_status})")
+        logger.info(f"✅ Bot WILL respond to conversation {conversation_id} (status: {conversation_status})")
     else:
         if conversation_status == "pending":
-            logger.info(f"⏸️ Tenant {tenant_id} - Bot will NOT respond to conversation {conversation_id} (status: pending - INACTIVE)")
+            logger.info(f"⏸️ Bot will NOT respond to conversation {conversation_id} (status: pending - INACTIVE)")
         else:
-            logger.info(f"🚫 Tenant {tenant_id} - Bot will NOT respond to conversation {conversation_id} (status: {conversation_status})")
+            logger.info(f"🚫 Bot will NOT respond to conversation {conversation_id} (status: {conversation_status})")
     
     return is_active
 
-def is_message_already_processed(tenant_id: str, message_id: str, conversation_id: str):
-    """Check if message has already been processed using Redis"""
+def is_message_already_processed(message_id, conversation_id, company_config):
+    """Check if message has already been processed using Redis with company prefix"""
     if not message_id:
         return False
     
-    key = f"tenant_{tenant_id}:processed_message:{conversation_id}:{message_id}"
+    key = f"{company_config.redis_prefix}processed_message:{conversation_id}:{message_id}"
     
     try:
         if redis_client.exists(key):
-            logger.info(f"🔄 Tenant {tenant_id} - Message {message_id} already processed, skipping")
+            logger.info(f"🔄 Message {message_id} already processed, skipping")
             return True
         
         redis_client.set(key, "1", ex=3600)  # 1 hour TTL
-        logger.info(f"✅ Tenant {tenant_id} - Message {message_id} marked as processed")
+        logger.info(f"✅ Message {message_id} marked as processed")
         return False
         
     except Exception as e:
         logger.error(f"Error checking processed message in Redis: {e}")
         return False
 
-############################################################################################33
-# Nuevo módulo: messaging_adapters.py
-class MessagingAdapter:
-    def __init__(self, platform):
-        self.platform = platform
-    
-    def parse_incoming(self, data):
-        """Parsear mensajes entrantes de diferentes plataformas"""
-        if self.platform == "twilio":
-            return {
-                "content": data.get("Body"),
-                "sender_id": data.get("From"),
-                "platform_id": data.get("MessageSid")
-            }
-        elif self.platform == "instagram":
-            return {
-                "content": data.get("message"),
-                "sender_id": data.get("user_id"),
-                "platform_id": data.get("message_id")
-            }
-        # ... otros servicios
-
-    def send_message(self, recipient_id, content):
-        """Enviar mensajes a diferentes plataformas"""
-        if self.platform == "twilio":
-            # Implementar lógica de Twilio
-            pass
-        elif self.platform == "instagram":
-            # Implementar lógica de Instagram
-            pass
-        # ... otros servicios
-
-############################################################################################################################3
 # ===============================
-# REFACTORED Modern Conversation Manager - UNIFIED CHAT HISTORY
+# Modern Conversation Manager
 # ===============================
-
 class ModernConversationManager:
     """
-    REFACTORED: Conversation Manager moderno con métodos unificados de chat history
-    y soporte multi-tenant
+    Conversation Manager moderno con soporte para múltiples empresas
     """
     
-    def __init__(self, redis_client, max_messages: int = 10):
+    def __init__(self, redis_client, max_messages: int = 10, company_config: CompanyConfig = None):
         self.redis_client = redis_client
         self.max_messages = max_messages
-        self.redis_prefix = "conversation:"
+        self.company_config = company_config or get_company_config("default")
+        self.redis_prefix = self.company_config.redis_prefix
         self.conversations = {}
         self.message_histories = {}
-        # No cargar conversaciones al inicio para multi-tenant
-        
-    def _get_conversation_key(self, tenant_id: str, user_id: str) -> str:
-        """Generate standardized conversation key with tenant namespace"""
-        return f"tenant_{tenant_id}:conversation:{user_id}"
+        self.load_conversations_from_redis()
     
-    def _get_message_history_key(self, tenant_id: str, user_id: str) -> str:
-        """Generate standardized message history key for Redis with tenant namespace"""
-        return f"tenant_{tenant_id}:chat_history:{user_id}"
+    def _get_conversation_key(self, user_id: str) -> str:
+        """Generate standardized conversation key with company prefix"""
+        return f"{self.redis_prefix}conversation:{user_id}"
+    
+    def _get_message_history_key(self, user_id: str) -> str:
+        """Generate standardized message history key for Redis with company prefix"""
+        return f"{self.redis_prefix}chat_history:{user_id}"
     
     def _create_user_id(self, contact_id: str) -> str:
         """Generate standardized user ID"""
@@ -536,20 +498,17 @@ class ModernConversationManager:
     def _get_redis_connection_params(self) -> Dict[str, Any]:
         """
         Extract Redis connection parameters from client
-        MEJORADO: Maneja diferentes tipos de configuraciones de Redis
         """
         try:
-            # Opción 1: Usar URL directamente (más simple y robusto)
             if hasattr(self.redis_client, 'connection_pool'):
                 pool = self.redis_client.connection_pool
                 connection_kwargs = pool.connection_kwargs
                 
                 return {
-                    "url": REDIS_URL,  # Usar URL directamente
+                    "url": REDIS_URL,
                     "ttl": 604800  # 7 días
                 }
             
-            # Opción 2: Fallback a parámetros por defecto
             return {
                 "url": REDIS_URL,
                 "ttl": 604800
@@ -562,59 +521,41 @@ class ModernConversationManager:
                 "ttl": 604800
             }
     
-    def _get_or_create_redis_history(self, tenant_id: str, user_id: str) -> BaseChatMessageHistory:
+    def _get_or_create_redis_history(self, user_id: str) -> BaseChatMessageHistory:
         """
-        REFACTORED: Método interno para crear/obtener RedisChatMessageHistory
-        Centraliza la lógica de creación de objetos de historia Redis
+        Método interno para crear/obtener RedisChatMessageHistory
         """
         if not user_id:
             raise ValueError("user_id cannot be empty")
         
-        # Usar caché en memoria para evitar recrear objetos
-        cache_key = f"{tenant_id}:{user_id}"
-        if cache_key not in self.message_histories:
+        if user_id not in self.message_histories:
             try:
                 redis_params = self._get_redis_connection_params()
                 
-                # Crear RedisChatMessageHistory con parámetros mejorados y namespace
-                self.message_histories[cache_key] = RedisChatMessageHistory(
+                self.message_histories[user_id] = RedisChatMessageHistory(
                     session_id=user_id,
                     url=redis_params["url"],
-                    key_prefix=f"tenant_{tenant_id}:chat_history:",
+                    key_prefix=f"{self.redis_prefix}chat_history:",
                     ttl=redis_params["ttl"]
                 )
                 
-                logger.info(f"✅ Created Redis message history for tenant {tenant_id} user {user_id}")
+                logger.info(f"✅ Created Redis message history for user {user_id}")
                 
             except Exception as e:
-                logger.error(f"❌ Error creating Redis message history for tenant {tenant_id} user {user_id}: {e}")
-                # Crear una historia en memoria como fallback
+                logger.error(f"❌ Error creating Redis message history for user {user_id}: {e}")
                 from langchain_core.chat_history import InMemoryChatMessageHistory
-                self.message_histories[cache_key] = InMemoryChatMessageHistory()
-                logger.warning(f"⚠️ Using in-memory fallback for tenant {tenant_id} user {user_id}")
+                self.message_histories[user_id] = InMemoryChatMessageHistory()
+                logger.warning(f"⚠️ Using in-memory fallback for user {user_id}")
             
-            # Aplicar límite de mensajes (ventana deslizante)
-            self._apply_message_window(tenant_id, user_id)
+            self._apply_message_window(user_id)
         
-        return self.message_histories[cache_key]
+        return self.message_histories[user_id]
     
-    def get_chat_history(self, tenant_id: str, user_id: str, format_type: str = "dict") -> Any:
+    def get_chat_history(self, user_id: str, format_type: str = "dict") -> Any:
         """
-        REFACTORED: Método unificado para obtener chat history en diferentes formatos
-        con soporte multi-tenant
-        
-        Args:
-            tenant_id: ID del tenant
-            user_id: ID del usuario
-            format_type: Formato de salida
-                - "dict": Lista de diccionarios con role/content (DEFAULT - compatibilidad)
-                - "langchain": Objeto BaseChatMessageHistory nativo de LangChain
-                - "messages": Lista de objetos BaseMessage de LangChain
-        
-        Returns:
-            Chat history en el formato especificado
+        Método unificado para obtener chat history en diferentes formatos
         """
-        if not user_id or not tenant_id:
+        if not user_id:
             if format_type == "dict":
                 return []
             elif format_type == "langchain":
@@ -626,20 +567,15 @@ class ModernConversationManager:
                 return []
         
         try:
-            # Obtener el objeto Redis history (centralizado)
-            redis_history = self._get_or_create_redis_history(tenant_id, user_id)
+            redis_history = self._get_or_create_redis_history(user_id)
             
-            # Retornar según el formato solicitado
             if format_type == "langchain":
-                # Formato nativo LangChain - para uso con RunnableWithMessageHistory
                 return redis_history
             
             elif format_type == "messages":
-                # Lista de objetos BaseMessage - para casos avanzados
                 return redis_history.messages
             
             elif format_type == "dict":
-                # Formato diccionario - para compatibilidad con código existente
                 messages = redis_history.messages
                 
                 chat_history = []
@@ -659,11 +595,10 @@ class ModernConversationManager:
             
             else:
                 logger.warning(f"Unknown format_type: {format_type}, defaulting to dict")
-                return self.get_chat_history(tenant_id, user_id, "dict")
+                return self.get_chat_history(user_id, "dict")
                 
         except Exception as e:
-            logger.error(f"Error getting chat history for tenant {tenant_id} user {user_id}: {e}")
-            # Retornar valores por defecto según el formato
+            logger.error(f"Error getting chat history for user {user_id}: {e}")
             if format_type == "dict":
                 return []
             elif format_type == "langchain":
@@ -674,46 +609,38 @@ class ModernConversationManager:
             else:
                 return []
     
-    def _apply_message_window(self, tenant_id: str, user_id: str):
+    def _apply_message_window(self, user_id: str):
         """
         Aplica ventana deslizante de mensajes para mantener solo los últimos N mensajes
-        MEJORADO: Mejor manejo de errores
         """
         try:
-            cache_key = f"{tenant_id}:{user_id}"
-            history = self.message_histories[cache_key]
+            history = self.message_histories[user_id]
             messages = history.messages
             
             if len(messages) > self.max_messages:
-                # Mantener solo los últimos max_messages
                 messages_to_keep = messages[-self.max_messages:]
                 
-                # Limpiar el historial existente
                 history.clear()
                 
-                # Agregar solo los mensajes que queremos mantener
                 for message in messages_to_keep:
                     history.add_message(message)
                 
-                logger.info(f"✅ Tenant {tenant_id} - Applied message window for user {user_id}: kept {len(messages_to_keep)} messages")
+                logger.info(f"✅ Applied message window for user {user_id}: kept {len(messages_to_keep)} messages")
         
         except Exception as e:
-            logger.error(f"❌ Tenant {tenant_id} - Error applying message window for user {user_id}: {e}")
+            logger.error(f"❌ Error applying message window for user {user_id}: {e}")
     
-    def add_message(self, tenant_id: str, user_id: str, role: str, content: str) -> bool:
+    def add_message(self, user_id: str, role: str, content: str) -> bool:
         """
         Add message with automatic window management
-        MEJORADO: Mejor validación y manejo de errores
         """
-        if not user_id or not content.strip() or not tenant_id:
-            logger.warning("Invalid tenant_id, user_id or content for message")
+        if not user_id or not content.strip():
+            logger.warning("Invalid user_id or content for message")
             return False
         
         try:
-            # Usar el método unificado para obtener history
-            history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, format_type="langchain")
             
-            # Add message to history
             if role == "user":
                 history.add_user_message(content)
             elif role == "assistant":
@@ -722,29 +649,25 @@ class ModernConversationManager:
                 logger.warning(f"Unknown role: {role}")
                 return False
             
-            # Update cache and apply window management
-            cache_key = f"{tenant_id}:{user_id}"
-            if cache_key in self.message_histories:
-                self._apply_message_window(tenant_id, user_id)
+            if user_id in self.message_histories:
+                self._apply_message_window(user_id)
             
-            # Update metadata
-            self._update_conversation_metadata(tenant_id, user_id)
+            self._update_conversation_metadata(user_id)
             
-            logger.info(f"✅ Tenant {tenant_id} - Message added for user {user_id} (role: {role})")
+            logger.info(f"✅ Message added for user {user_id} (role: {role})")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Tenant {tenant_id} - Error adding message for user {user_id}: {e}")
+            logger.error(f"❌ Error adding message for user {user_id}: {e}")
             return False
     
-    def _update_conversation_metadata(self, tenant_id: str, user_id: str):
-        """Update conversation metadata in Redis con namespace de tenant"""
+    def _update_conversation_metadata(self, user_id: str):
+        """Update conversation metadata in Redis"""
         try:
-            conversation_key = self._get_conversation_key(tenant_id, user_id)
+            conversation_key = self._get_conversation_key(user_id)
             metadata = {
                 'last_updated': str(time.time()),
                 'user_id': user_id,
-                'tenant_id': tenant_id,
                 'updated_at': datetime.utcnow().isoformat()
             }
             
@@ -752,40 +675,27 @@ class ModernConversationManager:
             self.redis_client.expire(conversation_key, 604800)  # 7 días TTL
             
         except Exception as e:
-            logger.error(f"Tenant {tenant_id} - Error updating metadata for user {user_id}: {e}")
+            logger.error(f"Error updating metadata for user {user_id}: {e}")
     
-    def load_conversations_from_redis(self, tenant_id: str):
+    def load_conversations_from_redis(self):
         """
         Load conversations from Redis with modern approach
-        MEJORADO: Mejor manejo de errores y migración
-        Ahora específico por tenant
         """
         try:
-            # Buscar claves de conversación existentes para este tenant
-            pattern = f"tenant_{tenant_id}:conversation:*"
-            conversation_keys = self.redis_client.keys(pattern)
-            pattern = f"tenant_{tenant_id}:chat_history:*"
-            chat_history_keys = self.redis_client.keys(pattern)
+            conversation_keys = self.redis_client.keys(f"{self.redis_prefix}conversation:*")
+            chat_history_keys = self.redis_client.keys(f"{self.redis_prefix}chat_history:*")
             
             loaded_count = 0
             
-            # Migrar datos existentes si es necesario
             for key in conversation_keys:
                 try:
-                    # Extraer user_id de la key
-                    parts = key.split(':')
-                    if len(parts) < 4:
-                        continue
-                    user_id = parts[3]
-                    
+                    user_id = key.split(':', 1)[1]
                     context_data = self.redis_client.hgetall(key)
                     
                     if context_data and 'messages' in context_data:
-                        # Migrar mensajes antiguos al nuevo formato
                         old_messages = json.loads(context_data['messages'])
-                        history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
+                        history = self.get_chat_history(user_id, format_type="langchain")
                         
-                        # Verificar si ya migró
                         if len(history.messages) == 0 and old_messages:
                             for msg in old_messages:
                                 if msg.get('role') == 'user':
@@ -793,134 +703,410 @@ class ModernConversationManager:
                                 elif msg.get('role') == 'assistant':
                                     history.add_ai_message(msg['content'])
                             
-                            self._apply_message_window(tenant_id, user_id)
+                            self._apply_message_window(user_id)
                             loaded_count += 1
-                            logger.info(f"✅ Tenant {tenant_id} - Migrated conversation for user {user_id}")
+                            logger.info(f"✅ Migrated conversation for user {user_id}")
                 
                 except Exception as e:
-                    logger.warning(f"Tenant {tenant_id} - Failed to migrate conversation {key}: {e}")
+                    logger.warning(f"Failed to migrate conversation {key}: {e}")
                     continue
             
-            # Contar conversaciones ya en nuevo formato
-            loaded_count += len(chat_history_keys)
+            for key in chat_history_keys:
+                if key not in [self._get_message_history_key(k.split(':', 1)[1]) for k in conversation_keys]:
+                    loaded_count += 1
             
-            logger.info(f"✅ Tenant {tenant_id} - Loaded {loaded_count} conversation contexts from Redis")
+            logger.info(f"✅ Loaded {loaded_count} conversation contexts from Redis")
             
         except Exception as e:
-            logger.error(f"❌ Tenant {tenant_id} - Error loading contexts from Redis: {e}")
+            logger.error(f"❌ Error loading contexts from Redis: {e}")
     
-    def get_message_count(self, tenant_id: str, user_id: str) -> int:
+    def get_message_count(self, user_id: str) -> int:
         """Get total message count for a user"""
         try:
-            history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, format_type="langchain")
             return len(history.messages)
         except Exception as e:
-            logger.error(f"Tenant {tenant_id} - Error getting message count for user {user_id}: {e}")
+            logger.error(f"Error getting message count for user {user_id}: {e}")
             return 0
     
-    def clear_conversation(self, tenant_id: str, user_id: str) -> bool:
+    def clear_conversation(self, user_id: str) -> bool:
         """Clear conversation history for a user"""
         try:
-            history = self.get_chat_history(tenant_id, user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, format_type="langchain")
             history.clear()
             
-            # Limpiar metadata
-            conversation_key = self._get_conversation_key(tenant_id, user_id)
+            conversation_key = self._get_conversation_key(user_id)
             self.redis_client.delete(conversation_key)
             
-            # Limpiar caché
-            cache_key = f"{tenant_id}:{user_id}"
-            if cache_key in self.message_histories:
-                del self.message_histories[cache_key]
+            if user_id in self.message_histories:
+                del self.message_histories[user_id]
             
-            logger.info(f"✅ Tenant {tenant_id} - Cleared conversation for user {user_id}")
+            logger.info(f"✅ Cleared conversation for user {user_id}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Tenant {tenant_id} - Error clearing conversation for user {user_id}: {e}")
+            logger.error(f"❌ Error clearing conversation for user {user_id}: {e}")
             return False
 
+#########################4######################
 
-##############################################################
-######document tracker#######
-####################################################################
+####  GESTION DE VECTORES################
 
-class MultiTenantDocumentChangeTracker:
+# ===============================
+# Vector Store Manager
+# ===============================
+class VectorStoreManager:
     """
-    Sistema multi-tenant para rastrear cambios en documentos y invalidar cache
+    Clase para gestionar vectores de manera consistente con soporte multi-empresa
+    """
+    
+    def __init__(self, redis_client, company_config: CompanyConfig):
+        self.redis_client = redis_client
+        self.company_config = company_config
+        self.index_name = company_config.vectorstore_index
+    
+    def find_vectors_by_doc_id(self, doc_id: str) -> List[str]:
+        """
+        Encuentra todos los vectores asociados a un documento
+        Busca tanto en campos directos como en metadata JSON
+        """
+        pattern = f"{self.index_name}:*"
+        keys = self.redis_client.keys(pattern)
+        vectors_to_delete = []
+        
+        for key in keys:
+            try:
+                # Método 1: Buscar en campo directo 'doc_id'
+                doc_id_direct = self.redis_client.hget(key, 'doc_id')
+                if doc_id_direct == doc_id:
+                    vectors_to_delete.append(key)
+                    continue
+                
+                # Método 2: Buscar en metadata JSON con filtro por company_id
+                metadata_str = self.redis_client.hget(key, 'metadata')
+                if metadata_str:
+                    try:
+                        metadata = json.loads(metadata_str)
+                        if metadata.get('doc_id') == doc_id and metadata.get('company_id') == self.company_config.company_id:
+                            vectors_to_delete.append(key)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Invalid JSON metadata in vector {key}")
+                        continue
+                
+            except Exception as e:
+                logger.warning(f"Error checking vector {key}: {e}")
+                continue
+        
+        return vectors_to_delete
+    
+    def delete_vectors_by_doc_id(self, doc_id: str) -> int:
+        """
+        Elimina todos los vectores asociados a un documento
+        Retorna el número de vectores eliminados
+        """
+        vectors_to_delete = self.find_vectors_by_doc_id(doc_id)
+        
+        if vectors_to_delete:
+            self.redis_client.delete(*vectors_to_delete)
+            logger.info(f"✅ Deleted {len(vectors_to_delete)} vectors for doc {doc_id}")
+        else:
+            logger.warning(f"⚠️ No vectors found for doc {doc_id}")
+        
+        return len(vectors_to_delete)
+    
+    def verify_cleanup(self, doc_id: str) -> Dict[str, Any]:
+        """
+        Verifica que se haya limpiado correctamente un documento
+        """
+        remaining_vectors = self.find_vectors_by_doc_id(doc_id)
+        doc_key = f"document:{doc_id}"
+        doc_exists = self.redis_client.exists(doc_key)
+        
+        return {
+            "doc_id": doc_id,
+            "document_exists": bool(doc_exists),
+            "remaining_vectors": len(remaining_vectors),
+            "vector_keys": remaining_vectors[:5],
+            "cleanup_complete": not doc_exists and len(remaining_vectors) == 0
+        }
+
+# ===============================
+# multimedia system
+# ===============================
+
+def transcribe_audio(audio_path):
+    """Transcribir audio a texto usando Whisper con sintaxis v1.x"""
+    try:
+        # Crear cliente con API key usando la nueva sintaxis
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        with open(audio_path, "rb") as audio_file:
+            # Usar la nueva sintaxis v1.x para transcripción
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="text"
+            )
+        
+        # En v1.x, transcript es un objeto, no string directo
+        return transcript.text if hasattr(transcript, 'text') else str(transcript)
+        
+    except Exception as e:
+        logger.error(f"Error in audio transcription: {e}")
+        raise
+
+def transcribe_audio_from_url(audio_url):
+    """Transcribir audio desde URL usando Whisper con manejo mejorado de errores"""
+    try:
+        import requests
+        import tempfile
+        import os
+        
+        # Descargar el audio con headers más específicos
+        logger.info(f"🔽 Downloading audio from: {audio_url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)',
+            'Accept': 'audio/*,*/*;q=0.9'
+        }
+        
+        response = requests.get(audio_url, headers=headers, timeout=60, stream=True)
+        response.raise_for_status()
+        
+        # Verificar content-type si está disponible
+        content_type = response.headers.get('content-type', '').lower()
+        logger.info(f"📄 Audio content-type: {content_type}")
+        
+        # Determinar extensión basada en content-type o URL
+        extension = '.ogg'  # Default para Chatwoot
+        if 'mp3' in content_type or audio_url.endswith('.mp3'):
+            extension = '.mp3'
+        elif 'wav' in content_type or audio_url.endswith('.wav'):
+            extension = '.wav'
+        elif 'm4a' in content_type or audio_url.endswith('.m4a'):
+            extension = '.m4a'
+        
+        # Crear archivo temporal con extensión correcta
+        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                temp_file.write(chunk)
+            temp_path = temp_file.name
+        
+        logger.info(f"📁 Audio saved to temp file: {temp_path} (size: {os.path.getsize(temp_path)} bytes)")
+        
+        try:
+            # Transcribir usando la función corregida
+            result = transcribe_audio(temp_path)
+            logger.info(f"🎵 Transcription successful: {len(result)} characters")
+            return result
+            
+        finally:
+            # Limpiar archivo temporal
+            try:
+                os.unlink(temp_path)
+                logger.info(f"🗑️ Temporary file deleted: {temp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Could not delete temp file {temp_path}: {cleanup_error}")
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Error downloading audio: {e}")
+        raise Exception(f"Error downloading audio: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ Error in audio transcription from URL: {e}")
+        raise
+
+def text_to_speech(text):
+    """Convertir texto a audio usando TTS de OpenAI con sintaxis v1.x"""
+    try:
+        # Crear cliente con API key usando la nueva sintaxis
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # Usar la nueva sintaxis v1.x para TTS
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="alloy",
+            input=text
+        )
+        
+        # Guardar audio temporalmente
+        temp_path = "/tmp/response.mp3"
+        response.stream_to_file(temp_path)
+        
+        return temp_path
+    except Exception as e:
+        logger.error(f"Error in text-to-speech: {e}")
+        raise
+
+def analyze_image(image_file):
+    """Analizar imagen usando GPT-4 Vision con manejo mejorado"""
+    try:
+        # Convertir imagen a base64
+        image_data = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Crear cliente con API key
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # Usar la sintaxis v1.x correcta
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": "Describe esta imagen en detalle, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_data}",
+                                "detail": "high"  # Agregado para mejor análisis
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=500,
+            temperature=0.1  # Más determinista para análisis
+        )
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        logger.error(f"Error in image analysis: {e}")
+        raise
+
+# Función mejorada para manejo de attachments de Chatwoot
+def process_chatwoot_attachment(attachment):
+    """Procesar attachment de Chatwoot con validación mejorada"""
+    try:
+        logger.info(f"🔍 Processing Chatwoot attachment: {attachment}")
+        
+        # Extraer tipo de archivo con múltiples métodos
+        attachment_type = None
+        
+        # Método 1: file_type (más común en Chatwoot)
+        if attachment.get("file_type"):
+            attachment_type = attachment["file_type"].lower()
+            logger.info(f"📝 Type from 'file_type': {attachment_type}")
+        
+        # Método 2: extension
+        elif attachment.get("extension"):
+            ext = attachment["extension"].lower().lstrip('.')
+            if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                attachment_type = "image"
+            elif ext in ['mp3', 'wav', 'ogg', 'm4a', 'aac']:
+                attachment_type = "audio"
+            logger.info(f"📝 Type inferred from extension '{ext}': {attachment_type}")
+        
+        # Extraer URL con prioridad correcta
+        url = attachment.get("data_url") or attachment.get("url") or attachment.get("thumb_url")
+        
+        if not url:
+            logger.warning(f"⚠️ No URL found in attachment")
+            return None
+        
+        # Validar que la URL es accesible
+        if not url.startswith("http"):
+            logger.warning(f"⚠️ Invalid URL format: {url}")
+            return None
+        
+        return {
+            "type": attachment_type,
+            "url": url,
+            "file_size": attachment.get("file_size", 0),
+            "width": attachment.get("width"),
+            "height": attachment.get("height"),
+            "original_data": attachment
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error processing Chatwoot attachment: {e}")
+        return None
+
+#######3#######
+# ===============================
+# NUEVO: Sistema de Invalidación de Cache
+# UBICACIÓN: Agregar después de la clase ModernConversationManager
+# ===============================
+
+class DocumentChangeTracker:
+    """
+    Sistema para rastrear cambios en documentos y invalidar cache
     """
     
     def __init__(self, redis_client):
         self.redis_client = redis_client
+        self.version_key = "vectorstore_version"
+        self.doc_hash_key = "document_hashes"
     
-    def get_current_version(self, tenant_id: str) -> int:
-        """Obtener versión actual del vectorstore para un tenant específico"""
-        version_key = f"tenant_{tenant_id}:vectorstore_version"
+    def get_current_version(self) -> int:
+        """Obtener versión actual del vectorstore"""
         try:
-            version = self.redis_client.get(version_key)
+            version = self.redis_client.get(self.version_key)
             return int(version) if version else 0
         except:
             return 0
     
-    def increment_version(self, tenant_id: str):
-        """Incrementar versión del vectorstore para un tenant específico"""
-        version_key = f"tenant_{tenant_id}:vectorstore_version"
+    def increment_version(self):
+        """Incrementar versión del vectorstore"""
         try:
-            self.redis_client.incr(version_key)
-            logger.info(f"Tenant {tenant_id} - Vectorstore version incremented to {self.get_current_version(tenant_id)}")
+            self.redis_client.incr(self.version_key)
+            logger.info(f"Vectorstore version incremented to {self.get_current_version()}")
         except Exception as e:
-            logger.error(f"Tenant {tenant_id} - Error incrementing version: {e}")
+            logger.error(f"Error incrementing version: {e}")
     
-    def register_document_change(self, tenant_id: str, doc_id: str, change_type: str):
+    def register_document_change(self, doc_id: str, change_type: str):
         """
-        Registrar cambio en documento para un tenant específico
+        Registrar cambio en documento
         change_type: 'added', 'updated', 'deleted'
         """
         try:
             change_data = {
                 'doc_id': doc_id,
                 'change_type': change_type,
-                'timestamp': datetime.utcnow().isoformat(),
-                'tenant_id': tenant_id
+                'timestamp': datetime.utcnow().isoformat()
             }
             
-            # Registrar cambio con clave específica del tenant
-            change_key = f"tenant_{tenant_id}:doc_change:{doc_id}:{int(time.time())}"
+            # Registrar cambio
+            change_key = f"doc_change:{doc_id}:{int(time.time())}"
             self.redis_client.setex(change_key, 3600, json.dumps(change_data))  # 1 hour TTL
             
-            # Incrementar versión global del tenant
-            self.increment_version(tenant_id)
+            # Incrementar versión global
+            self.increment_version()
             
-            logger.info(f"Tenant {tenant_id} - Document change registered: {doc_id} - {change_type}")
+            logger.info(f"Document change registered: {doc_id} - {change_type}")
             
         except Exception as e:
-            logger.error(f"Tenant {tenant_id} - Error registering document change: {e}")
+            logger.error(f"Error registering document change: {e}")
     
-    def should_invalidate_cache(self, tenant_id: str, last_version: int) -> bool:
-        """Determinar si se debe invalidar cache para un tenant específico"""
-        current_version = self.get_current_version(tenant_id)
+    def should_invalidate_cache(self, last_version: int) -> bool:
+        """Determinar si se debe invalidar cache"""
+        current_version = self.get_current_version()
         return current_version > last_version
 
-# Instanciar el tracker multi-tenant
-document_change_tracker = MultiTenantDocumentChangeTracker(redis_client)
+# Instanciar el tracker
+document_change_tracker = DocumentChangeTracker(redis_client)
 
 # ===============================
-# multiagentSystem - ACTUALIZADO PARA USAR CHAT HISTORY UNIFICADO Y MULTI-TENANT
+# Multi-Agent System
 # ===============================
-
-class MultiTenantMultiAgentSystem:
+class MultiAgentSystem:
     """
-    Sistema multi-agente integrado con agente de schedule mejorado
-    Ahora completamente multi-tenant con aislamiento de datos por empresa
+    Sistema multi-agente para múltiples empresas
     """
     
-    def __init__(self, chat_model, get_vectorstore_func, conversation_manager):
+    def __init__(self, chat_model, vectorstore, conversation_manager, company_config):
         self.chat_model = chat_model
-        self.get_vectorstore_func = get_vectorstore_func  # Función para obtener vectorstore por tenant
+        self.vectorstore = vectorstore
         self.conversation_manager = conversation_manager
+        self.company_config = company_config
+        self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        self.voice_enabled = os.getenv("VOICE_ENABLED", "false").lower() == "true"
+        self.image_enabled = os.getenv("IMAGE_ENABLED", "false").lower() == "true"
         
-        # URL del microservicio de schedule (configuración para local)
-        self.schedule_service_url = os.getenv('SCHEDULE_SERVICE_URL', 'http://127.0.0.1:4040')
+        # URL del microservicio de schedule
+        self.schedule_service_url = company_config.schedule_service_url
         
         # Configuración para entorno local
         self.is_local_development = os.getenv('ENVIRONMENT', 'production') == 'local'
@@ -944,29 +1130,20 @@ class MultiTenantMultiAgentSystem:
         # Crear orquestador principal
         self.orchestrator = self._create_orchestrator()
         
-        # Inicializar conexión con microservicio local
-        self._initialize_local_selenium_connection()
-    
-    def _get_tenant_retriever(self, tenant_id: str):
-        """Obtener retriever específico para cada tenant"""
-        tenant_vectorstore = self.get_vectorstore_func(tenant_id)
-        return tenant_vectorstore.as_retriever(search_kwargs={"k": 3})
+        # Inicializar conexión con microservicio
+        self._initialize_service_connection()
     
     def _verify_selenium_service(self, force_check: bool = False) -> bool:
         """
         Verificar disponibilidad del servicio Selenium local con cache inteligente
-        Args:
-            force_check: Si True, fuerza una nueva verificación ignorando el cache
         """
         import time
         
         current_time = time.time()
         
-        # Si no es verificación forzada y el cache es válido, usar el valor cacheado
         if not force_check and (current_time - self.selenium_status_last_check) < self.selenium_status_cache_duration:
             return self.selenium_service_available
         
-        # Realizar nueva verificación
         try:
             response = requests.get(
                 f"{self.schedule_service_url}/health",
@@ -988,21 +1165,20 @@ class MultiTenantMultiAgentSystem:
             self.selenium_status_last_check = current_time
             return False
     
-    def _initialize_local_selenium_connection(self):
-        """Inicializar y verificar conexión con microservicio local"""
+    def _initialize_service_connection(self):
+        """Inicializar y verificar conexión con microservicio"""
         try:
-            logger.info(f"Intentando conectar con microservicio de Selenium en: {self.schedule_service_url}")
+            logger.info(f"Intentando conectar con microservicio en: {self.schedule_service_url}")
             
-            # Verificar disponibilidad del servicio (forzar verificación inicial)
             is_available = self._verify_selenium_service(force_check=True)
             
             if is_available:
-                logger.info("✅ Conexión exitosa con microservicio de Selenium local")
+                logger.info("✅ Conexión exitosa con microservicio")
             else:
-                logger.warning("⚠️ Servicio de Selenium no disponible")
+                logger.warning("⚠️ Servicio no disponible")
                 
         except Exception as e:
-            logger.error(f"❌ Error inicializando conexión con Selenium: {e}")
+            logger.error(f"❌ Error inicializando conexión: {e}")
             self.selenium_service_available = False
     
     def _create_router_agent(self):
@@ -1010,7 +1186,7 @@ class MultiTenantMultiAgentSystem:
         Agente Router: Clasifica la intención del usuario
         """
         router_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres un clasificador de intenciones para el centro estético.
+            ("system", f"""Eres un clasificador de intenciones para {self.company_config.company_id}.
 
 ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categorías:
 
@@ -1020,7 +1196,7 @@ ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categor
    - Cualquier situación que requiera atención médica inmediata
 
 2. **SALES** - Consultas comerciales:
-   - Información sobre tratamientos
+   - Información sobre {self.company_config.services}
    - Precios y promociones
    - Comparación de procedimientos
    - Beneficios y resultados
@@ -1046,7 +1222,7 @@ RESPONDE SOLO con el formato JSON:
     "reasoning": "breve explicación"
 }}
 
-Mensaje del usuario: {question}"""),
+Mensaje del usuario: {{question}}"""),
             ("human", "{question}")
         ])
         
@@ -1057,7 +1233,7 @@ Mensaje del usuario: {question}"""),
         Agente de Emergencias: Maneja urgencias médicas
         """
         emergency_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, especialista en emergencias médicas del centro.
+            ("system", f"""Eres {self.company_config.sales_agent_name}, especialista en emergencias médicas de {self.company_config.company_id}.
 
 SITUACIÓN DETECTADA: Posible emergencia médica.
 
@@ -1068,15 +1244,15 @@ PROTOCOLO DE RESPUESTA:
 4. Proporciona información de contacto directo si es necesario
 
 TONO: Profesional, empático, tranquilizador pero urgente.
-
-RESPUESTA MÁXIMA: 3 oraciones.
+EMOJIS: Máximo 3 por respuesta.
+LONGITUD: Máximo 3 oraciones.
 
 FINALIZA SIEMPRE con: "Escalando tu caso de emergencia ahora mismo. 🚨"
 
 Historial de conversación:
-{chat_history}
+{{chat_history}}
 
-Mensaje del usuario: {question}"""),
+Mensaje del usuario: {{question}}"""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
@@ -1088,30 +1264,30 @@ Mensaje del usuario: {question}"""),
         Agente de Ventas: Especializado en información comercial
         """
         sales_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, asesora comercial especializada del centro.
+            ("system", f"""Eres {self.company_config.sales_agent_name}, asesora comercial especializada de {self.company_config.company_id}.
 
 OBJETIVO: Proporcionar información comercial precisa y persuasiva.
 
 INFORMACIÓN DISPONIBLE:
-{context}
+{{context}}
 
 ESTRUCTURA DE RESPUESTA:
 1. Saludo personalizado (si es nuevo cliente)
-2. Información del tratamiento solicitado
+2. Información del {self.company_config.services} solicitado
 3. Beneficios principales (máximo 3)
 4. Inversión (si disponible)
 5. Llamada a la acción para agendar
 
 TONO: Cálido, profesional, persuasivo.
-EMOJIS: Máximo 2 por respuesta.
+EMOJIS: Máximo 3 por respuesta.
 LONGITUD: Máximo 5 oraciones.
 
 FINALIZA SIEMPRE con: "¿Te gustaría agendar tu cita? 📅"
 
 Historial de conversación:
-{chat_history}
+{{chat_history}}
 
-Pregunta del usuario: {question}"""),
+Pregunta del usuario: {{question}}"""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
@@ -1119,18 +1295,18 @@ Pregunta del usuario: {question}"""),
         def get_sales_context(inputs):
             """Obtener contexto RAG para ventas"""
             try:
-                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
-                retriever = self._get_tenant_retriever(tenant_id)
-                docs = retriever.invoke(question)
+                self._log_retriever_usage(question, [])
+                
+                docs = self.retriever.invoke(question)
+                self._log_retriever_usage(question, docs)
                 
                 if not docs:
-                    return """Información básica del centro:
-- Centro estético especializado
-- Tratamientos de belleza y bienestar
+                    return f"""Información básica de {self.company_config.company_id}:
+- Centro especializado en {self.company_config.services}
 - Atención personalizada
 - Profesionales certificados
-Para información específica de tratamientos, te conectaré con un especialista."""
+Para información específica, te conectaré con un especialista."""
                 
                 return "\n\n".join(doc.page_content for doc in docs)
                 
@@ -1142,8 +1318,7 @@ Para información específica de tratamientos, te conectaré con un especialista
             {
                 "context": get_sales_context,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", []),
-                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
+                "chat_history": lambda x: x.get("chat_history", [])
             }
             | sales_prompt
             | self.chat_model
@@ -1155,7 +1330,7 @@ Para información específica de tratamientos, te conectaré con un especialista
         Agente de Soporte: Consultas generales y escalación
         """
         support_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, especialista en soporte al cliente del centro.
+            ("system", f"""Eres {self.company_config.sales_agent_name}, especialista en soporte al cliente de {self.company_config.company_id}.
 
 OBJETIVO: Resolver consultas generales y facilitar navegación.
 
@@ -1166,7 +1341,7 @@ TIPOS DE CONSULTA:
 - Consultas generales
 
 INFORMACIÓN DISPONIBLE:
-{context}
+{{context}}
 
 PROTOCOLO:
 1. Respuesta directa a la consulta
@@ -1175,13 +1350,14 @@ PROTOCOLO:
 
 TONO: Profesional, servicial, eficiente.
 LONGITUD: Máximo 4 oraciones.
+EMOJIS: Máximo 3 por respuesta.
 
 Si no puedes resolver completamente: "Te conectaré con un especialista para resolver tu consulta específica. 👩‍⚕️"
 
 Historial de conversación:
-{chat_history}
+{{chat_history}}
 
-Consulta del usuario: {question}"""),
+Consulta del usuario: {{question}}"""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])
@@ -1189,13 +1365,14 @@ Consulta del usuario: {question}"""),
         def get_support_context(inputs):
             """Obtener contexto RAG para soporte"""
             try:
-                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
-                retriever = self._get_tenant_retriever(tenant_id)
-                docs = retriever.invoke(question)
+                self._log_retriever_usage(question, [])
+                
+                docs = self.retriever.invoke(question)
+                self._log_retriever_usage(question, docs)
                 
                 if not docs:
-                    return """Información general del centro:
+                    return f"""Información general de {self.company_config.company_id}:
 - Horarios de atención
 - Información general del centro
 - Consultas sobre procesos
@@ -1212,21 +1389,20 @@ Para información específica, te conectaré con un especialista."""
             {
                 "context": get_support_context,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", []),
-                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
+                "chat_history": lambda x: x.get("chat_history", [])
             }
             | support_prompt
             | self.chat_model
             | StrOutputParser()
         )
-
+    
     def _create_availability_agent(self):
-        """Agente que verifica disponibilidad MEJORADO con comunicación robusta"""
+        """Agente que verifica disponibilidad"""
         availability_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres un agente de disponibilidad del centro.
+            ("system", f"""Eres un agente de disponibilidad de {self.company_config.company_id}.
     
     ESTADO DEL SISTEMA:
-    {selenium_status}
+    {{selenium_status}}
     
     PROTOCOLO:
     1. Verificar estado del servicio Selenium
@@ -1237,21 +1413,20 @@ Para información específica, te conectaré con un especialista."""
     6. Devolver los horarios en formato legible
     
     Ejemplo de respuesta:
-    "Horarios disponibles para {fecha} (tratamiento de {duracion} min):
+    "Horarios disponibles para {{fecha}} (tratamiento de {{duracion}} min):
     - 09:00 - 10:00
     - 10:30 - 11:30
     - 14:00 - 15:00"
     
-    Si no hay disponibilidad: "No hay horarios disponibles para {fecha} con duración de {duracion} minutos."
+    Si no hay disponibilidad: "No hay horarios disponibles para {{fecha}} con duración de {{duracion}} minutos."
     Si hay error del sistema: "Error consultando disponibilidad. Te conectaré con un especialista."
     
-    Mensaje del usuario: {question}"""),
+    Mensaje del usuario: {{question}}"""),
             ("human", "{question}")
         ])
         
         def get_availability_selenium_status(inputs):
-            """Obtener estado del sistema Selenium para availability (igual que schedule)"""
-            # Verificar estado del servicio antes de cada consulta
+            """Obtener estado del sistema Selenium para availability"""
             is_available = self._verify_selenium_service()
             
             if is_available:
@@ -1260,15 +1435,15 @@ Para información específica, te conectaré con un especialista."""
                 return f"⚠️ Sistema de disponibilidad NO DISPONIBLE (Verificar conexión: {self.schedule_service_url})"
         
         def process_availability(inputs):
-            """Procesar consulta de disponibilidad MEJORADA"""
+            """Procesar consulta de disponibilidad"""
             try:
-                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
                 chat_history = inputs.get("chat_history", [])
                 selenium_status = inputs.get("selenium_status", "")
                 
                 logger.info(f"=== AVAILABILITY AGENT - PROCESANDO ===")
-                logger.info(f"Tenant: {tenant_id}, Pregunta: {question}")
+                logger.info(f"Pregunta: {question}")
+                logger.info(f"Estado Selenium: {selenium_status}")
                 
                 # 1. VERIFICAR SERVICIO DISPONIBLE PRIMERO
                 if not self._verify_selenium_service():
@@ -1285,7 +1460,7 @@ Para información específica, te conectaré con un especialista."""
                 logger.info(f"Fecha extraída: {date}, Tratamiento: {treatment}")
                 
                 # Obtener duración del tratamiento desde RAG
-                duration = self._get_treatment_duration(tenant_id, treatment)
+                duration = self._get_treatment_duration(treatment)
                 logger.info(f"Duración del tratamiento: {duration} minutos")
                 
                 # 2. LLAMAR ENDPOINT CON MÉTODO MEJORADO
@@ -1321,8 +1496,7 @@ Para información específica, te conectaré con un especialista."""
             {
                 "selenium_status": get_availability_selenium_status,
                 "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", []),
-                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
+                "chat_history": lambda x: x.get("chat_history", [])
             }
             | RunnableLambda(process_availability)
         )
@@ -1395,12 +1569,11 @@ Para información específica, te conectaré con un especialista."""
         
         return "tratamiento general"
     
-    def _get_treatment_duration(self, tenant_id: str, treatment: str) -> int:
+    def _get_treatment_duration(self, treatment):
         """Obtener duración del tratamiento desde RAG o configuración por defecto"""
         try:
             # Consultar RAG para obtener duración específica
-            retriever = self._get_tenant_retriever(tenant_id)
-            docs = retriever.invoke(f"duración tiempo {treatment}")
+            docs = self.retriever.invoke(f"duración tiempo {treatment}")
             
             for doc in docs:
                 content = doc.page_content.lower()
@@ -1431,9 +1604,9 @@ Para información específica, te conectaré con un especialista."""
             return 60  # Duración por defecto
     
     def _call_check_availability(self, date):
-        """Llamar al endpoint de disponibilidad con la misma lógica que schedule_agent"""
+        """Llamar al endpoint de disponibilidad"""
         try:
-            # 1. VERIFICAR ESTADO DEL SERVICIO PRIMERO (como schedule_agent)
+            # 1. VERIFICAR ESTADO DEL SERVICIO PRIMERO
             if not self._verify_selenium_service():
                 logger.warning("Servicio Selenium no disponible para availability check")
                 return None
@@ -1445,7 +1618,7 @@ Para información específica, te conectaré con un especialista."""
                 f"{self.schedule_service_url}/check-availability",
                 json={"date": date},
                 headers={"Content-Type": "application/json"},
-                timeout=self.selenium_timeout  # Usar el mismo timeout que schedule_agent
+                timeout=self.selenium_timeout
             )
             
             logger.info(f"Respuesta de availability endpoint - Status: {response.status_code}")
@@ -1557,61 +1730,10 @@ Para información específica, te conectaré con un especialista."""
         slots_text = "\n".join(f"- {slot}" for slot in slots)
         return f"Horarios disponibles para {date} (tratamiento de {duration} min):\n{slots_text}"
 
-    def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list) -> Dict[str, Any]:
-        """Llamar al microservicio de schedule LOCAL"""
-        try:
-            logger.info(f"Llamando a microservicio local en: {self.schedule_service_url}")
-            
-            response = requests.post(
-                f"{self.schedule_service_url}/schedule-request",
-                json={
-                    "message": question,
-                    "user_id": user_id,
-                    "chat_history": [
-                        {
-                            "content": msg.content if hasattr(msg, 'content') else str(msg),
-                            "type": getattr(msg, 'type', 'user')
-                        } for msg in chat_history
-                    ]
-                },
-                timeout=self.selenium_timeout
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # Si se agendó exitosamente, notificar al sistema principal
-                if result.get('success') and result.get('appointment_data'):
-                    self._notify_appointment_success(user_id, result.get('appointment_data'))
-                
-                logger.info(f"Respuesta exitosa del microservicio local: {result.get('success', False)}")
-                return result
-            else:
-                logger.warning(f"Microservicio local retornó código {response.status_code}")
-                # Marcar servicio como no disponible para evitar llamadas adicionales
-                self.selenium_service_available = False
-                return {"success": False, "message": "Servicio local no disponible"}
-                
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout conectando con microservicio local ({self.selenium_timeout}s)")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Timeout del servicio local"}
-        
-        except requests.exceptions.ConnectionError:
-            logger.error(f"No se pudo conectar con microservicio local: {self.schedule_service_url}")
-            logger.error("Verifica que el microservicio esté ejecutándose en tu máquina local")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Servicio local no disponible"}
-        
-        except Exception as e:
-            logger.error(f"Error llamando microservicio local: {e}")
-            self.selenium_service_available = False
-            return {"success": False, "message": "Error del servicio local"}
-            
     def _create_enhanced_schedule_agent(self):
         """Agente de Schedule mejorado con integración de disponibilidad"""
         schedule_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Eres María, especialista en gestión de citas del centro.
+            ("system", f"""Eres {self.company_config.sales_agent_name}, especialista en gestión de citas de {self.company_config.company_id}.
     
     OBJETIVO: Facilitar la gestión completa de citas y horarios usando herramientas avanzadas.
     
@@ -1662,7 +1784,7 @@ Para información específica, te conectaré con un especialista."""
     4. Resultado de la acción o siguiente paso
     
     TONO: Profesional, eficiente, servicial.
-    EMOJIS: Máximo 2 por respuesta.
+    EMOJIS: Máximo 3 por respuesta.
     LONGITUD: Máximo 6 oraciones.
     
     Historial de conversación:
@@ -1676,13 +1798,14 @@ Para información específica, te conectaré con un especialista."""
         def get_schedule_context(inputs):
             """Obtener contexto RAG para agenda"""
             try:
-                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
-                retriever = self._get_tenant_retriever(tenant_id)
-                docs = retriever.invoke(question)
+                self._log_retriever_usage(question, [])
+                
+                docs = self.retriever.invoke(question)
+                self._log_retriever_usage(question, docs)
                 
                 if not docs:
-                    return """Información básica de agenda:
+                    return f"""Información básica de agenda {self.company_config.company_id}:
     - Horarios de atención: Lunes a Viernes 8:00 AM - 6:00 PM, Sábados 8:00 AM - 4:00 PM
     - Servicios agendables: Consultas médicas, Tratamientos estéticos, Procedimientos de belleza
     - Políticas de cancelación: 24 horas de anticipación
@@ -1706,7 +1829,6 @@ Para información específica, te conectaré con un especialista."""
         def process_schedule_with_selenium(inputs):
             """Procesar solicitud de agenda con integración de disponibilidad MEJORADA"""
             try:
-                tenant_id = inputs.get("tenant_id")
                 question = inputs.get("question", "")
                 user_id = inputs.get("user_id", "default_user")
                 chat_history = inputs.get("chat_history", [])
@@ -1720,10 +1842,7 @@ Para información específica, te conectaré con un especialista."""
                 if self._contains_schedule_intent(question):
                     logger.info("Detectado intent de agendamiento - verificando disponibilidad")
                     try:
-                        availability_response = self.availability_agent.invoke({
-                            "question": question,
-                            "tenant_id": tenant_id
-                        })
+                        availability_response = self.availability_agent.invoke({"question": question,})
                         available_slots = availability_response
                         logger.info(f"Disponibilidad obtenida: {available_slots}")
                     except Exception as e:
@@ -1776,8 +1895,7 @@ Para información específica, te conectaré con un especialista."""
                 "selenium_status": get_selenium_status,
                 "question": lambda x: x.get("question", ""),
                 "chat_history": lambda x: x.get("chat_history", []),
-                "user_id": lambda x: x.get("user_id", "default_user"),
-                "tenant_id": lambda x: x.get("tenant_id")  # Nuevo parámetro
+                "user_id": lambda x: x.get("user_id", "default_user")
             }
             | RunnableLambda(process_schedule_with_selenium)
         )
@@ -1843,68 +1961,57 @@ Para información específica, te conectaré con un especialista."""
         # Si solo pregunta por disponibilidad y no confirma agendamiento
         return has_availability_check and not has_schedule_confirmation
     
-    def _log_schedule_decision_process(self, question: str, availability: str, will_use_selenium: bool):
-        """Log detallado del proceso de decisión para agendamiento"""
-        logger.info(f"=== PROCESO DE DECISIÓN DE AGENDAMIENTO ===")
-        logger.info(f"Pregunta: {question}")
-        logger.info(f"Disponibilidad obtenida: {bool(availability)}")
-        logger.info(f"Slots disponibles: {'Sí' if self._has_available_slots_confirmation(availability) else 'No'}")
-        logger.info(f"Usará Selenium: {will_use_selenium}")
-        logger.info(f"Solo consulta disponibilidad: {self._is_just_availability_check(question)}")
-        logger.info(f"=============================================")
-    
-    def _handle_selenium_unavailable(self) -> str:
-        """Manejar cuando el servicio Selenium no está disponible"""
-        return """Lo siento, el sistema de agendamiento automático no está disponible en este momento. 
-
-Puedes:
-1. Intentar nuevamente en unos minutos
-2. Contactar directamente a nuestro equipo
-3. Te conectaré con un especialista para agendar manualmente
-
-¿Prefieres que te conecte con un especialista? 👩‍⚕️"""
-    
-    def _should_use_selenium(self, question: str, chat_history: list) -> bool:
-        """Determinar si se debe usar el microservicio de Selenium"""
-        question_lower = question.lower()
+    def _call_local_schedule_microservice(self, question: str, user_id: str, chat_history: list) -> Dict[str, Any]:
+        """Llamar al microservicio de schedule LOCAL"""
+        try:
+            logger.info(f"Llamando a microservicio local en: {self.schedule_service_url}")
+            
+            response = requests.post(
+                f"{self.schedule_service_url}/schedule-request",
+                json={
+                    "message": question,
+                    "user_id": user_id,
+                    "chat_history": [
+                        {
+                            "content": msg.content if hasattr(msg, 'content') else str(msg),
+                            "type": getattr(msg, 'type', 'user')
+                        } for msg in chat_history
+                    ]
+                },
+                timeout=self.selenium_timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                # Si se agendó exitosamente, notificar al sistema principal
+                if result.get('success') and result.get('appointment_data'):
+                    self._notify_appointment_success(user_id, result.get('appointment_data'))
+                
+                logger.info(f"Respuesta exitosa del microservicio local: {result.get('success', False)}")
+                return result
+            else:
+                logger.warning(f"Microservicio local retornó código {response.status_code}")
+                # Marcar servicio como no disponible para evitar llamadas adicionales
+                self.selenium_service_available = False
+                return {"success": False, "message": "Servicio local no disponible"}
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout conectando con microservicio local ({self.selenium_timeout}s)")
+            self.selenium_service_available = False
+            return {"success": False, "message": "Timeout del servicio local"}
         
-        # Palabras clave que indican necesidad de agendamiento
-        schedule_keywords = [
-            "agendar", "reservar", "programar", "cita", "appointment",
-            "agenda", "disponibilidad", "horario", "fecha", "hora"
-        ]
+        except requests.exceptions.ConnectionError:
+            logger.error(f"No se pudo conectar con microservicio local: {self.schedule_service_url}")
+            logger.error("Verifica que el microservicio esté ejecutándose en tu máquina local")
+            self.selenium_service_available = False
+            return {"success": False, "message": "Servicio local no disponible"}
         
-        # Verificar si la pregunta contiene palabras clave de agendamiento
-        has_schedule_intent = any(keyword in question_lower for keyword in schedule_keywords)
-        
-        # Verificar si hay suficiente información en el historial
-        has_patient_info = self._extract_patient_info_from_history(chat_history)
-        
-        return has_schedule_intent and (has_patient_info or self._has_complete_info_in_message(question))
-    
-    def _extract_patient_info_from_history(self, chat_history: list) -> bool:
-        """Extraer información del paciente del historial"""
-        # Buscar información básica en el historial
-        history_text = " ".join([msg.content if hasattr(msg, 'content') else str(msg) for msg in chat_history])
-        
-        # Verificar si hay información básica disponible
-        has_name = any(word in history_text.lower() for word in ["nombre", "llamo", "soy"])
-        has_phone = any(char.isdigit() for char in history_text) and len([c for c in history_text if c.isdigit()]) >= 7
-        has_date = any(word in history_text.lower() for word in ["fecha", "día", "mañana", "hoy"])
-        
-        return has_name and (has_phone or has_date)
-    
-    def _has_complete_info_in_message(self, message: str) -> bool:
-        """Verificar si el mensaje tiene información completa"""
-        message_lower = message.lower()
-        
-        # Verificar elementos básicos
-        has_name_indicator = any(word in message_lower for word in ["nombre", "llamo", "soy"])
-        has_phone_indicator = any(char.isdigit() for char in message) and len([c for c in message if c.isdigit()]) >= 7
-        has_date_indicator = any(word in message_lower for word in ["fecha", "día", "mañana", "hoy"])
-        
-        return has_name_indicator and has_phone_indicator and has_date_indicator
-    
+        except Exception as e:
+            logger.error(f"Error llamando microservicio local: {e}")
+            self.selenium_service_available = False
+            return {"success": False, "message": "Error del servicio local"}
+            
     def _notify_appointment_success(self, user_id: str, appointment_data: Dict[str, Any]):
         """Notificar al sistema principal sobre cita exitosa"""
         try:
@@ -1972,12 +2079,20 @@ Puedes:
         
         return RunnableLambda(route_to_agent)
     
-    def get_response(self, tenant_id: str, question: str, user_id: str) -> Tuple[str, str]:
+    def get_response(self, question: str, user_id: str, media_type: str = "text", media_context: str = None) -> Tuple[str, str]:
         """
         Método principal para obtener respuesta del sistema multi-agente
-        Retorna: (respuesta, agente_utilizado)
         """
-        if not question or not question.strip():
+        # Procesar según el tipo de multimedia
+        if media_type == "image" and media_context:
+            processed_question = f"Contexto visual: {media_context}\n\nPregunta: {question}"
+        elif media_type == "voice" and media_context:
+            processed_question = f"Transcripción de voz: {media_context}\n\nPregunta: {question}"
+        else:
+            processed_question = question
+    
+        # Validaciones
+        if not processed_question or not processed_question.strip():
             return "Por favor, envía un mensaje específico para poder ayudarte. 😊", "support"
         
         if not user_id or not user_id.strip():
@@ -1985,35 +2100,76 @@ Puedes:
         
         try:
             # Obtener historial de conversación
-            chat_history = self.conversation_manager.get_chat_history(tenant_id, user_id, format_type="messages")
+            chat_history = self.conversation_manager.get_chat_history(user_id, format_type="messages")
             
-            # Preparar inputs con tenant_id
+            # Preparar inputs usando la pregunta procesada
             inputs = {
-                "tenant_id": tenant_id,  # Nuevo campo crítico
-                "question": question.strip(),
+                "question": processed_question.strip(), 
                 "chat_history": chat_history,
                 "user_id": user_id
             }
             
+            # Determinar si la consulta podría necesitar RAG (pre-check)
+            might_need_rag = self._might_need_rag(processed_question)
+            
+            # Log inicial de la consulta
+            logger.info(f"🔍 CONSULTA INICIADA - Company: {self.company_config.company_id}, User: {user_id}, Pregunta: {processed_question[:100]}...")
+            if might_need_rag:
+                logger.info("   → Posible consulta RAG detectada")
+            
             # Obtener respuesta del orquestador
             response = self.orchestrator.invoke(inputs)
             
-            # Agregar mensaje del usuario al historial
-            self.conversation_manager.add_message(tenant_id, user_id, "user", question)
+            # Log de la respuesta
+            logger.info(f"🤖 RESPUESTA GENERADA - Agente: {self._determine_agent_used(response)}")
+            logger.info(f"   → Longitud respuesta: {len(response)} caracteres")
+            
+            # Agregar mensaje del usuario al historial (usando processed_question)
+            self.conversation_manager.add_message(user_id, "user", processed_question)
             
             # Agregar respuesta del asistente al historial
-            self.conversation_manager.add_message(tenant_id, user_id, "assistant", response)
+            self.conversation_manager.add_message(user_id, "assistant", response)
             
             # Determinar qué agente se utilizó (para logging)
             agent_used = self._determine_agent_used(response)
             
-            logger.info(f"Tenant {tenant_id} - Multi-agent response generated for user {user_id} using {agent_used}")
+            logger.info(f"Multi-agent response generated for user {user_id} using {agent_used}")
             
             return response, agent_used
             
         except Exception as e:
-            logger.exception(f"Error en sistema multi-agente (Tenant: {tenant_id}, User: {user_id})")
+            logger.exception(f"Error en sistema multi-agente (Company: {self.company_config.company_id}, User: {user_id})")
             return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", "error"
+    
+    def _might_need_rag(self, question: str) -> bool:
+        """Determina si una consulta podría necesitar RAG basado en keywords"""
+        rag_keywords = [
+            "precio", "costo", "inversión", "duración", "tiempo", 
+            "tratamiento", "procedimiento", "servicio", "beneficio",
+            "horario", "disponibilidad", "agendar", "cita", "información"
+        ]
+        return any(keyword in question.lower() for keyword in rag_keywords)
+    
+    def _log_retriever_usage(self, question: str, docs: List) -> None:
+        """Log detallado del uso del retriever"""
+        if not docs:
+            logger.info("   → RAG: No se recuperaron documentos")
+            return
+        
+        logger.info(f"   → RAG: Recuperados {len(docs)} documentos")
+        logger.info(f"   → Pregunta: {question[:50]}...")
+        
+        for i, doc in enumerate(docs[:3]):  # Limitar a 3 para no saturar logs
+            content_preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
+            metadata = getattr(doc, 'metadata', {})
+            score = getattr(doc, 'score', None)
+            
+            logger.info(f"   → Doc {i+1}:")
+            logger.info(f"      - Contenido: {content_preview}")
+            if metadata:
+                logger.info(f"      - Metadata: {dict(list(metadata.items())[:3])}...")  # Limitar metadata
+            if score is not None:
+                logger.info(f"      - Score: {score:.4f}")
     
     def _determine_agent_used(self, response: str) -> str:
         """
@@ -2032,7 +2188,7 @@ Puedes:
     
     def health_check(self) -> Dict[str, Any]:
         """
-        Verificar salud del sistema multi-agente y microservicio LOCAL
+        Verificar salud del sistema multi-agente y microservicio
         """
         try:
             # Usar el estado cacheado para el health check, solo verificar si está marcado como no disponible
@@ -2069,6 +2225,7 @@ Puedes:
                 "error": str(e)
             }
     
+    
     def get_system_stats(self) -> Dict[str, Any]:
         """
         Obtener estadísticas del sistema multi-agente
@@ -2089,7 +2246,7 @@ Puedes:
         Método para reconectar con el servicio Selenium local
         """
         logger.info("Intentando reconectar con servicio Selenium local...")
-        self._initialize_local_selenium_connection()
+        self._initialize_service_connection()
         return self.selenium_service_available
 
 # Función de utilidad para inicializar el sistema
@@ -2097,60 +2254,57 @@ def create_enhanced_multiagent_system(chat_model, vectorstore, conversation_mana
     """
     Crear instancia del sistema multi-agente mejorado con conexión local
     """
-    return MultiTenantMultiAgentSystem(chat_model, vectorstore, conversation_manager)
+    return BenovaMultiAgentSystem(chat_model, vectorstore, conversation_manager)
+
 
 # ===============================
 # modern_rag_system_with_multiagent
 # ===============================
-def create_modern_rag_system_with_multiagent(get_vectorstore_func, chat_model, embeddings, conversation_manager):
+def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings, conversation_manager):
     """
     Crear sistema RAG moderno con arquitectura multi-agente
     Reemplaza la clase ModernBenovaRAGSystem manteniendo compatibilidad
     """
-    class ModernRAGSystemMultiAgent:
+    class ModernBenovaRAGSystemMultiAgent:
         """
         Wrapper que mantiene compatibilidad con el sistema existente
         pero usa arquitectura multi-agente internamente
         """
         
-        def __init__(self, get_vectorstore_func, chat_model, embeddings, conversation_manager):
-            self.get_vectorstore_func = get_vectorstore_func
+        def __init__(self, vectorstore, chat_model, embeddings, conversation_manager):
+            self.vectorstore = vectorstore
             self.chat_model = chat_model
             self.embeddings = embeddings
             self.conversation_manager = conversation_manager
+            self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
             
-            # Inicializar sistema multi-agente con función de vectorstore
-            self.multi_agent_system = MultiTenantMultiAgentSystem(
-                chat_model, 
-                get_vectorstore_func, 
-                conversation_manager
+            # Inicializar sistema multi-agente
+            self.multi_agent_system = BenovaMultiAgentSystem(
+                chat_model, vectorstore, conversation_manager
             )
         
-        def get_response(self, tenant_id: str, question: str, user_id: str) -> Tuple[str, List]:
+        def get_response(self, question: str, user_id: str) -> Tuple[str, List]:
             """
-            Método compatible con la interfaz existente
+            Método compatible con la interfaz existente - FIXED: Usar invoke
             """
             try:
-                # Usar sistema multi-agente con tenant_id
-                response, agent_used = self.multi_agent_system.get_response(tenant_id, question, user_id)
+                # Usar sistema multi-agente
+                response, agent_used = self.multi_agent_system.get_response(question, user_id)
                 
-                # Obtener documentos usando vectorstore específico del tenant
-                tenant_vectorstore = self.get_vectorstore_func(tenant_id)
-                retriever = tenant_vectorstore.as_retriever(search_kwargs={"k": 3})
-                docs = retriever.invoke(question)
+                # Obtener documentos para compatibilidad
+                docs = self.retriever.invoke(question)
                 
-                logger.info(f"Tenant {tenant_id} - Multi-agent response: {response[:100]}... (agent: {agent_used})")
+                logger.info(f"Multi-agent response: {response[:100]}... (agent: {agent_used})")
                 
                 return response, docs
                 
             except Exception as e:
-                logger.error(f"Tenant {tenant_id} - Error in multi-agent RAG system: {e}")
+                logger.error(f"Error in multi-agent RAG system: {e}")
                 return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", []
         
-        def add_documents(self, tenant_id: str, documents: List[str], metadatas: List[Dict] = None) -> int:
+        def add_documents(self, documents: List[str], metadatas: List[Dict] = None):
             """
             ACTUALIZADO: Agregar documentos usando sistema de chunking avanzado
-            con soporte multi-tenant
             """
             if not documents:
                 return 0
@@ -2173,38 +2327,21 @@ def create_modern_rag_system_with_multiagent(get_vectorstore_func, chat_model, e
                                 # Combinar metadatas
                                 combined_meta = base_metadata.copy()
                                 combined_meta.update(auto_meta)
-                                combined_meta.update({
-                                    "tenant_id": tenant_id,
-                                    "chunk_index": j, 
-                                    "doc_index": i
-                                })
+                                combined_meta.update({"chunk_index": j, "doc_index": i})
                                 all_metas.append(combined_meta)
                 
-                # Agregar al vectorstore específico del tenant
+                # Agregar al vectorstore
                 if all_texts:
-                    tenant_vectorstore = self.get_vectorstore_func(tenant_id)
-                    tenant_vectorstore.add_texts(all_texts, metadatas=all_metas)
-                    logger.info(f"✅ Tenant {tenant_id} - Added {len(all_texts)} advanced chunks to vectorstore")
+                    self.vectorstore.add_texts(all_texts, metadatas=all_metas)
+                    logger.info(f"Added {len(all_texts)} advanced chunks to vectorstore")
                 
                 return len(all_texts)
                 
             except Exception as e:
-                logger.error(f"❌ Tenant {tenant_id} - Error adding documents: {e}")
+                logger.error(f"Error adding documents with advanced chunking: {e}")
                 return 0
-        
-        def search_documents(self, tenant_id: str, query: str, k: int = 3) -> List:
-            """
-            Búsqueda de documentos específica por tenant
-            """
-            try:
-                tenant_vectorstore = self.get_vectorstore_func(tenant_id)
-                retriever = tenant_vectorstore.as_retriever(search_kwargs={"k": k})
-                return retriever.invoke(query)
-            except Exception as e:
-                logger.error(f"Tenant {tenant_id} - Error searching documents: {e}")
-                return []
     
-    return ModernRAGSystemMultiAgent(get_vectorstore_func, chat_model, embeddings, conversation_manager)
+    return ModernBenovaRAGSystemMultiAgent(vectorstore, chat_model, embeddings, conversation_manager)
 
 # ===============================
 # Initialize Modern Components
@@ -2215,7 +2352,7 @@ try:
     modern_conversation_manager = ModernConversationManager(redis_client, MAX_CONTEXT_MESSAGES)
     
     modern_rag_system = create_modern_rag_system_with_multiagent(
-        get_vectorstore, 
+        vectorstore, 
         chat_model, 
         embeddings, 
         modern_conversation_manager
@@ -2229,48 +2366,62 @@ except Exception as e:
 # Chat Response Handler
 # ===============================
 
-def get_modern_chat_response_multiagent(tenant_id: str, user_id: str, user_message: str) -> str:
+def get_modern_chat_response_multiagent(user_id: str, user_message: str, media_type: str = "text", media_context: str = None) -> str:
     """
-    Versión actualizada que usa sistema multi-agente
-    Reemplaza la función get_modern_chat_response existente
-    """
-    if not tenant_id or not user_id or not user_id.strip():
-        logger.error("Invalid tenant_id or user_id provided")
-        return "Error interno: ID de tenant o usuario inválido."
+    Versión actualizada que usa sistema multi-agente con soporte para multimedia
     
-    if not user_message or not user_message.strip():
-        logger.error("Empty or invalid message content")
+    Args:
+        user_id: Identificador único del usuario
+        user_message: Mensaje de texto del usuario
+        media_type: Tipo de medio ('text', 'voice', 'image')
+        media_context: Contexto adicional del medio (transcripción o descripción)
+    
+    Returns:
+        str: Respuesta del asistente
+    """
+    if not user_id or not user_id.strip():
+        logger.error("Invalid user_id provided")
+        return "Error interno: ID de usuario inválido."
+    
+    # Validar que al menos haya user_message o media_context
+    if (not user_message or not user_message.strip()) and not media_context:
+        logger.error("Empty or invalid message content and no media context")
         return "Por favor, envía un mensaje con contenido para poder ayudarte. 😊"
     
     try:
-        # Usar sistema multi-agente global
-        response, agent_used = modern_rag_system.multi_agent_system.get_response(tenant_id, user_message, user_id)
+        # Usar sistema multi-agente global con soporte multimedia
+        response, agent_used = modern_rag_system.multi_agent_system.get_response(
+            question=user_message, 
+            user_id=user_id, 
+            media_type=media_type, 
+            media_context=media_context
+        )
         
-        logger.info(f"Tenant {tenant_id} - Multi-agent response for user {user_id}: {response[:100]}... (agent: {agent_used})")
+        logger.info(f"Multi-agent response for user {user_id}: {response[:100]}... (agent: {agent_used})")
         
         return response
         
     except Exception as e:
-        logger.exception(f"Tenant {tenant_id} - Error in multi-agent chat response for user {user_id}: {e}")
+        logger.exception(f"Error in multi-agent chat response for user {user_id}: {e}")
         return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo en unos momentos. 🔧"
 
 # ===============================
-# PLATAFORM API FUNCTIONS
+# CHATWOOT API FUNCTIONS
 # ===============================
 
-def send_message_to_platform(tenant_id: str, conversation_id: str, message_content: str):
-    """Send message to your platform API"""
-    url = f"{FRONTEND_URL}/conversations/{conversation_id}/messages"
+def send_message_to_chatwoot(conversation_id, message_content):
+    """Send message to Chatwoot using API"""
+    url = f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/conversations/{conversation_id}/messages"
 
     headers = {
-        "Authorization": f"Bearer {PLATFORM_API_KEY}",
+        "api_access_token": CHATWOOT_API_KEY,
         "Content-Type": "application/json"
     }
 
     payload = {
-        "tenant_id": tenant_id,
         "content": message_content,
-        "role": "assistant"
+        "message_type": "outgoing",
+        "private": False
     }
 
     try:
@@ -2278,18 +2429,21 @@ def send_message_to_platform(tenant_id: str, conversation_id: str, message_conte
             url, 
             json=payload, 
             headers=headers, 
-            timeout=30
+            timeout=30,
+            verify=True
         )
 
+        logger.info(f"Chatwoot API Response Status: {response.status_code}")
+        
         if response.status_code == 200:
-            logger.info(f"✅ Message sent to platform: {conversation_id}")
+            logger.info(f"✅ Message sent to conversation {conversation_id}")
             return True
         else:
-            logger.error(f"❌ Failed to send message: {response.status_code}")
+            logger.error(f"❌ Failed to send message: {response.status_code} - {response.text}")
             return False
 
     except Exception as e:
-        logger.error(f"❌ Error sending to platform: {e}")
+        logger.error(f"❌ Error sending message to Chatwoot: {e}")
         return False
 
 def extract_contact_id(data):
@@ -2326,79 +2480,101 @@ def extract_contact_id(data):
     return None, "none", False
     
 # ===============================
-# WEBHOOK HANDLERS - CORREGIDOS
+# Webhook Handlers
 # ===============================
-
-class WebhookError(Exception):
-    """Custom exception for webhook errors"""
-    def __init__(self, message, status_code=400):
-        self.message = message
-        self.status_code = status_code
-        super().__init__(self.message)
-
-def validate_webhook_data(data):
-    """Validate webhook data structure"""
-    if not data:
-        raise WebhookError("No JSON data received", 400)
+def extract_company_id(data):
+    """
+    Extraer company_id del payload del webhook
+    """
+    # Intentar obtener desde custom_attributes
+    conversation_data = data.get("conversation", {})
+    custom_attributes = conversation_data.get("custom_attributes", {})
+    company_id = custom_attributes.get("company_id")
     
-    event_type = data.get("event")
-    if not event_type:
-        raise WebhookError("Missing event type", 400)
+    if company_id:
+        return company_id
     
-    # Extract tenant_id from account_id in payload
-    tenant_id = data.get("account", {}).get("id")
-    if not tenant_id:
-        raise WebhookError("Missing account ID (tenant_id)", 400)
+    # Intentar obtener desde inbox_id (mapeo preconfigurado)
+    inbox_id = conversation_data.get("inbox_id")
+    if inbox_id:
+        # Mapeo de inbox_id a company_id (configurable)
+        inbox_to_company = {
+            "1": "benova",
+            "2": "empresa2"
+        }
+        return inbox_to_company.get(str(inbox_id), "benova")  # Default a benova
     
-    return event_type, tenant_id
+    # Default a benova si no se encuentra
+    return "benova"
 
-def handle_conversation_updated(data, tenant_id):
-    """Handle conversation_updated events to update bot status"""
+def extract_contact_id(data):
+    """
+    Extract contact_id with unified priority system and validation
+    Returns: (contact_id, method_used, is_valid)
+    """
+    conversation_data = data.get("conversation", {})
+    
+    # Priority order for contact extraction
+    extraction_methods = [
+        ("conversation.contact_inbox.contact_id", 
+         lambda: conversation_data.get("contact_inbox", {}).get("contact_id")),
+        ("conversation.meta.sender.id", 
+         lambda: conversation_data.get("meta", {}).get("sender", {}).get("id")),
+        ("root.sender.id", 
+         lambda: data.get("sender", {}).get("id") if data.get("sender", {}).get("type") != "agent" else None)
+    ]
+    
+    for method_name, extractor in extraction_methods:
+        try:
+            contact_id = extractor()
+            if contact_id and str(contact_id).strip():
+                # Validate contact_id format
+                contact_id = str(contact_id).strip()
+                if contact_id.isdigit() or contact_id.startswith("contact_"):
+                    logger.info(f"✅ Contact ID extracted: {contact_id} (method: {method_name})")
+                    return contact_id, method_name, True
+        except Exception as e:
+            logger.warning(f"Error in extraction method {method_name}: {e}")
+            continue
+    
+    logger.error("❌ No valid contact_id found in webhook data")
+    return None, "none", False
+
+def process_incoming_message(data):
+    """Process incoming message with company-specific configuration"""
     try:
-        conversation_id = data.get("id")
-        if not conversation_id:
-            logger.error(f"❌ Tenant {tenant_id} - Could not extract conversation_id from conversation_updated event")
-            return False
+        # Extraer company_id
+        company_id = extract_company_id(data)
+        company_config = get_company_config(company_id)
         
-        conversation_status = data.get("status")
-        if not conversation_status:
-            logger.warning(f"⚠️ Tenant {tenant_id} - No status found in conversation_updated for {conversation_id}")
-            return False
+        # Validar que la empresa existe
+        if company_id not in COMPANIES_CONFIG and company_id != "default":
+            logger.error(f"Company {company_id} not found in configuration")
+            return {"status": "error", "message": "Company configuration not found"}
         
-        logger.info(f"📋 Tenant {tenant_id} - Conversation {conversation_id} updated to status: {conversation_status}")
-        update_bot_status(tenant_id, conversation_id, conversation_status)
-        return True
-        
-    except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error handling conversation_updated: {e}")
-        return False
-
-def process_incoming_message(data, tenant_id):
-    """Process incoming message with comprehensive validation and error handling"""
-    try:
-        # Validate message type
+        # Validar message type
         message_type = data.get("message_type")
         if message_type != "incoming":
-            logger.info(f"🤖 Tenant {tenant_id} - Ignoring message type: {message_type}")
+            logger.info(f"🤖 Ignoring message type: {message_type}")
             return {"status": "non_incoming_message", "ignored": True}
 
         # Extract and validate conversation data
         conversation_data = data.get("conversation", {})
         if not conversation_data:
-            raise WebhookError("Missing conversation data", 400)
+            raise Exception("Missing conversation data")
 
         conversation_id = conversation_data.get("id")
         conversation_status = conversation_data.get("status")
         
         if not conversation_id:
-            raise WebhookError("Missing conversation ID", 400)
+            raise Exception("Missing conversation ID")
 
         # Validate conversation_id format
         if not str(conversation_id).strip() or not str(conversation_id).isdigit():
-            raise WebhookError("Invalid conversation ID format", 400)
+            raise Exception("Invalid conversation ID format")
 
         # Check if bot should respond
-        if not should_bot_respond(tenant_id, conversation_id, conversation_status):
+        if not should_bot_respond(conversation_id, conversation_status, company_config):
             return {
                 "status": "bot_inactive",
                 "message": f"Bot is inactive for status: {conversation_status}",
@@ -2409,50 +2585,61 @@ def process_incoming_message(data, tenant_id):
         content = data.get("content", "").strip()
         message_id = data.get("id")
 
-        if not content:
-            raise WebhookError("Missing message content", 400)
-
-        # Validate message content
-        if len(content) > 4000:  # Reasonable limit
-            logger.warning(f"Tenant {tenant_id} - Message content too long: {len(content)} characters")
-            content = content[:4000] + "..."
-
         # Check for duplicate processing
-        if message_id and is_message_already_processed(tenant_id, message_id, conversation_id):
+        if message_id and is_message_already_processed(message_id, conversation_id, company_config):
             return {"status": "already_processed", "ignored": True}
 
-        # Extract contact information with improved validation
+        # Extract contact information
         contact_id, extraction_method, is_valid = extract_contact_id(data)
         if not is_valid or not contact_id:
-            raise WebhookError("Could not extract valid contact_id from webhook data", 400)
+            raise Exception("Could not extract valid contact_id from webhook data")
 
         # Generate standardized user_id
-        user_id = modern_conversation_manager._create_user_id(contact_id)
+        conversation_manager = ModernConversationManager(redis_client, company_config=company_config)
+        user_id = conversation_manager._create_user_id(contact_id)
 
-        logger.info(f"🔄 Tenant {tenant_id} - Processing message from conversation {conversation_id}")
-        logger.info(f"👤 Tenant {tenant_id} - User: {user_id} (contact: {contact_id}, method: {extraction_method})")
-        logger.info(f"💬 Tenant {tenant_id} - Message: {content[:100]}...")
+        logger.info(f"🔄 Processing message from company {company_id}, conversation {conversation_id}")
+        logger.info(f"👤 User: {user_id} (contact: {contact_id}, method: {extraction_method})")
+        logger.info(f"💬 Message: {content[:100]}...")
 
-        # Generate response with validation - CORREGIDO
-        assistant_reply = get_modern_chat_response_multiagent(tenant_id, user_id, content)
+        # Crear vectorstore específico para la empresa
+        vectorstore = RedisVectorStore(
+            embeddings,
+            redis_url=REDIS_URL,
+            index_name=company_config.vectorstore_index,
+            vector_dim=1536
+        )
+        
+        # Crear sistema multi-agente para la empresa
+        multi_agent_system = MultiAgentSystem(
+            chat_model, 
+            vectorstore, 
+            conversation_manager,
+            company_config
+        )
+        
+        # Generar respuesta
+        assistant_reply, agent_used = multi_agent_system.get_response(
+            content, user_id, "text", None
+        )
         
         if not assistant_reply or not assistant_reply.strip():
             assistant_reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías intentar de nuevo? 😊"
         
-        logger.info(f"🤖 Tenant {tenant_id} - Assistant response: {assistant_reply[:100]}...")
+        logger.info(f"🤖 Assistant response: {assistant_reply[:100]}...")
 
         # Send response to Chatwoot
-        success = send_message_to_chatwoot(tenant_id, conversation_id, assistant_reply)
+        success = send_message_to_chatwoot(conversation_id, assistant_reply)
 
         if not success:
-            raise WebhookError("Failed to send response to Chatwoot", 500)
+            raise Exception("Failed to send response to Chatwoot")
 
-        logger.info(f"✅ Tenant {tenant_id} - Successfully processed message for conversation {conversation_id}")
+        logger.info(f"✅ Successfully processed message for conversation {conversation_id}")
         
         return {
             "status": "success",
             "message": "Response sent successfully",
-            "tenant_id": tenant_id,
+            "company_id": company_id,
             "conversation_id": str(conversation_id),
             "user_id": user_id,
             "contact_id": contact_id,
@@ -2464,76 +2651,209 @@ def process_incoming_message(data, tenant_id):
             "embedding_model": EMBEDDING_MODEL,
             "vectorstore": "RedisVectorStore",
             "message_length": len(content),
-            "response_length": len(assistant_reply)
+            "response_length": len(assistant_reply),
+            "agent_used": agent_used
         }
 
-    
     except Exception as e:
-        logger.exception(f"💥 Tenant {tenant_id} - Error procesando mensaje (ID: {message_id})")
-        raise WebhookError("Internal server error", 500)
-    except WebhookError:
-        raise
-###############################################################################################################################
-@app.route("/webhook/<platform>", methods=["POST"])
-def unified_webhook(platform):
-    adapter = MessagingAdapter(platform)
-    message_data = adapter.parse_incoming(request.json)
-    
-    # Procesamiento común
-    tenant_id = detect_tenant_from_sender(message_data['sender_id'])
-    response = get_modern_chat_response_multiagent(
-        tenant_id, 
-        message_data['sender_id'], 
-        message_data['content']
-    )
-    
-    # Enviar respuesta
-    adapter.send_message(message_data['sender_id'], response)
-    return jsonify({"status": "success"})
+        logger.exception(f"💥 Error procesando mensaje (Company: {company_id})")
+        return {"status": "error", "message": str(e)}
 
-#################################################################################################################
+def send_message_to_chatwoot(conversation_id, message_content):
+    """Send message to Chatwoot using API"""
+    url = f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/conversations/{conversation_id}/messages"
+
+    headers = {
+        "api_access_token": CHATWOOT_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "content": message_content,
+        "message_type": "outgoing",
+        "private": False
+    }
+
+    try:
+        response = requests.post(
+            url, 
+            json=payload, 
+            headers=headers, 
+            timeout=30,
+            verify=True
+        )
+
+        logger.info(f"Chatwoot API Response Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Message sent to conversation {conversation_id}")
+            return True
+        else:
+            logger.error(f"❌ Failed to send message: {response.status_code} - {response.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Error sending message to Chatwoot: {e}")
+        return False
+
+def handle_conversation_updated(data):
+    """Handle conversation_updated events to update bot status"""
+    try:
+        conversation_id = data.get("id")
+        if not conversation_id:
+            logger.error("❌ Could not extract conversation_id from conversation_updated event")
+            return False
+        
+        conversation_status = data.get("status")
+        if not conversation_status:
+            logger.warning(f"⚠️ No status found in conversation_updated for {conversation_id}")
+            return False
+        
+        # Extraer company_id para obtener la configuración correcta
+        company_id = extract_company_id(data)
+        company_config = get_company_config(company_id)
+        
+        logger.info(f"📋 Conversation {conversation_id} updated to status: {conversation_status}")
+        update_bot_status(conversation_id, conversation_status, company_config)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error handling conversation_updated: {e}")
+        return False
+
+# ===============================
+# FUNCIONES AUXILIARES MULTIMEDIA - NUEVAS
+# ===============================
+
+def analyze_image_from_url(image_url):
+    """Analizar imagen desde URL usando GPT-4 Vision"""
+    try:
+        import requests
+        from io import BytesIO
+        
+        # Descargar la imagen
+        logger.info(f"🔽 Downloading image from: {image_url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)'
+        }
+        response = requests.get(image_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        # Verificar que es una imagen
+        content_type = response.headers.get('content-type', '').lower()
+        if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'gif', 'webp']):
+            logger.warning(f"⚠️ Content type might not be image: {content_type}")
+        
+        # Crear archivo en memoria
+        image_file = BytesIO(response.content)
+        
+        # Analizar usando la función existente
+        return analyze_image(image_file)
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Error downloading image: {e}")
+        raise Exception(f"Error downloading image: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ Error in image analysis from URL: {e}")
+        raise
+
+def transcribe_audio_from_url(audio_url):
+    """Transcribir audio desde URL usando Whisper"""
+    try:
+        import requests
+        import tempfile
+        import os
+        
+        # Descargar el audio
+        logger.info(f"🔽 Downloading audio from: {audio_url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)'
+        }
+        response = requests.get(audio_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        
+        # Crear archivo temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_file:
+            temp_file.write(response.content)
+            temp_path = temp_file.name
+        
+        try:
+            # Transcribir usando la función existente
+            result = transcribe_audio(temp_path)
+            return result
+        finally:
+            # Limpiar archivo temporal
+            try:
+                os.unlink(temp_path)
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Could not delete temp file {temp_path}: {cleanup_error}")
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Error downloading audio: {e}")
+        raise Exception(f"Error downloading audio: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ Error in audio transcription from URL: {e}")
+        raise
+
+def debug_webhook_data(data):
+    """Función para debugging completo del webhook de Chatwoot"""
+    logger.info("🔍 === WEBHOOK DEBUG INFO ===")
+    logger.info(f"Event: {data.get('event')}")
+    logger.info(f"Message ID: {data.get('id')}")
+    logger.info(f"Message Type: {data.get('message_type')}")
+    logger.info(f"Content: '{data.get('content')}'")
+    logger.info(f"Content Length: {len(data.get('content', ''))}")
+    
+    attachments = data.get('attachments', [])
+    logger.info(f"Attachments Count: {len(attachments)}")
+    
+    for i, att in enumerate(attachments):
+        logger.info(f"  Attachment {i}:")
+        logger.info(f"    Keys: {list(att.keys())}")
+        logger.info(f"    Type: {att.get('type')}")
+        logger.info(f"    File Type: {att.get('file_type')}")
+        logger.info(f"    URL: {att.get('url')}")
+        logger.info(f"    Data URL: {att.get('data_url')}")
+        logger.info(f"    Thumb URL: {att.get('thumb_url')}")
+    
+    logger.info("🔍 === END DEBUG INFO ===")
+
+
+
+# ===============================
+# Flask Endpoints
+# ===============================
 @app.route("/webhook", methods=["POST"])
 def chatwoot_webhook():
     try:
         data = request.get_json()
-        event_type, tenant_id = validate_webhook_data(data)
+        event_type = data.get("event")
         
-        logger.info(f"🔔 WEBHOOK RECEIVED - Tenant: {tenant_id}, Event: {event_type}")
-
-        # VERIFICAR TENANT REGISTRADO
-        if not tenant_registry.is_tenant_registered(tenant_id):
-            logger.error(f"❌ Unregistered tenant webhook: {tenant_id}")
-            return jsonify({
-                "status": "error",
-                "message": "Tenant not registered"
-            }), 403
+        logger.info(f"🔔 WEBHOOK RECEIVED - Event: {event_type}")
 
         # Handle conversation updates
         if event_type == "conversation_updated":
-            success = handle_conversation_updated(data, tenant_id)
+            success = handle_conversation_updated(data)
             status_code = 200 if success else 400
             return jsonify({"status": "conversation_updated_processed", "success": success}), status_code
 
         # Handle only message_created events
         if event_type != "message_created":
-            logger.info(f"⏭️ Tenant {tenant_id} - Ignoring event type: {event_type}")
+            logger.info(f"⏭️ Ignoring event type: {event_type}")
             return jsonify({"status": "ignored_event_type", "event": event_type}), 200
 
         # Process incoming message
-        result = process_incoming_message(data, tenant_id)
+        result = process_incoming_message(data)
         
         if result.get("ignored"):
             return jsonify(result), 200
         
         return jsonify(result), 200
 
-    except WebhookError as e:
-        logger.error(f"Webhook error: {e.message} (Status: {e.status_code})")
-        return jsonify({"status": "error", "message": "Error interno del servidor"}), e.status_code
     except Exception as e:
         logger.exception("Error no manejado en webhook")
         return jsonify({"status": "error", "message": "Error interno del servidor"}), 500
-
+        
 # ===============================
 # DOCUMENT MANAGEMENT ENDPOINTS - CORREGIDOS
 # ===============================
@@ -2566,12 +2886,8 @@ def validate_document_data(data):
     return content, metadata
 
 @app.route("/documents", methods=["POST"])
-@tenant_required
 def add_document():
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        
         data = request.get_json()
         content, metadata = validate_document_data(data)
         
@@ -2579,33 +2895,31 @@ def add_document():
         doc_id = hashlib.md5(content.encode()).hexdigest()
         
         # Agregar doc_id a los metadatos
-        metadata["platforms"] = request.json.get("platforms", ["all"])
+        metadata['doc_id'] = doc_id
         
-        # CORRECCIÓN: Pasar tenant_id como primer parámetro
-        num_chunks = modern_rag_system.add_documents(tenant_id, [content], [metadata])
+        # Usar modern_rag_system
+        num_chunks = modern_rag_system.add_documents([content], [metadata])
         
-        # Crear clave del documento con namespace de tenant
-        doc_key = f"tenant_{tenant_id}:document:{doc_id}"
+        # Crear clave del documento
+        doc_key = f"document:{doc_id}"
         
         # Guardar en Redis
         doc_data = {
             'content': content,
             'metadata': json.dumps(metadata),
             'created_at': str(datetime.utcnow().isoformat()),
-            'chunk_count': str(num_chunks),
-            'tenant_id': tenant_id
+            'chunk_count': str(num_chunks)
         }
         
         redis_client.hset(doc_key, mapping=doc_data)
-        redis_client.expire(doc_key, 604800)  # 7 días TTL
+        ##redis_client.expire(doc_key, 604800)  # 7 días TTL
         
-        # Registrar cambio en documento
-        document_change_tracker.register_document_change(tenant_id, doc_id, 'added')
+        # NUEVO: Registrar cambio en documento
+        document_change_tracker.register_document_change(doc_id, 'added')
         
-        logger.info(f"✅ Tenant {tenant_id} - Document {doc_id} added with {num_chunks} chunks")
+        logger.info(f"✅ Document {doc_id} added with {num_chunks} chunks")
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "document_id": doc_id,
             "chunk_count": num_chunks,
             "message": f"Document added with {num_chunks} chunks"
@@ -2617,24 +2931,19 @@ def add_document():
         logger.exception("Error adding document")
         return create_error_response("Failed to add document", 500)
 
+################################################################################################
 @app.route("/documents", methods=["GET"])
-@tenant_required
 def list_documents():
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
         page = int(request.args.get('page', 1))
         page_size = min(int(request.args.get('page_size', 50)), 100)
         
-        # Obtener claves de documentos con namespace de tenant
-        doc_pattern = f"tenant_{tenant_id}:document:*"
+        # Obtener claves de documentos
+        doc_pattern = "document:*"
         doc_keys = redis_client.keys(doc_pattern)
         
-        # Obtener claves de vectores con namespace de tenant
-        vector_pattern = f"tenant_{tenant_id}:documents:*"
+        # Obtener claves de vectores
+        vector_pattern = "benova_documents:*"
         vector_keys = redis_client.keys(vector_pattern)
         
         # Organizar vectores por doc_id (solo usando metadata)
@@ -2656,7 +2965,7 @@ def list_documents():
                             "metadata": safe_metadata
                         })
             except Exception as e:
-                logger.warning(f"Tenant {tenant_id} - Error parsing vector {vector_key}: {e}")
+                logger.warning(f"Error parsing vector {vector_key}: {e}")
                 continue
         
         # Aplicar paginación a documentos
@@ -2670,7 +2979,7 @@ def list_documents():
             try:
                 doc_data = redis_client.hgetall(key)
                 if doc_data:
-                    doc_id = key.split(':')[2] if len(key.split(':')) > 2 else key
+                    doc_id = key.split(':')[1] if ':' in key else key
                     content = doc_data.get('content', '')
                     metadata = json.loads(doc_data.get('metadata', '{}'))
                     
@@ -2678,7 +2987,6 @@ def list_documents():
                     doc_vectors = vectors_by_doc.get(doc_id, [])
                     
                     documents.append({
-                        "tenant_id": tenant_id,
                         "id": doc_id,
                         "content": content[:200] + "..." if len(content) > 200 else content,
                         "metadata": metadata,
@@ -2690,11 +2998,10 @@ def list_documents():
                         }
                     })
             except Exception as e:
-                logger.warning(f"Tenant {tenant_id} - Error parsing document {key}: {e}")
+                logger.warning(f"Error parsing document {key}: {e}")
                 continue
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "total_documents": len(doc_keys),
             "total_vectors": len(vector_keys),
             "page": page,
@@ -2703,18 +3010,13 @@ def list_documents():
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error listing documents: {e}")
+        logger.error(f"Error listing documents: {e}")
         return create_error_response("Failed to list documents", 500)
+######################################################################################
 
 @app.route("/documents/search", methods=["POST"])
-@tenant_required
 def search_documents():
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
         data = request.get_json()
         if not data or 'query' not in data:
             return create_error_response("Query is required", 400)
@@ -2725,11 +3027,8 @@ def search_documents():
         
         k = min(data.get('k', MAX_RETRIEVED_DOCS), 20)  # Limit max results
         
-        # Obtener vectorstore específico del tenant
-        tenant_vectorstore = get_vectorstore(tenant_id)
-        
         # CORREGIDO: Usar modern_rag_system
-        docs = modern_rag_system.search_documents(tenant_id, query, k)
+        docs = modern_rag_system.search_documents(query, k)
         
         results = []
         for doc in docs:
@@ -2740,23 +3039,18 @@ def search_documents():
             })
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "query": query,
             "results_count": len(results),
             "results": results
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error searching documents: {e}")
+        logger.error(f"Error searching documents: {e}")
         return create_error_response("Failed to search documents", 500)
 
 @app.route("/documents/bulk", methods=["POST"])
-@tenant_required
 def bulk_add_documents():
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        
         data = request.get_json()
         if not data or 'documents' not in data:
             return create_error_response("Documents array is required", 400)
@@ -2768,7 +3062,7 @@ def bulk_add_documents():
         added_docs = 0
         total_chunks = 0
         errors = []
-        added_doc_ids = []  # Rastrear IDs agregados
+        added_doc_ids = []  # NUEVO: Rastrear IDs agregados
 
         for i, doc_data in enumerate(documents):
             try:
@@ -2778,36 +3072,34 @@ def bulk_add_documents():
                 doc_id = hashlib.md5(content.encode()).hexdigest()
                 metadata['doc_id'] = doc_id
 
-                # CORRECCIÓN: Pasar tenant_id como primer parámetro
-                num_chunks = modern_rag_system.add_documents(tenant_id, [content], [metadata])
+                # Usar modern_rag_system
+                num_chunks = modern_rag_system.add_documents([content], [metadata])
                 total_chunks += num_chunks
 
                 # Save to Redis
-                doc_key = f"tenant_{tenant_id}:document:{doc_id}"
+                doc_key = f"document:{doc_id}"
                 doc_redis_data = {
                     'content': content,
                     'metadata': json.dumps(metadata),
                     'created_at': str(datetime.utcnow().isoformat()),
-                    'chunk_count': str(num_chunks),
-                    'tenant_id': tenant_id
+                    'chunk_count': str(num_chunks)
                 }
 
                 redis_client.hset(doc_key, mapping=doc_redis_data)
-                redis_client.expire(doc_key, 604800)  # 7 days TTL
+                ####redis_client.expire(doc_key, 604800)  # 7 days TTL
 
                 added_docs += 1
-                added_doc_ids.append(doc_id)  # Guardar ID
+                added_doc_ids.append(doc_id)  # NUEVO: Guardar ID
 
             except Exception as e:
                 errors.append(f"Document {i}: {str(e)}")
                 continue
 
-        # Registrar cambios en batch
+        # NUEVO: Registrar cambios en batch
         for doc_id in added_doc_ids:
-            document_change_tracker.register_document_change(tenant_id, doc_id, 'added')
+            document_change_tracker.register_document_change(doc_id, 'added')
 
         response_data = {
-            "tenant_id": tenant_id,
             "documents_added": added_docs,
             "total_chunks": total_chunks,
             "message": f"Added {added_docs} documents with {total_chunks} chunks"
@@ -2817,74 +3109,355 @@ def bulk_add_documents():
             response_data["errors"] = errors
             response_data["message"] += f". {len(errors)} documents failed."
 
-        logger.info(f"✅ Tenant {tenant_id} - Bulk added {added_docs} documents with {total_chunks} chunks")
+        logger.info(f"✅ Bulk added {added_docs} documents with {total_chunks} chunks")
 
         return create_success_response(response_data, 201)
 
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error bulk adding documents: {e}")
+        logger.error(f"Error bulk adding documents: {e}")
         return create_error_response("Failed to bulk add documents", 500)
 
+
 @app.route("/documents/<doc_id>", methods=["DELETE"])
-@tenant_required
 def delete_document(doc_id):
+    """
+    Endpoint mejorado para eliminar documentos garantizando eliminación completa de vectores
+    Mantiene compatibilidad con el código existente
+    """
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
-        doc_key = f"tenant_{tenant_id}:document:{doc_id}"
+        doc_key = f"document:{doc_id}"
         if not redis_client.exists(doc_key):
             return create_error_response("Document not found", 404)
         
-        index_name = f"tenant_{tenant_id}:documents"
+        index_name = "benova_documents"
         pattern = f"{index_name}:*"
         keys = redis_client.keys(pattern)
         
         vectors_to_delete = []
+        vectors_found_direct = 0
+        vectors_found_metadata = 0
+        
         for key in keys:
-            # Verificar el campo 'doc_id' directamente en el hash
-            doc_id_in_hash = redis_client.hget(key, 'doc_id')
-            if doc_id_in_hash == doc_id:
-                vectors_to_delete.append(key)
+            try:
+                vector_found = False
+                
+                # MÉTODO 1: Verificar el campo 'doc_id' directamente en el hash (lógica original)
+                doc_id_in_hash = redis_client.hget(key, 'doc_id')
+                if doc_id_in_hash == doc_id:
+                    vectors_to_delete.append(key)
+                    vectors_found_direct += 1
+                    vector_found = True
+                    logger.debug(f"Found vector {key} via direct doc_id field")
+                
+                # MÉTODO 2: Si no se encontró, buscar en metadata JSON (mejora)
+                if not vector_found:
+                    metadata_str = redis_client.hget(key, 'metadata')
+                    if metadata_str:
+                        try:
+                            metadata = json.loads(metadata_str)
+                            if metadata.get('doc_id') == doc_id:
+                                vectors_to_delete.append(key)
+                                vectors_found_metadata += 1
+                                vector_found = True
+                                logger.debug(f"Found vector {key} via metadata doc_id")
+                        except json.JSONDecodeError:
+                            logger.warning(f"Invalid JSON metadata in vector {key}")
+                            continue
+                
+            except Exception as e:
+                logger.warning(f"Error checking vector {key}: {e}")
+                continue
         
         # Eliminar vectores si se encontraron
+        total_vectors_deleted = 0
         if vectors_to_delete:
-            redis_client.delete(*vectors_to_delete)
-            logger.info(f"Tenant {tenant_id} - Removed {len(vectors_to_delete)} vectors for doc {doc_id}")
+            # Eliminar duplicados (por si acaso)
+            unique_vectors = list(set(vectors_to_delete))
+            redis_client.delete(*unique_vectors)
+            total_vectors_deleted = len(unique_vectors)
+            
+            logger.info(f"✅ Removed {total_vectors_deleted} vectors for doc {doc_id}")
+            logger.info(f"   - Found via direct field: {vectors_found_direct}")
+            logger.info(f"   - Found via metadata: {vectors_found_metadata}")
+        else:
+            logger.warning(f"⚠️ No vectors found for doc {doc_id} - this might indicate an issue")
         
-        # Eliminar documento y registrar cambio
+        # Eliminar documento y registrar cambio (lógica original intacta)
         redis_client.delete(doc_key)
-        document_change_tracker.register_document_change(tenant_id, doc_id, 'deleted')
+        document_change_tracker.register_document_change(doc_id, 'deleted')
+        
+        # MEJORA: Verificación post-eliminación opcional
+        verification_enabled = True  # Puedes hacer esto configurable
+        cleanup_verification = None
+        
+        if verification_enabled:
+            # Verificar que no quedaron vectores huérfanos
+            remaining_vectors = []
+            for key in redis_client.keys(pattern):
+                try:
+                    # Verificar método 1
+                    doc_id_direct = redis_client.hget(key, 'doc_id')
+                    if doc_id_direct == doc_id:
+                        remaining_vectors.append(key)
+                        continue
+                    
+                    # Verificar método 2
+                    metadata_str = redis_client.hget(key, 'metadata')
+                    if metadata_str:
+                        try:
+                            metadata = json.loads(metadata_str)
+                            if metadata.get('doc_id') == doc_id:
+                                remaining_vectors.append(key)
+                        except json.JSONDecodeError:
+                            pass
+                except Exception:
+                    pass
+            
+            cleanup_verification = {
+                "cleanup_complete": len(remaining_vectors) == 0,
+                "remaining_vectors": len(remaining_vectors),
+                "remaining_vector_keys": remaining_vectors[:3] if remaining_vectors else []
+            }
+            
+            if remaining_vectors:
+                logger.error(f"❌ CLEANUP INCOMPLETE: {len(remaining_vectors)} vectors still exist for deleted doc {doc_id}")
+                # Intentar eliminar los vectores restantes
+                try:
+                    redis_client.delete(*remaining_vectors)
+                    logger.info(f"🔧 Force-deleted {len(remaining_vectors)} remaining vectors")
+                    cleanup_verification["force_cleanup_applied"] = True
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to force-delete remaining vectors: {cleanup_error}")
+                    cleanup_verification["force_cleanup_failed"] = True
+        
+        # Construir respuesta manteniendo compatibilidad
+        response_data = {
+            "message": "Document deleted successfully",
+            "vectors_deleted": total_vectors_deleted,
+            "vectors_breakdown": {
+                "found_via_direct_field": vectors_found_direct,
+                "found_via_metadata": vectors_found_metadata,
+                "total": total_vectors_deleted
+            }
+        }
+        
+        # Agregar verificación solo si está habilitada y hay información relevante
+        if cleanup_verification and (not cleanup_verification["cleanup_complete"] or total_vectors_deleted == 0):
+            response_data["cleanup_verification"] = cleanup_verification
+        
+        logger.info(f"✅ Document {doc_id} deleted successfully with {total_vectors_deleted} vectors removed")
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"❌ Error deleting document {doc_id}: {e}")
+        return create_error_response("Failed to delete document", 500)
+
+
+@app.route("/documents/cleanup", methods=["POST"])
+def cleanup_orphaned_vectors():
+    """
+    Nuevo endpoint para limpiar vectores huérfanos
+    """
+    try:
+        data = request.get_json()
+        dry_run = data.get('dry_run', True) if data else True
+        
+        # Obtener todos los documentos existentes
+        doc_pattern = "document:*"
+        doc_keys = redis_client.keys(doc_pattern)
+        existing_doc_ids = set()
+        
+        for key in doc_keys:
+            doc_id = key.split(':', 1)[1] if ':' in key else key
+            existing_doc_ids.add(doc_id)
+        
+        # Obtener todos los vectores
+        vector_pattern = f"{vector_manager.index_name}:*"
+        vector_keys = redis_client.keys(vector_pattern)
+        
+        orphaned_vectors = []
+        total_vectors = len(vector_keys)
+        
+        for vector_key in vector_keys:
+            try:
+                # Buscar doc_id en el vector
+                doc_id = None
+                
+                # Método 1: Campo directo
+                doc_id_direct = redis_client.hget(vector_key, 'doc_id')
+                if doc_id_direct:
+                    doc_id = doc_id_direct
+                else:
+                    # Método 2: Metadata JSON
+                    metadata_str = redis_client.hget(vector_key, 'metadata')
+                    if metadata_str:
+                        try:
+                            metadata = json.loads(metadata_str)
+                            doc_id = metadata.get('doc_id')
+                        except json.JSONDecodeError:
+                            pass
+                
+                # Si el vector tiene doc_id pero el documento no existe
+                if doc_id and doc_id not in existing_doc_ids:
+                    orphaned_vectors.append({
+                        "vector_key": vector_key,
+                        "doc_id": doc_id
+                    })
+                    
+            except Exception as e:
+                logger.warning(f"Error checking vector {vector_key}: {e}")
+                continue
+        
+        # Eliminar vectores huérfanos si no es dry_run
+        deleted_count = 0
+        if not dry_run and orphaned_vectors:
+            keys_to_delete = [v["vector_key"] for v in orphaned_vectors]
+            redis_client.delete(*keys_to_delete)
+            deleted_count = len(keys_to_delete)
+            logger.info(f"✅ Deleted {deleted_count} orphaned vectors")
         
         return create_success_response({
-            "tenant_id": tenant_id,
-            "message": "Document deleted successfully"
+            "total_vectors": total_vectors,
+            "total_documents": len(existing_doc_ids),
+            "orphaned_vectors_found": len(orphaned_vectors),
+            "orphaned_vectors_deleted": deleted_count,
+            "dry_run": dry_run,
+            "orphaned_samples": orphaned_vectors[:10]  # Muestra solo 10 ejemplos
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error deleting document: {e}")
-        return create_error_response("Failed to delete document", 500)
+        logger.error(f"Error in cleanup: {e}")
+        return create_error_response("Failed to cleanup orphaned vectors", 500)
+
+@app.route("/documents/<doc_id>/vectors", methods=["GET"])
+def get_document_vectors(doc_id):
+    """
+    Nuevo endpoint para inspeccionar vectores de un documento específico
+    """
+    try:
+        vectors = vector_manager.find_vectors_by_doc_id(doc_id)
+        
+        vector_details = []
+        for vector_key in vectors:
+            try:
+                # Obtener metadata sin el embedding (para evitar datos binarios)
+                metadata_str = redis_client.hget(vector_key, 'metadata')
+                doc_id_direct = redis_client.hget(vector_key, 'doc_id')
+                
+                vector_info = {
+                    "vector_key": vector_key,
+                    "doc_id_direct": doc_id_direct,
+                    "has_metadata": bool(metadata_str)
+                }
+                
+                if metadata_str:
+                    try:
+                        metadata = json.loads(metadata_str)
+                        # Filtrar campos problemáticos
+                        safe_metadata = {k: v for k, v in metadata.items() 
+                                       if k not in ['embedding', 'vector']}
+                        vector_info["metadata"] = safe_metadata
+                    except json.JSONDecodeError:
+                        vector_info["metadata_error"] = "Invalid JSON"
+                
+                vector_details.append(vector_info)
+                
+            except Exception as e:
+                logger.warning(f"Error getting details for vector {vector_key}: {e}")
+                continue
+        
+        return create_success_response({
+            "doc_id": doc_id,
+            "vectors_found": len(vectors),
+            "vectors": vector_details
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting vectors for doc {doc_id}: {e}")
+        return create_error_response("Failed to get document vectors", 500)
+
+@app.route("/documents/diagnostics", methods=["GET"])
+def document_diagnostics():
+    """
+    Endpoint para diagnosticar el estado del vectorstore
+    """
+    try:
+        # Contar documentos
+        doc_pattern = "document:*"
+        doc_keys = redis_client.keys(doc_pattern)
+        total_docs = len(doc_keys)
+        
+        # Contar vectores
+        vector_pattern = f"benova_documents:*"
+        vector_keys = redis_client.keys(vector_pattern)
+        total_vectors = len(vector_keys)
+        
+        # Analizar vectores por doc_id
+        doc_id_counts = {}
+        vectors_without_doc_id = 0
+        
+        for vector_key in vector_keys:
+            try:
+                doc_id = None
+                
+                # Buscar doc_id
+                doc_id_direct = redis_client.hget(vector_key, 'doc_id')
+                if doc_id_direct:
+                    doc_id = doc_id_direct
+                else:
+                    metadata_str = redis_client.hget(vector_key, 'metadata')
+                    if metadata_str:
+                        try:
+                            metadata = json.loads(metadata_str)
+                            doc_id = metadata.get('doc_id')
+                        except json.JSONDecodeError:
+                            pass
+                
+                if doc_id:
+                    doc_id_counts[doc_id] = doc_id_counts.get(doc_id, 0) + 1
+                else:
+                    vectors_without_doc_id += 1
+                    
+            except Exception as e:
+                logger.warning(f"Error analyzing vector {vector_key}: {e}")
+                continue
+        
+        # Identificar inconsistencias
+        orphaned_docs = []
+        for doc_key in doc_keys:
+            doc_id = doc_key.split(':', 1)[1] if ':' in doc_key else doc_key
+            if doc_id not in doc_id_counts:
+                orphaned_docs.append(doc_id)
+        
+        return create_success_response({
+            "total_documents": total_docs,
+            "total_vectors": total_vectors,
+            "vectors_without_doc_id": vectors_without_doc_id,
+            "documents_with_vectors": len(doc_id_counts),
+            "orphaned_documents": len(orphaned_docs),
+            "avg_vectors_per_doc": round(sum(doc_id_counts.values()) / len(doc_id_counts), 2) if doc_id_counts else 0,
+            "sample_doc_vector_counts": dict(list(doc_id_counts.items())[:10]),
+            "orphaned_doc_samples": orphaned_docs[:5]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in diagnostics: {e}")
+        return create_error_response("Failed to run diagnostics", 500)
 
 # ===============================
 # CONVERSATION MANAGEMENT ENDPOINTS - CORREGIDOS
 # ===============================
 
 @app.route("/conversations", methods=["GET"])
-@tenant_required
 def list_conversations():
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
+        # CORREGIDO: Usar modern_conversation_manager
         page = int(request.args.get('page', 1))
         page_size = min(int(request.args.get('page_size', 50)), 100)
         
         # Get conversation keys from Redis using modern pattern
-        pattern = f"tenant_{tenant_id}:conversation:*"
+        pattern = f"{modern_conversation_manager.redis_prefix}*"
         keys = redis_client.keys(pattern)
         
         # Apply pagination
@@ -2895,26 +3468,19 @@ def list_conversations():
         conversations = []
         for key in paginated_keys:
             try:
-                # Extract user_id from key
-                parts = key.split(':')
-                if len(parts) < 3:
-                    continue
-                user_id = parts[2]
-                
-                messages = modern_conversation_manager.get_chat_history(tenant_id, user_id)
+                user_id = key.replace(modern_conversation_manager.redis_prefix, '')
+                messages = modern_conversation_manager.get_chat_history(user_id)
                 
                 conversations.append({
-                    "tenant_id": tenant_id,
                     "user_id": user_id,
                     "message_count": len(messages),
-                    "last_updated": redis_client.hget(key, 'last_updated')
+                    "last_updated": modern_conversation_manager.get_last_updated(user_id)
                 })
             except Exception as e:
-                logger.warning(f"Tenant {tenant_id} - Error parsing conversation {key}: {e}")
+                logger.warning(f"Error parsing conversation {key}: {e}")
                 continue
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "total_conversations": len(keys),
             "page": page,
             "page_size": page_size,
@@ -2922,67 +3488,45 @@ def list_conversations():
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error listing conversations: {e}")
+        logger.error(f"Error listing conversations: {e}")
         return create_error_response("Failed to list conversations", 500)
 
 @app.route("/conversations/<user_id>", methods=["GET"])
-@tenant_required
 def get_conversation(user_id):
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
-        messages = modern_conversation_manager.get_chat_history(tenant_id, user_id)
-        
-        # Get last updated timestamp
-        conversation_key = modern_conversation_manager._get_conversation_key(tenant_id, user_id)
-        last_updated = redis_client.hget(conversation_key, 'last_updated') if conversation_key else None
+        # CORREGIDO: Usar modern_conversation_manager
+        messages = modern_conversation_manager.get_chat_history(user_id)
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "user_id": user_id,
             "message_count": len(messages),
             "messages": messages,
-            "last_updated": last_updated
+            "last_updated": modern_conversation_manager.get_last_updated(user_id)
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error getting conversation: {e}")
+        logger.error(f"Error getting conversation: {e}")
         return create_error_response("Failed to get conversation", 500)
 
 @app.route("/conversations/<user_id>", methods=["DELETE"])
-@tenant_required
 def delete_conversation(user_id):
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
-        modern_conversation_manager.clear_conversation(tenant_id, user_id)
+        # CORREGIDO: Usar modern_conversation_manager
+        modern_conversation_manager.clear_conversation(user_id)
         
-        logger.info(f"✅ Tenant {tenant_id} - Conversation {user_id} deleted")
+        logger.info(f"✅ Conversation {user_id} deleted")
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "message": f"Conversation {user_id} deleted"
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error deleting conversation: {e}")
+        logger.error(f"Error deleting conversation: {e}")
         return create_error_response("Failed to delete conversation", 500)
 
 @app.route("/conversations/<user_id>/test", methods=["POST"])
-@tenant_required
 def test_conversation(user_id):
     try:
-        # Get tenant_id from headers
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            return create_error_response("Missing X-Tenant-ID header", 400)
-            
         data = request.get_json()
         if not data or 'message' not in data:
             return create_error_response("Message is required", 400)
@@ -2992,10 +3536,9 @@ def test_conversation(user_id):
             return create_error_response("Message cannot be empty", 400)
         
         # Get bot response
-        response = get_modern_chat_response_multiagent(tenant_id, user_id, message)
+        response = get_modern_chat_response_multiagent(user_id, message)
         
         return create_success_response({
-            "tenant_id": tenant_id,
             "user_id": user_id,
             "user_message": message,
             "bot_response": response,
@@ -3003,8 +3546,80 @@ def test_conversation(user_id):
         })
         
     except Exception as e:
-        logger.error(f"Tenant {tenant_id} - Error testing conversation: {e}")
+        logger.error(f"Error testing conversation: {e}")
         return create_error_response("Failed to test conversation", 500)
+
+#######1############
+@app.route("/process-voice", methods=["POST"])
+def process_voice_message():
+    try:
+        if 'audio' not in request.files:
+            return create_error_response("No audio file provided", 400)
+        
+        audio_file = request.files['audio']
+        user_id = request.form.get('user_id')
+        conversation_id = request.form.get('conversation_id')
+        
+        # Guardar archivo temporalmente
+        temp_path = f"/tmp/{audio_file.filename}"
+        audio_file.save(temp_path)
+        
+        # Transcribir audio a texto usando Whisper
+        transcript = transcribe_audio(temp_path)
+        
+        # Procesar con sistema multi-agente usando parámetros multimedia
+        response = get_modern_chat_response_multiagent(
+            user_id=user_id,
+            user_message="",  # Mensaje textual vacío ya que todo viene del audio
+            media_type="voice",
+            media_context=transcript
+        )
+        
+        # Convertir respuesta a audio si es necesario
+        if request.form.get('return_audio', False):
+            audio_response = text_to_speech(response)
+            return send_file(audio_response, mimetype="audio/mpeg")
+        
+        return create_success_response({
+            "transcript": transcript,
+            "response": response
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing voice message: {e}")
+        return create_error_response("Failed to process voice message", 500)
+
+@app.route("/process-image", methods=["POST"])
+def process_image_message():
+    try:
+        if 'image' not in request.files:
+            return create_error_response("No image file provided", 400)
+        
+        image_file = request.files['image']
+        user_id = request.form.get('user_id')
+        question = request.form.get('question', "").strip()
+        
+        # Analizar imagen con GPT-4V
+        image_description = analyze_image(image_file)
+        
+        # Procesar con sistema multi-agente usando parámetros multimedia
+        response = get_modern_chat_response_multiagent(
+            user_id=user_id,
+            user_message=question,  # Pregunta textual (puede estar vacía)
+            media_type="image",
+            media_context=image_description
+        )
+        
+        return create_success_response({
+            "image_description": image_description,
+            "response": response
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing image message: {e}")
+        return create_error_response("Failed to process image message", 500)
+
+###########1###############################################
 
 # ===============================
 # SYSTEM STATUS ENDPOINTS - CORREGIDOS
@@ -3023,58 +3638,49 @@ def check_component_health():
     
     # Check OpenAI
     try:
-        embeddings.embed_query("test")
+        # CORREGIDO: Usar modern_rag_system
+        modern_rag_system.embeddings.embed_query("test")
         components["openai"] = "connected"
     except Exception as e:
         components["openai"] = f"error: {str(e)}"
     
     # Check vectorstore
     try:
-        # We can't check all tenants, so check a sample tenant
-        sample_vectorstore = get_vectorstore("sample")
-        sample_vectorstore.similarity_search("test", k=1)
+        # CORREGIDO: Usar modern_rag_system
+        modern_rag_system.vectorstore.similarity_search("test", k=1)
         components["vectorstore"] = "connected"
     except Exception as e:
         components["vectorstore"] = f"error: {str(e)}"
     
     return components
 
+# ===============================
+# Health Check Endpoint
+# ===============================
 @app.route("/health", methods=["GET"])
 def health_check():
     try:
-        components = check_component_health()
+        # Check Redis
+        redis_client.ping()
         
-        # Get global stats
-        conversation_keys = redis_client.keys("tenant_*:conversation:*")
-        document_keys = redis_client.keys("tenant_*:document:*")
-        bot_status_keys = redis_client.keys("tenant_*:bot_status:*")
+        # Check OpenAI
+        embeddings.embed_query("test")
         
-        # Determine overall health
-        healthy = all("error" not in str(status) for status in components.values())
-        
-        response_data = {
-            "timestamp": time.time(),
-            "components": {
-                **components,
-                "conversations": len(conversation_keys),
-                "documents": len(document_keys),
-                "bot_statuses": len(bot_status_keys)
-            },
-            "configuration": {
-                "model": MODEL_NAME,
-                "embedding_model": EMBEDDING_MODEL,
-                "max_tokens": MAX_TOKENS,
-                "temperature": TEMPERATURE,
-                "max_context_messages": MAX_CONTEXT_MESSAGES,
-                "similarity_threshold": SIMILARITY_THRESHOLD,
-                "max_retrieved_docs": MAX_RETRIEVED_DOCS
+        # Información de empresas configuradas
+        companies_info = {}
+        for company_id, config in COMPANIES_CONFIG.items():
+            companies_info[company_id] = {
+                "vectorstore_index": config["vectorstore_index"],
+                "redis_prefix": config["redis_prefix"],
+                "configured": True
             }
-        }
         
-        if healthy:
-            return jsonify({"status": "healthy", **response_data}), 200
-        else:
-            return jsonify({"status": "unhealthy", **response_data}), 503
+        return jsonify({
+            "status": "healthy",
+            "timestamp": time.time(),
+            "companies": companies_info,
+            "environment": os.getenv('ENVIRONMENT', 'production')
+        }), 200
         
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -3087,13 +3693,10 @@ def health_check():
 @app.route("/status", methods=["GET"])
 def get_status():
     try:
-        # Get tenant_id from headers (optional)
-        tenant_id = request.headers.get("X-Tenant-ID")
-        
-        # Get global stats
-        conversation_keys = redis_client.keys("tenant_*:conversation:*")
-        document_keys = redis_client.keys("tenant_*:document:*")
-        bot_status_keys = redis_client.keys("tenant_*:bot_status:*")
+        # CORREGIDO: Usar modern patterns
+        conversation_count = len(redis_client.keys(f"{modern_conversation_manager.redis_prefix}*"))
+        document_count = len(redis_client.keys("document:*"))
+        bot_status_keys = redis_client.keys("bot_status:*")
         
         # Count active bots
         active_bots = 0
@@ -3106,54 +3709,25 @@ def get_status():
                 continue
         
         # Get processed message count
-        processed_message_count = len(redis_client.keys("tenant_*:processed_message:*"))
+        processed_message_count = len(redis_client.keys("processed_message:*"))
         
-        # Build response
-        response_data = {
+        return create_success_response({
             "timestamp": time.time(),
             "statistics": {
-                "total_conversations": len(conversation_keys),
+                "total_conversations": conversation_count,
                 "active_bots": active_bots,
                 "total_bot_statuses": len(bot_status_keys),
                 "processed_messages": processed_message_count,
-                "total_documents": len(document_keys)
+                "total_documents": document_count
             },
             "environment": {
                 "chatwoot_url": CHATWOOT_BASE_URL,
+                "account_id": ACCOUNT_ID,
                 "model": MODEL_NAME,
                 "embedding_model": EMBEDDING_MODEL,
                 "redis_url": REDIS_URL
             }
-        }
-        
-        # Add tenant-specific stats if tenant_id provided
-        if tenant_id:
-            # Count tenant-specific resources
-            tenant_conversation_keys = redis_client.keys(f"tenant_{tenant_id}:conversation:*")
-            tenant_document_keys = redis_client.keys(f"tenant_{tenant_id}:document:*")
-            tenant_bot_status_keys = redis_client.keys(f"tenant_{tenant_id}:bot_status:*")
-            
-            tenant_active_bots = 0
-            for key in tenant_bot_status_keys:
-                try:
-                    status_data = redis_client.hgetall(key)
-                    if status_data.get('active') == 'True':
-                        tenant_active_bots += 1
-                except Exception:
-                    continue
-            
-            tenant_processed_messages = len(redis_client.keys(f"tenant_{tenant_id}:processed_message:*"))
-            
-            response_data["tenant_statistics"] = {
-                "tenant_id": tenant_id,
-                "conversations": len(tenant_conversation_keys),
-                "active_bots": tenant_active_bots,
-                "bot_statuses": len(tenant_bot_status_keys),
-                "processed_messages": tenant_processed_messages,
-                "documents": len(tenant_document_keys)
-            }
-        
-        return create_success_response(response_data)
+        })
         
     except Exception as e:
         logger.error(f"Status check failed: {e}")
@@ -3162,117 +3736,30 @@ def get_status():
 @app.route("/reset", methods=["POST"])
 def reset_system():
     try:
-        # Get tenant_id from headers (optional)
-        tenant_id = request.headers.get("X-Tenant-ID")
+        # CORREGIDO: Usar modern_conversation_manager
+        # Clear Redis caches
+        patterns = ["processed_message:*", "bot_status:*"]
+        for pattern in patterns:
+            keys = redis_client.keys(pattern)
+            if keys:
+                redis_client.delete(*keys)
         
-        if tenant_id:
-            # Reset only for specific tenant
-            patterns = [
-                f"tenant_{tenant_id}:processed_message:*",
-                f"tenant_{tenant_id}:bot_status:*",
-                f"tenant_{tenant_id}:conversation:*",
-                f"tenant_{tenant_id}:document:*",
-                f"tenant_{tenant_id}:chat_history:*"
-            ]
-            
-            for pattern in patterns:
-                keys = redis_client.keys(pattern)
-                if keys:
-                    redis_client.delete(*keys)
-            
-            logger.info(f"✅ Tenant {tenant_id} - System reset completed")
-            return create_success_response({
-                "tenant_id": tenant_id,
-                "message": "System reset completed for tenant",
-                "timestamp": time.time()
-            })
-        else:
-            # Reset entire system (all tenants)
-            patterns = [
-                "tenant_*:processed_message:*",
-                "tenant_*:bot_status:*",
-                "tenant_*:conversation:*",
-                "tenant_*:document:*",
-                "tenant_*:chat_history:*"
-            ]
-            
-            for pattern in patterns:
-                keys = redis_client.keys(pattern)
-                if keys:
-                    redis_client.delete(*keys)
-            
-            logger.info("✅ Full system reset completed")
-            return create_success_response({
-                "message": "Full system reset completed",
-                "timestamp": time.time()
-            })
+        # Clear all conversations using modern manager
+        conversation_keys = redis_client.keys(f"{modern_conversation_manager.redis_prefix}*")
+        for key in conversation_keys:
+            user_id = key.replace(modern_conversation_manager.redis_prefix, '')
+            modern_conversation_manager.clear_conversation(user_id)
+        
+        logger.info("✅ System reset completed")
+        
+        return create_success_response({
+            "message": "System reset completed",
+            "timestamp": time.time()
+        })
         
     except Exception as e:
-        tenant_msg = f" for tenant {tenant_id}" if tenant_id else ""
-        logger.error(f"System reset failed{tenant_msg}: {e}")
+        logger.error(f"System reset failed: {e}")
         return create_error_response("Failed to reset system", 500)
-
-
-# ===============================
-# ENDPOINTS DE ADMINISTRACIÓN DE TENANTS
-# ===============================
-
-@app.route("/tenants", methods=["POST"])
-def register_tenant():
-    try:
-        data = request.get_json()
-        if not data or 'tenant_id' not in data:
-            return create_error_response("Tenant ID is required", 400)
-        
-        tenant_id = data['tenant_id']
-        metadata = data.get('metadata', {})
-        
-        if tenant_registry.register_tenant(tenant_id, metadata):
-            return create_success_response({
-                "tenant_id": tenant_id,
-                "message": "Tenant registered successfully"
-            }, 201)
-        
-        return create_error_response("Failed to register tenant", 500)
-    
-    except Exception as e:
-        logger.error(f"Tenant registration error: {e}")
-        return create_error_response("Internal server error", 500)
-
-@app.route("/tenants/<tenant_id>", methods=["DELETE"])
-def unregister_tenant(tenant_id):
-    if tenant_registry.unregister_tenant(tenant_id):
-        return create_success_response({
-            "tenant_id": tenant_id,
-            "message": "Tenant unregistered"
-        })
-    
-    return create_error_response("Tenant not found or already unregistered", 404)
-
-@app.route("/tenants", methods=["GET"])
-def list_tenants():
-    try:
-        tenants = tenant_registry.list_registered_tenants()
-        return create_success_response({
-            "count": len(tenants),
-            "tenants": tenants
-        })
-    except Exception as e:
-        logger.error(f"Tenant listing error: {e}")
-        return create_error_response("Failed to list tenants", 500)
-
-
-@app.route("/tenants/check", methods=["GET"])
-def check_tenants():
-    try:
-        tenants = tenant_registry.list_registered_tenants()
-        return create_success_response({
-            "count": len(tenants),
-            "tenants": tenants
-        })
-    except Exception as e:
-        logger.error(f"Tenant check error: {e}")
-        return create_error_response("Failed to check tenants", 500)
 
 # ===============================
 # STATIC FILE SERVING
@@ -3315,19 +3802,18 @@ def handle_exception(e):
 def startup_checks():
     """Startup verification checks"""
     try:
-        logger.info("🚀 Starting Multi-Tenant ChatBot with Modern Architecture...")
+        logger.info("🚀 Starting Benova Bot with Modern Architecture...")
         
         # Check Redis connection
         redis_client.ping()
         logger.info("✅ Redis connection verified")
         
         # Check OpenAI connection
-        embeddings.embed_query("test startup")
+        modern_rag_system.embeddings.embed_query("test startup")
         logger.info("✅ OpenAI connection verified")
         
-        # Check vectorstore for a sample tenant
-        sample_vectorstore = get_vectorstore("sample")
-        sample_vectorstore.similarity_search("test", k=1)
+        # Check vectorstore
+        modern_rag_system.vectorstore.similarity_search("test", k=1)
         logger.info("✅ Vectorstore connection verified")
         
         # Initialize conversation manager
@@ -3344,46 +3830,54 @@ def startup_checks():
         logger.info(f"   Max Retrieved Docs: {MAX_RETRIEVED_DOCS}")
         logger.info(f"   Redis URL: {REDIS_URL}")
         
-        # Registrar tenant admin si no existe
-        ADMIN_TENANT_ID = "admin"
-        if not tenant_registry.is_tenant_registered(ADMIN_TENANT_ID):
-            logger.info("⚠️ Admin tenant not found - creating...")
-            tenant_registry.register_tenant(
-                ADMIN_TENANT_ID,
-                {
-                    "name": "Administrador Principal",
-                    "role": "admin",
-                    "created_at": datetime.utcnow().isoformat(),
-                    "is_default": True
-                }
-            )
-            logger.info(f"✅ Admin tenant '{ADMIN_TENANT_ID}' created successfully")
-        
-        logger.info("🎉 Multi-Tenant ChatBot startup completed successfully!")
+        logger.info("🎉 Benova Bot startup completed successfully!")
         
     except Exception as e:
         logger.error(f"❌ Startup check failed: {e}")
         raise
 
+def cleanup():
+    """Clean up resources on shutdown"""
+    try:
+        logger.info("🧹 Cleaning up resources...")
+        
+        # Clear in-memory data using modern manager
+        # modern_conversation_manager handles its own cleanup
+        
+        logger.info("💾 All resources cleaned up")
+        logger.info("👋 Benova Bot shutdown completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Cleanup failed: {e}")
+
 # ===============================
 # MAIN EXECUTION
 # ===============================
 
+# ===============================
+# Main Execution
+# ===============================
 if __name__ == "__main__":
     try:
         # Run startup checks
-        startup_checks()
+        logger.info("🚀 Starting Multi-Company Bot Server...")
         
-        # Setup cleanup handler
-        import atexit
-        atexit.register(cleanup)
+        # Check Redis connection
+        redis_client.ping()
+        logger.info("✅ Redis connection verified")
+        
+        # Check OpenAI connection
+        embeddings.embed_query("test startup")
+        logger.info("✅ OpenAI connection verified")
+        
+        # Display configuration
+        logger.info("📋 Configuration:")
+        logger.info(f"   Model: {MODEL_NAME}")
+        logger.info(f"   Embedding Model: {EMBEDDING_MODEL}")
+        logger.info(f"   Companies: {list(COMPANIES_CONFIG.keys())}")
         
         # Start server
         logger.info(f"🌐 Starting server on port {PORT}")
-        logger.info(f"📡 Webhook endpoint: http://localhost:{PORT}/webhook")
-        logger.info(f"🔍 Health check: http://localhost:{PORT}/health")
-        logger.info(f"📊 Status: http://localhost:{PORT}/status")
-        
         app.run(
             host="0.0.0.0",
             port=PORT,
@@ -3393,8 +3887,6 @@ if __name__ == "__main__":
         
     except KeyboardInterrupt:
         logger.info("🛑 Received shutdown signal")
-        cleanup()
     except Exception as e:
         logger.error(f"❌ Failed to start server: {e}")
-        cleanup()
         sys.exit(1)
