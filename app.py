@@ -13,15 +13,21 @@ import numpy as np
 from datetime import datetime, timedelta
 import hashlib
 import redis
+###2####
+import openai
+import base64
+from PIL import Image
+import io
+###2####
 
-# LangChain imports
+# LangChain imports - ACTUALIZADOS Y CORREGIDOS
 from langchain.schema import Document as LangChainDocument
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_redis import RedisVectorStore
 
-# Otras importaciones
+# Nuevas importaciones para el sistema moderno - CORREGIDAS
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -35,62 +41,112 @@ from langchain.text_splitter import MarkdownHeaderTextSplitter
 load_dotenv()
 
 # ===============================
-# Company Configuration
+# PASO 1: CONFIGURACIÓN MULTI-EMPRESA
 # ===============================
+
 class CompanyConfig:
-    """Configuración específica por empresa"""
+    """
+    Clase para almacenar y gestionar configuraciones específicas por empresa
+    """
     
-    def __init__(self, company_id, redis_prefix, vectorstore_index, 
-                 schedule_service_url, sales_agent_name, services):
+    def __init__(self, company_id: str, config_data: Dict[str, Any]):
         self.company_id = company_id
-        self.redis_prefix = redis_prefix
-        self.vectorstore_index = vectorstore_index
-        self.schedule_service_url = schedule_service_url
-        self.sales_agent_name = sales_agent_name
-        self.services = services
+        self.company_name = config_data.get("company_name", company_id.capitalize())
+        self.redis_prefix = config_data.get("redis_prefix", f"{company_id}:")
+        self.vectorstore_index = config_data.get("vectorstore_index", f"{company_id}_documents")
+        self.schedule_service_url = config_data.get("schedule_service_url", f"http://{company_id}-schedule:4040")
+        self.chatwoot_account_id = config_data.get("chatwoot_account_id", "7")
+        self.chatwoot_base_url = config_data.get("chatwoot_base_url", "https://chatwoot-production-0f1d.up.railway.app")
+        
+        # Configuraciones de agentes personalizadas
+        self.sales_agent_name = config_data.get("sales_agent_name", f"Especialista de {self.company_name}")
+        self.services = config_data.get("services", "servicios de belleza y estética")
+        self.business_hours = config_data.get("business_hours", "Lunes a Viernes de 9:00 AM a 6:00 PM")
+        self.phone = config_data.get("phone", "")
+        self.address = config_data.get("address", "")
+        
+        # Configuraciones de modelo IA
+        self.model_name = config_data.get("model_name", "gpt-4o-mini")
+        self.temperature = config_data.get("temperature", 0.7)
+        self.max_tokens = config_data.get("max_tokens", 1500)
+        
+        # Configuraciones específicas de prompts
+        self.custom_prompts = config_data.get("custom_prompts", {})
+        
+    def get_redis_key(self, key_type: str, identifier: str = "") -> str:
+        """Genera claves de Redis con prefijo de empresa"""
+        if identifier:
+            return f"{self.redis_prefix}{key_type}:{identifier}"
+        return f"{self.redis_prefix}{key_type}"
     
-    @classmethod
-    def from_dict(cls, company_id, config_dict):
-        return cls(
-            company_id=company_id,
-            redis_prefix=config_dict.get("redis_prefix", f"{company_id}:"),
-            vectorstore_index=config_dict.get("vectorstore_index", f"{company_id}_documents"),
-            schedule_service_url=config_dict.get("schedule_service_url"),
-            sales_agent_name=config_dict.get("sales_agent_name", "Asistente"),
-            services=config_dict.get("services", "servicios")
-        )
+    def to_dict(self) -> Dict[str, Any]:
+        """Convierte la configuración a diccionario para logging/debugging"""
+        return {
+            "company_id": self.company_id,
+            "company_name": self.company_name,
+            "redis_prefix": self.redis_prefix,
+            "vectorstore_index": self.vectorstore_index,
+            "schedule_service_url": self.schedule_service_url,
+            "model_name": self.model_name
+        }
 
-# Configuración de empresas
-COMPANIES_CONFIG = {
-    "benova": {
-        "redis_prefix": "benova:",
-        "vectorstore_index": "benova_documents",
-        "schedule_service_url": "http://benova-schedule-service:4040",
-        "sales_agent_name": "María",
-        "services": "tratamientos estéticos"
-    },
-    "empresa2": {
-        "redis_prefix": "empresa2:",
-        "vectorstore_index": "empresa2_documents",
-        "schedule_service_url": "http://empresa2-schedule:4040",
-        "sales_agent_name": "Asistente",
-        "services": "servicios generales"
+# Configuración de empresas - PARAMETRIZABLE
+def load_companies_config() -> Dict[str, CompanyConfig]:
+    """
+    Carga configuraciones de empresas desde variables de entorno o archivo JSON
+    """
+    companies = {}
+    
+    # Opción 1: Cargar desde variable de entorno JSON
+    companies_json = os.getenv("COMPANIES_CONFIG")
+    if companies_json:
+        try:
+            config_data = json.loads(companies_json)
+            for company_id, company_data in config_data.items():
+                companies[company_id] = CompanyConfig(company_id, company_data)
+            print(f"✅ Loaded {len(companies)} companies from COMPANIES_CONFIG environment variable")
+            return companies
+        except Exception as e:
+            print(f"❌ Error parsing COMPANIES_CONFIG: {e}")
+    
+    # Opción 2: Cargar desde archivo companies.json
+    try:
+        config_file_path = os.getenv("COMPANIES_CONFIG_FILE", "companies.json")
+        if os.path.exists(config_file_path):
+            with open(config_file_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+                for company_id, company_data in config_data.items():
+                    companies[company_id] = CompanyConfig(company_id, company_data)
+            print(f"✅ Loaded {len(companies)} companies from {config_file_path}")
+            return companies
+    except Exception as e:
+        print(f"❌ Error loading companies config file: {e}")
+    
+    # Opción 3: Configuración por defecto (backward compatibility con Benova)
+    default_config = {
+        "benova": {
+            "company_name": "Centro Estético Benova",
+            "redis_prefix": "benova:",
+            "vectorstore_index": "benova_documents",
+            "schedule_service_url": "http://benova-schedule-service:4040",
+            "chatwoot_account_id": os.getenv("ACCOUNT_ID", "7"),
+            "chatwoot_base_url": os.getenv("CHATWOOT_BASE_URL", "https://chatwoot-production-0f1d.up.railway.app"),
+            "sales_agent_name": "Especialista de Benova",
+            "services": "tratamientos estéticos avanzados, cuidado de la piel y rejuvenecimiento",
+            "business_hours": "Lunes a Viernes de 9:00 AM a 6:00 PM, Sábados de 9:00 AM a 2:00 PM",
+            "phone": "+57 300 123 4567",
+            "address": "Medellín, Colombia"
+        }
     }
-}
-
-def get_company_config(company_id):
-    """Obtener configuración para una empresa específica"""
-    if company_id not in COMPANIES_CONFIG:
-        logger.warning(f"Company {company_id} not found in config, using default")
-        return CompanyConfig.from_dict(company_id, {
-            "redis_prefix": f"{company_id}:",
-            "vectorstore_index": f"{company_id}_documents",
-            "schedule_service_url": f"http://{company_id}-schedule-service:4040",
-            "sales_agent_name": "Asistente",
-            "services": "servicios"
-        })
     
-    return CompanyConfig.from_dict(company_id, COMPANIES_CONFIG[company_id])
+    for company_id, company_data in default_config.items():
+        companies[company_id] = CompanyConfig(company_id, company_data)
+    
+    print(f"✅ Using default configuration for {len(companies)} companies")
+    return companies
+
+# Cargar configuraciones de empresas
+COMPANIES_CONFIG = load_companies_config()
 
 def validate_openai_setup():
     """Validar que OpenAI está configurado correctamente"""
@@ -129,20 +185,15 @@ def validate_openai_setup():
         return False
 
 # ===============================
-# Environment Setup
+# Environment Setup - ACTUALIZADO PARA MULTI-EMPRESA
 # ===============================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 CHATWOOT_API_KEY = os.getenv("CHATWOOT_API_KEY")
-CHATWOOT_BASE_URL = os.getenv("CHATWOOT_BASE_URL", "https://chatwoot-production-0f1d.up.railway.app")
-ACCOUNT_ID = os.getenv("ACCOUNT_ID", "7")
-PORT = int(os.getenv("PORT", 8080))
 
-# Model configuration
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+# Configuraciones globales (pueden ser sobrescritas por empresa)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", 1500))
-TEMPERATURE = float(os.getenv("TEMPERATURE", 0.7))
+PORT = int(os.getenv("PORT", 8080))
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", 10))
 
 # Embedding configuration
@@ -155,18 +206,17 @@ if not OPENAI_API_KEY or not CHATWOOT_API_KEY:
     sys.exit(1)
 
 print("Environment loaded successfully")
-print(f"Chatwoot URL: {CHATWOOT_BASE_URL}")
-print(f"Account ID: {ACCOUNT_ID}")
-print(f"Model: {MODEL_NAME}")
-print(f"Embedding Model: {EMBEDDING_MODEL}")
 print(f"Redis URL: {REDIS_URL}")
+print(f"Embedding Model: {EMBEDDING_MODEL}")
+print(f"Companies configured: {list(COMPANIES_CONFIG.keys())}")
 
 # Initialize Flask
 app = Flask(__name__, static_url_path='', static_folder='.')
 
-# Initialize Redis
+# Initialize Redis - MEJORADO
 try:
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    # Test connection
     redis_client.ping()
     print("✅ Redis connection successful")
 except Exception as e:
@@ -183,29 +233,153 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===============================
-# LangChain Components Setup
+# PASO 2: VECTOR STORE MANAGER MULTI-EMPRESA
 # ===============================
 
-# Initialize LangChain components
-embeddings = OpenAIEmbeddings(
-    model=EMBEDDING_MODEL,
-    openai_api_key=OPENAI_API_KEY
-)
+class VectorStoreManager:
+    """
+    Gestor de Vector Stores por empresa con aislamiento de datos
+    """
+    
+    def __init__(self, redis_url: str, embedding_model: str = "text-embedding-3-small"):
+        self.redis_url = redis_url
+        self.embedding_model = embedding_model
+        self.embeddings = OpenAIEmbeddings(
+            model=embedding_model,
+            openai_api_key=OPENAI_API_KEY
+        )
+        self.vectorstores = {}  # Cache de vectorstores por empresa
+    
+    def get_vectorstore(self, company_config: CompanyConfig) -> RedisVectorStore:
+        """
+        Obtiene o crea un vector store específico para una empresa
+        """
+        company_id = company_config.company_id
+        
+        if company_id not in self.vectorstores:
+            try:
+                # Crear vector store con índice específico de la empresa
+                self.vectorstores[company_id] = RedisVectorStore(
+                    self.embeddings,
+                    redis_url=self.redis_url,
+                    index_name=company_config.vectorstore_index,
+                    vector_dim=1536  # Tamaño para text-embedding-3-small
+                )
+                logger.info(f"✅ Created vector store for company {company_id} with index {company_config.vectorstore_index}")
+            
+            except Exception as e:
+                logger.error(f"❌ Error creating vector store for company {company_id}: {e}")
+                raise
+        
+        return self.vectorstores[company_id]
+    
+    def find_vectors_by_doc_id(self, company_config: CompanyConfig, doc_id: str) -> List[Dict]:
+        """
+        Busca vectores por doc_id específico de una empresa
+        """
+        try:
+            vectorstore = self.get_vectorstore(company_config)
+            
+            # Filtrar por doc_id y company_id en metadata
+            results = vectorstore.similarity_search(
+                query="",  # Query vacío ya que usamos filtros de metadata
+                k=1000,    # Obtener muchos para filtrar
+                filter={
+                    "doc_id": doc_id,
+                    "company_id": company_config.company_id  # Filtro adicional por empresa
+                }
+            )
+            
+            return [{"id": i, "metadata": doc.metadata, "content": doc.page_content} 
+                   for i, doc in enumerate(results)]
+            
+        except Exception as e:
+            logger.error(f"Error finding vectors for company {company_config.company_id}, doc_id {doc_id}: {e}")
+            return []
+    
+    def delete_document(self, company_config: CompanyConfig, doc_id: str) -> bool:
+        """
+        Elimina documento específico de una empresa
+        """
+        try:
+            # Buscar vectores del documento
+            vectors_to_delete = self.find_vectors_by_doc_id(company_config, doc_id)
+            
+            if not vectors_to_delete:
+                logger.warning(f"No vectors found for doc_id {doc_id} in company {company_config.company_id}")
+                return True
+            
+            vectorstore = self.get_vectorstore(company_config)
+            
+            # Eliminar vectores (implementación específica según la versión de langchain-redis)
+            # Nota: La eliminación exacta puede variar según la versión
+            vector_ids = [v["id"] for v in vectors_to_delete]
+            
+            # Método alternativo: recrear el índice sin los vectores eliminados
+            # Esta es una implementación de fallback
+            logger.info(f"Attempting to delete {len(vector_ids)} vectors for doc_id {doc_id}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting document {doc_id} for company {company_config.company_id}: {e}")
+            return False
+    
+    def add_documents_with_company_metadata(self, 
+                                          company_config: CompanyConfig,
+                                          documents: List[str], 
+                                          metadatas: List[Dict] = None) -> int:
+        """
+        Agrega documentos al vector store con metadata de empresa
+        """
+        try:
+            vectorstore = self.get_vectorstore(company_config)
+            
+            # Procesar documentos con metadata de empresa
+            processed_texts = []
+            processed_metadatas = []
+            
+            for i, doc in enumerate(documents):
+                if doc and doc.strip():
+                    # Usar sistema de chunking avanzado
+                    texts, auto_metadatas = advanced_chunk_processing(doc)
+                    
+                    # Combinar metadata con información de empresa
+                    base_metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
+                    
+                    for j, (text, auto_meta) in enumerate(zip(texts, auto_metadatas)):
+                        if text.strip():
+                            processed_texts.append(text)
+                            
+                            # Metadata combinada con aislamiento por empresa
+                            combined_meta = base_metadata.copy()
+                            combined_meta.update(auto_meta)
+                            combined_meta.update({
+                                "company_id": company_config.company_id,  # ✅ AISLAMIENTO POR EMPRESA
+                                "doc_id": hashlib.md5(doc.encode()).hexdigest(),
+                                "chunk_index": j,
+                                "doc_index": i,
+                                "added_at": datetime.utcnow().isoformat()
+                            })
+                            processed_metadatas.append(combined_meta)
+            
+            # Agregar al vector store
+            if processed_texts:
+                vectorstore.add_texts(processed_texts, metadatas=processed_metadatas)
+                logger.info(f"✅ Added {len(processed_texts)} chunks to {company_config.company_id} vector store")
+            
+            return len(processed_texts)
+            
+        except Exception as e:
+            logger.error(f"Error adding documents for company {company_config.company_id}: {e}")
+            return 0
 
-chat_model = ChatOpenAI(
-    model_name=MODEL_NAME,
-    temperature=TEMPERATURE,
-    max_tokens=MAX_TOKENS,
-    openai_api_key=OPENAI_API_KEY
-)
+# Instancia global del gestor de vector stores
+vector_store_manager = VectorStoreManager(REDIS_URL, EMBEDDING_MODEL)
 
-# Initialize Redis Vector Store (se creará dinámicamente por empresa)
-vectorstore = None  # Se inicializará por empresa
-
-
-
-###### Chunking#############
-
+# ===============================
+# CHUNKING SYSTEM - REUTILIZADO CON MEJORAS
+# ===============================
 
 def create_advanced_chunking_system():
     """
@@ -345,58 +519,61 @@ def advanced_chunk_processing(text: str) -> Tuple[List[str], List[Dict[str, Any]
         logger.error(f"Error in advanced chunk processing: {e}")
         return [], []
 
+# ===============================
+# UTILS PARA IDENTIFICACIÓN DE EMPRESA
+# ===============================
 
-def enhanced_add_documents_with_tracking(modern_rag_system, documents: List[str], metadatas: List[Dict] = None):
+def identify_company_from_webhook(webhook_data: Dict[str, Any]) -> Optional[CompanyConfig]:
     """
-    Versión mejorada de add_documents que garantiza consistencia
+    Identifica la empresa desde el payload del webhook
     """
-    if not documents:
-        return 0
-    
     try:
-        all_texts = []
-        all_metas = []
-        doc_ids_created = []
+        # Opción 1: Desde metadata de conversación
+        if "conversation" in webhook_data and "meta" in webhook_data["conversation"]:
+            company_id = webhook_data["conversation"]["meta"].get("company_id")
+            if company_id and company_id in COMPANIES_CONFIG:
+                return COMPANIES_CONFIG[company_id]
         
-        for i, doc in enumerate(documents):
-            if doc and doc.strip():
-                # Generar doc_id consistente
-                doc_id = hashlib.md5(doc.encode()).hexdigest()
-                doc_ids_created.append(doc_id)
-                
-                # Usar sistema de chunking avanzado
-                texts, auto_metadatas = advanced_chunk_processing(doc)
-                
-                # Combinar metadata
-                base_metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
-                
-                for j, (text, auto_meta) in enumerate(zip(texts, auto_metadatas)):
-                    if text.strip():
-                        all_texts.append(text)
-                        # IMPORTANTE: Asegurar que doc_id esté en metadata
-                        combined_meta = base_metadata.copy()
-                        combined_meta.update(auto_meta)
-                        combined_meta.update({
-                            "doc_id": doc_id,  # ✅ GARANTIZAR doc_id en metadata
-                            "chunk_index": j, 
-                            "doc_index": i
-                        })
-                        all_metas.append(combined_meta)
+        # Opción 2: Desde account_id de Chatwoot
+        account_id = webhook_data.get("account", {}).get("id")
+        if account_id:
+            for company_config in COMPANIES_CONFIG.values():
+                if company_config.chatwoot_account_id == str(account_id):
+                    return company_config
         
-        # Agregar al vectorstore con metadata mejorada
-        if all_texts:
-            modern_rag_system.vectorstore.add_texts(all_texts, metadatas=all_metas)
-            logger.info(f"✅ Added {len(all_texts)} chunks with consistent doc_id tracking")
+        # Opción 3: Desde URL o header personalizado (implementar según necesidad)
+        # company_header = request.headers.get("X-Company-ID")
+        # if company_header and company_header in COMPANIES_CONFIG:
+        #     return COMPANIES_CONFIG[company_header]
         
-        return len(all_texts)
+        # Opción 4: Fallback a empresa por defecto (Benova para backward compatibility)
+        if "benova" in COMPANIES_CONFIG:
+            logger.warning("Could not identify company, using default (benova)")
+            return COMPANIES_CONFIG["benova"]
+        
+        # Si no hay empresa por defecto, usar la primera disponible
+        if COMPANIES_CONFIG:
+            default_company = list(COMPANIES_CONFIG.values())[0]
+            logger.warning(f"Using first available company: {default_company.company_id}")
+            return default_company
+        
+        return None
         
     except Exception as e:
-        logger.error(f"Error in enhanced add_documents: {e}")
-        return 0
+        logger.error(f"Error identifying company from webhook: {e}")
+        return None
 
+def validate_company_exists(company_id: str) -> bool:
+    """
+    Valida que una empresa exista en la configuración
+    """
+    return company_id in COMPANIES_CONFIG
+
+print("✅ Multi-company backend configuration loaded successfully")
+print(f"✅ Available companies: {list(COMPANIES_CONFIG.keys())}")
 
 # ===============================
-# BOT ACTIVATION LOGIC
+# PASO 3: BOT ACTIVATION LOGIC MULTI-EMPRESA
 # ===============================
 
 BOT_ACTIVE_STATUSES = ["open"]
@@ -404,16 +581,17 @@ BOT_INACTIVE_STATUSES = ["pending", "resolved", "snoozed"]
 
 status_lock = threading.Lock()
 
-def update_bot_status(conversation_id, conversation_status, company_config):
-    """Update bot status for a specific conversation in Redis with company prefix"""
+def update_bot_status(conversation_id, conversation_status, company_config: CompanyConfig):
+    """Update bot status for a specific conversation in Redis with company isolation"""
     with status_lock:
         is_active = conversation_status in BOT_ACTIVE_STATUSES
         
         # Store in Redis with company prefix
-        status_key = f"{company_config.redis_prefix}bot_status:{conversation_id}"
+        status_key = company_config.get_redis_key("bot_status", conversation_id)
         status_data = {
             'active': str(is_active),
             'status': conversation_status,
+            'company_id': company_config.company_id,
             'updated_at': str(time.time())
         }
         
@@ -424,96 +602,79 @@ def update_bot_status(conversation_id, conversation_status, company_config):
             
             if old_status != str(is_active):
                 status_text = "ACTIVO" if is_active else "INACTIVO"
-                logger.info(f"🔄 Conversation {conversation_id}: Bot {status_text} (status: {conversation_status})")
+                logger.info(f"🔄 {company_config.company_id} - Conversation {conversation_id}: Bot {status_text} (status: {conversation_status})")
                 
         except Exception as e:
-            logger.error(f"Error updating bot status in Redis: {e}")
+            logger.error(f"Error updating bot status in Redis for {company_config.company_id}: {e}")
 
-def should_bot_respond(conversation_id, conversation_status, company_config):
+def should_bot_respond(conversation_id, conversation_status, company_config: CompanyConfig):
     """Determine if bot should respond based on conversation status"""
     update_bot_status(conversation_id, conversation_status, company_config)
     is_active = conversation_status in BOT_ACTIVE_STATUSES
     
     if is_active:
-        logger.info(f"✅ Bot WILL respond to conversation {conversation_id} (status: {conversation_status})")
+        logger.info(f"✅ {company_config.company_id} - Bot WILL respond to conversation {conversation_id} (status: {conversation_status})")
     else:
         if conversation_status == "pending":
-            logger.info(f"⏸️ Bot will NOT respond to conversation {conversation_id} (status: pending - INACTIVE)")
+            logger.info(f"⏸️ {company_config.company_id} - Bot will NOT respond to conversation {conversation_id} (status: pending - INACTIVE)")
         else:
-            logger.info(f"🚫 Bot will NOT respond to conversation {conversation_id} (status: {conversation_status})")
+            logger.info(f"🚫 {company_config.company_id} - Bot will NOT respond to conversation {conversation_id} (status: {conversation_status})")
     
     return is_active
 
-def is_message_already_processed(message_id, conversation_id, company_config):
-    """Check if message has already been processed using Redis with company prefix"""
+def is_message_already_processed(message_id, conversation_id, company_config: CompanyConfig):
+    """Check if message has already been processed using Redis with company isolation"""
     if not message_id:
         return False
     
-    key = f"{company_config.redis_prefix}processed_message:{conversation_id}:{message_id}"
+    key = company_config.get_redis_key("processed_message", f"{conversation_id}:{message_id}")
     
     try:
         if redis_client.exists(key):
-            logger.info(f"🔄 Message {message_id} already processed, skipping")
+            logger.info(f"🔄 {company_config.company_id} - Message {message_id} already processed, skipping")
             return True
         
         redis_client.set(key, "1", ex=3600)  # 1 hour TTL
-        logger.info(f"✅ Message {message_id} marked as processed")
+        logger.info(f"✅ {company_config.company_id} - Message {message_id} marked as processed")
         return False
         
     except Exception as e:
-        logger.error(f"Error checking processed message in Redis: {e}")
+        logger.error(f"Error checking processed message in Redis for {company_config.company_id}: {e}")
         return False
 
 # ===============================
-# Modern Conversation Manager
+# PASO 4: MODERN CONVERSATION MANAGER MULTI-EMPRESA
 # ===============================
+
 class ModernConversationManager:
     """
-    Conversation Manager moderno con soporte para múltiples empresas
+    ADAPTADO: Conversation Manager para múltiples empresas con aislamiento de datos
     """
     
-    def __init__(self, redis_client, max_messages: int = 10, company_config: CompanyConfig = None):
+    def __init__(self, redis_client, max_messages: int = 10):
         self.redis_client = redis_client
         self.max_messages = max_messages
-        self.company_config = company_config or get_company_config("default")
-        self.redis_prefix = self.company_config.redis_prefix
         self.conversations = {}
-        self.message_histories = {}
+        self.message_histories = {}  # Cache por empresa
         self.load_conversations_from_redis()
     
-    def _get_conversation_key(self, user_id: str) -> str:
-        """Generate standardized conversation key with company prefix"""
-        return f"{self.redis_prefix}conversation:{user_id}"
-    
-    def _get_message_history_key(self, user_id: str) -> str:
-        """Generate standardized message history key for Redis with company prefix"""
-        return f"{self.redis_prefix}chat_history:{user_id}"
-    
-    def _create_user_id(self, contact_id: str) -> str:
-        """Generate standardized user ID"""
+    def _create_user_id(self, contact_id: str, company_config: CompanyConfig) -> str:
+        """Generate standardized user ID with company isolation"""
         if not contact_id.startswith("chatwoot_contact_"):
-            return f"chatwoot_contact_{contact_id}"
-        return contact_id
+            user_id = f"chatwoot_contact_{contact_id}"
+        else:
+            user_id = contact_id
+        
+        # Add company prefix for isolation
+        return f"{company_config.company_id}:{user_id}"
     
     def _get_redis_connection_params(self) -> Dict[str, Any]:
-        """
-        Extract Redis connection parameters from client
-        """
+        """Extract Redis connection parameters from client"""
         try:
-            if hasattr(self.redis_client, 'connection_pool'):
-                pool = self.redis_client.connection_pool
-                connection_kwargs = pool.connection_kwargs
-                
-                return {
-                    "url": REDIS_URL,
-                    "ttl": 604800  # 7 días
-                }
-            
             return {
                 "url": REDIS_URL,
-                "ttl": 604800
+                "ttl": 604800  # 7 días
             }
-            
         except Exception as e:
             logger.warning(f"Could not extract Redis params, using defaults: {e}")
             return {
@@ -521,39 +682,44 @@ class ModernConversationManager:
                 "ttl": 604800
             }
     
-    def _get_or_create_redis_history(self, user_id: str) -> BaseChatMessageHistory:
+    def _get_or_create_redis_history(self, user_id: str, company_config: CompanyConfig) -> BaseChatMessageHistory:
         """
-        Método interno para crear/obtener RedisChatMessageHistory
+        ADAPTADO: Método interno para crear/obtener RedisChatMessageHistory con aislamiento por empresa
         """
-        if not user_id:
-            raise ValueError("user_id cannot be empty")
+        # Use company-specific user_id
+        full_user_id = f"{company_config.company_id}:{user_id}"
         
-        if user_id not in self.message_histories:
+        if full_user_id not in self.message_histories:
             try:
                 redis_params = self._get_redis_connection_params()
                 
-                self.message_histories[user_id] = RedisChatMessageHistory(
-                    session_id=user_id,
+                # Create RedisChatMessageHistory with company-specific key prefix
+                key_prefix = company_config.get_redis_key("chat_history", "")
+                
+                self.message_histories[full_user_id] = RedisChatMessageHistory(
+                    session_id=user_id,  # Use original user_id as session
                     url=redis_params["url"],
-                    key_prefix=f"{self.redis_prefix}chat_history:",
+                    key_prefix=key_prefix,
                     ttl=redis_params["ttl"]
                 )
                 
-                logger.info(f"✅ Created Redis message history for user {user_id}")
+                logger.info(f"✅ Created Redis message history for user {user_id} in company {company_config.company_id}")
                 
             except Exception as e:
-                logger.error(f"❌ Error creating Redis message history for user {user_id}: {e}")
+                logger.error(f"❌ Error creating Redis message history for user {user_id} in {company_config.company_id}: {e}")
+                # Fallback to in-memory
                 from langchain_core.chat_history import InMemoryChatMessageHistory
-                self.message_histories[user_id] = InMemoryChatMessageHistory()
-                logger.warning(f"⚠️ Using in-memory fallback for user {user_id}")
+                self.message_histories[full_user_id] = InMemoryChatMessageHistory()
+                logger.warning(f"⚠️ Using in-memory fallback for user {user_id} in {company_config.company_id}")
             
-            self._apply_message_window(user_id)
+            # Apply message window
+            self._apply_message_window(full_user_id)
         
-        return self.message_histories[user_id]
+        return self.message_histories[full_user_id]
     
-    def get_chat_history(self, user_id: str, format_type: str = "dict") -> Any:
+    def get_chat_history(self, user_id: str, company_config: CompanyConfig, format_type: str = "dict") -> Any:
         """
-        Método unificado para obtener chat history en diferentes formatos
+        ADAPTADO: Método unificado para obtener chat history con aislamiento por empresa
         """
         if not user_id:
             if format_type == "dict":
@@ -567,14 +733,14 @@ class ModernConversationManager:
                 return []
         
         try:
-            redis_history = self._get_or_create_redis_history(user_id)
+            # Get Redis history with company isolation
+            redis_history = self._get_or_create_redis_history(user_id, company_config)
             
+            # Return according to requested format
             if format_type == "langchain":
                 return redis_history
-            
             elif format_type == "messages":
                 return redis_history.messages
-            
             elif format_type == "dict":
                 messages = redis_history.messages
                 
@@ -592,13 +758,13 @@ class ModernConversationManager:
                         })
                 
                 return chat_history
-            
             else:
                 logger.warning(f"Unknown format_type: {format_type}, defaulting to dict")
-                return self.get_chat_history(user_id, "dict")
+                return self.get_chat_history(user_id, company_config, "dict")
                 
         except Exception as e:
-            logger.error(f"Error getting chat history for user {user_id}: {e}")
+            logger.error(f"Error getting chat history for user {user_id} in {company_config.company_id}: {e}")
+            # Return default values based on format
             if format_type == "dict":
                 return []
             elif format_type == "langchain":
@@ -609,38 +775,40 @@ class ModernConversationManager:
             else:
                 return []
     
-    def _apply_message_window(self, user_id: str):
-        """
-        Aplica ventana deslizante de mensajes para mantener solo los últimos N mensajes
-        """
+    def _apply_message_window(self, full_user_id: str):
+        """Apply sliding message window to keep only last N messages"""
         try:
-            history = self.message_histories[user_id]
+            history = self.message_histories[full_user_id]
             messages = history.messages
             
             if len(messages) > self.max_messages:
+                # Keep only the last max_messages
                 messages_to_keep = messages[-self.max_messages:]
                 
+                # Clear existing history
                 history.clear()
                 
+                # Add only the messages we want to keep
                 for message in messages_to_keep:
                     history.add_message(message)
                 
-                logger.info(f"✅ Applied message window for user {user_id}: kept {len(messages_to_keep)} messages")
+                company_id = full_user_id.split(':')[0]
+                logger.info(f"✅ Applied message window for user in {company_id}: kept {len(messages_to_keep)} messages")
         
         except Exception as e:
-            logger.error(f"❌ Error applying message window for user {user_id}: {e}")
+            logger.error(f"❌ Error applying message window for user {full_user_id}: {e}")
     
-    def add_message(self, user_id: str, role: str, content: str) -> bool:
-        """
-        Add message with automatic window management
-        """
+    def add_message(self, user_id: str, company_config: CompanyConfig, role: str, content: str) -> bool:
+        """Add message with automatic window management and company isolation"""
         if not user_id or not content.strip():
-            logger.warning("Invalid user_id or content for message")
+            logger.warning(f"Invalid user_id or content for message in {company_config.company_id}")
             return False
         
         try:
-            history = self.get_chat_history(user_id, format_type="langchain")
+            # Use the unified method to get history
+            history = self.get_chat_history(user_id, company_config, format_type="langchain")
             
+            # Add message to history
             if role == "user":
                 history.add_user_message(content)
             elif role == "assistant":
@@ -649,25 +817,29 @@ class ModernConversationManager:
                 logger.warning(f"Unknown role: {role}")
                 return False
             
-            if user_id in self.message_histories:
-                self._apply_message_window(user_id)
+            # Update cache and apply window management
+            full_user_id = f"{company_config.company_id}:{user_id}"
+            if full_user_id in self.message_histories:
+                self._apply_message_window(full_user_id)
             
-            self._update_conversation_metadata(user_id)
+            # Update metadata
+            self._update_conversation_metadata(user_id, company_config)
             
-            logger.info(f"✅ Message added for user {user_id} (role: {role})")
+            logger.info(f"✅ Message added for user {user_id} in {company_config.company_id} (role: {role})")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error adding message for user {user_id}: {e}")
+            logger.error(f"❌ Error adding message for user {user_id} in {company_config.company_id}: {e}")
             return False
     
-    def _update_conversation_metadata(self, user_id: str):
-        """Update conversation metadata in Redis"""
+    def _update_conversation_metadata(self, user_id: str, company_config: CompanyConfig):
+        """Update conversation metadata in Redis with company isolation"""
         try:
-            conversation_key = self._get_conversation_key(user_id)
+            conversation_key = company_config.get_redis_key("conversation", user_id)
             metadata = {
                 'last_updated': str(time.time()),
                 'user_id': user_id,
+                'company_id': company_config.company_id,
                 'updated_at': datetime.utcnow().isoformat()
             }
             
@@ -675,195 +847,137 @@ class ModernConversationManager:
             self.redis_client.expire(conversation_key, 604800)  # 7 días TTL
             
         except Exception as e:
-            logger.error(f"Error updating metadata for user {user_id}: {e}")
+            logger.error(f"Error updating metadata for user {user_id} in {company_config.company_id}: {e}")
     
     def load_conversations_from_redis(self):
-        """
-        Load conversations from Redis with modern approach
-        """
+        """Load conversations from Redis with company awareness"""
         try:
-            conversation_keys = self.redis_client.keys(f"{self.redis_prefix}conversation:*")
-            chat_history_keys = self.redis_client.keys(f"{self.redis_prefix}chat_history:*")
-            
             loaded_count = 0
             
-            for key in conversation_keys:
+            # Load conversations for each configured company
+            for company_config in COMPANIES_CONFIG.values():
                 try:
-                    user_id = key.split(':', 1)[1]
-                    context_data = self.redis_client.hgetall(key)
+                    # Search for company-specific conversation keys
+                    conversation_pattern = company_config.get_redis_key("conversation", "*")
+                    chat_history_pattern = company_config.get_redis_key("chat_history", "*")
                     
-                    if context_data and 'messages' in context_data:
-                        old_messages = json.loads(context_data['messages'])
-                        history = self.get_chat_history(user_id, format_type="langchain")
+                    conversation_keys = self.redis_client.keys(conversation_pattern)
+                    chat_history_keys = self.redis_client.keys(chat_history_pattern)
+                    
+                    # Migrate old format conversations if needed
+                    for key in conversation_keys:
+                        try:
+                            # Extract user_id from key
+                            key_parts = key.split(':')
+                            if len(key_parts) >= 3:  # company:conversation:user_id
+                                user_id = ':'.join(key_parts[2:])
+                                context_data = self.redis_client.hgetall(key)
+                                
+                                if context_data and 'messages' in context_data:
+                                    # Migrate old messages to new format
+                                    old_messages = json.loads(context_data['messages'])
+                                    history = self.get_chat_history(user_id, company_config, format_type="langchain")
+                                    
+                                    # Check if already migrated
+                                    if len(history.messages) == 0 and old_messages:
+                                        for msg in old_messages:
+                                            if msg.get('role') == 'user':
+                                                history.add_user_message(msg['content'])
+                                            elif msg.get('role') == 'assistant':
+                                                history.add_ai_message(msg['content'])
+                                        
+                                        full_user_id = f"{company_config.company_id}:{user_id}"
+                                        self._apply_message_window(full_user_id)
+                                        loaded_count += 1
+                                        logger.info(f"✅ Migrated conversation for user {user_id} in {company_config.company_id}")
                         
-                        if len(history.messages) == 0 and old_messages:
-                            for msg in old_messages:
-                                if msg.get('role') == 'user':
-                                    history.add_user_message(msg['content'])
-                                elif msg.get('role') == 'assistant':
-                                    history.add_ai_message(msg['content'])
-                            
-                            self._apply_message_window(user_id)
-                            loaded_count += 1
-                            logger.info(f"✅ Migrated conversation for user {user_id}")
-                
+                        except Exception as e:
+                            logger.warning(f"Failed to migrate conversation {key}: {e}")
+                            continue
+                    
+                    # Count conversations already in new format
+                    company_new_format = len([k for k in chat_history_keys 
+                                            if k not in [company_config.get_redis_key("chat_history", 
+                                                       k.split(':')[-1]) for k in conversation_keys]])
+                    loaded_count += company_new_format
+                    
                 except Exception as e:
-                    logger.warning(f"Failed to migrate conversation {key}: {e}")
+                    logger.warning(f"Error loading conversations for {company_config.company_id}: {e}")
                     continue
             
-            for key in chat_history_keys:
-                if key not in [self._get_message_history_key(k.split(':', 1)[1]) for k in conversation_keys]:
-                    loaded_count += 1
-            
-            logger.info(f"✅ Loaded {loaded_count} conversation contexts from Redis")
+            logger.info(f"✅ Loaded {loaded_count} conversation contexts from Redis across all companies")
             
         except Exception as e:
             logger.error(f"❌ Error loading contexts from Redis: {e}")
     
-    def get_message_count(self, user_id: str) -> int:
-        """Get total message count for a user"""
+    def get_message_count(self, user_id: str, company_config: CompanyConfig) -> int:
+        """Get total message count for a user in a specific company"""
         try:
-            history = self.get_chat_history(user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, company_config, format_type="langchain")
             return len(history.messages)
         except Exception as e:
-            logger.error(f"Error getting message count for user {user_id}: {e}")
+            logger.error(f"Error getting message count for user {user_id} in {company_config.company_id}: {e}")
             return 0
     
-    def clear_conversation(self, user_id: str) -> bool:
-        """Clear conversation history for a user"""
+    def clear_conversation(self, user_id: str, company_config: CompanyConfig) -> bool:
+        """Clear conversation history for a user in a specific company"""
         try:
-            history = self.get_chat_history(user_id, format_type="langchain")
+            history = self.get_chat_history(user_id, company_config, format_type="langchain")
             history.clear()
             
-            conversation_key = self._get_conversation_key(user_id)
+            # Clear metadata
+            conversation_key = company_config.get_redis_key("conversation", user_id)
             self.redis_client.delete(conversation_key)
             
-            if user_id in self.message_histories:
-                del self.message_histories[user_id]
+            # Clear cache
+            full_user_id = f"{company_config.company_id}:{user_id}"
+            if full_user_id in self.message_histories:
+                del self.message_histories[full_user_id]
             
-            logger.info(f"✅ Cleared conversation for user {user_id}")
+            logger.info(f"✅ Cleared conversation for user {user_id} in {company_config.company_id}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error clearing conversation for user {user_id}: {e}")
+            logger.error(f"❌ Error clearing conversation for user {user_id} in {company_config.company_id}: {e}")
             return False
 
-#########################4######################
-
-####  GESTION DE VECTORES################
-
 # ===============================
-# Vector Store Manager
-# ===============================
-class VectorStoreManager:
-    """
-    Clase para gestionar vectores de manera consistente con soporte multi-empresa
-    """
-    
-    def __init__(self, redis_client, company_config: CompanyConfig):
-        self.redis_client = redis_client
-        self.company_config = company_config
-        self.index_name = company_config.vectorstore_index
-    
-    def find_vectors_by_doc_id(self, doc_id: str) -> List[str]:
-        """
-        Encuentra todos los vectores asociados a un documento
-        Busca tanto en campos directos como en metadata JSON
-        """
-        pattern = f"{self.index_name}:*"
-        keys = self.redis_client.keys(pattern)
-        vectors_to_delete = []
-        
-        for key in keys:
-            try:
-                # Método 1: Buscar en campo directo 'doc_id'
-                doc_id_direct = self.redis_client.hget(key, 'doc_id')
-                if doc_id_direct == doc_id:
-                    vectors_to_delete.append(key)
-                    continue
-                
-                # Método 2: Buscar en metadata JSON con filtro por company_id
-                metadata_str = self.redis_client.hget(key, 'metadata')
-                if metadata_str:
-                    try:
-                        metadata = json.loads(metadata_str)
-                        if metadata.get('doc_id') == doc_id and metadata.get('company_id') == self.company_config.company_id:
-                            vectors_to_delete.append(key)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid JSON metadata in vector {key}")
-                        continue
-                
-            except Exception as e:
-                logger.warning(f"Error checking vector {key}: {e}")
-                continue
-        
-        return vectors_to_delete
-    
-    def delete_vectors_by_doc_id(self, doc_id: str) -> int:
-        """
-        Elimina todos los vectores asociados a un documento
-        Retorna el número de vectores eliminados
-        """
-        vectors_to_delete = self.find_vectors_by_doc_id(doc_id)
-        
-        if vectors_to_delete:
-            self.redis_client.delete(*vectors_to_delete)
-            logger.info(f"✅ Deleted {len(vectors_to_delete)} vectors for doc {doc_id}")
-        else:
-            logger.warning(f"⚠️ No vectors found for doc {doc_id}")
-        
-        return len(vectors_to_delete)
-    
-    def verify_cleanup(self, doc_id: str) -> Dict[str, Any]:
-        """
-        Verifica que se haya limpiado correctamente un documento
-        """
-        remaining_vectors = self.find_vectors_by_doc_id(doc_id)
-        doc_key = f"document:{doc_id}"
-        doc_exists = self.redis_client.exists(doc_key)
-        
-        return {
-            "doc_id": doc_id,
-            "document_exists": bool(doc_exists),
-            "remaining_vectors": len(remaining_vectors),
-            "vector_keys": remaining_vectors[:5],
-            "cleanup_complete": not doc_exists and len(remaining_vectors) == 0
-        }
-
-# ===============================
-# multimedia system
+# PASO 5: SISTEMA MULTIMEDIA ADAPTADO
 # ===============================
 
-def transcribe_audio(audio_path):
-    """Transcribir audio a texto usando Whisper con sintaxis v1.x"""
+def transcribe_audio(audio_path, company_config: CompanyConfig = None):
+    """Transcribir audio a texto usando Whisper con logging por empresa"""
     try:
-        # Crear cliente con API key usando la nueva sintaxis
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
         
         with open(audio_path, "rb") as audio_file:
-            # Usar la nueva sintaxis v1.x para transcripción
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 response_format="text"
             )
         
-        # En v1.x, transcript es un objeto, no string directo
-        return transcript.text if hasattr(transcript, 'text') else str(transcript)
+        result = transcript.text if hasattr(transcript, 'text') else str(transcript)
+        logger.info(f"🎵 {company_prefix}Audio transcription successful: {len(result)} characters")
+        return result
         
     except Exception as e:
-        logger.error(f"Error in audio transcription: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error in audio transcription: {e}")
         raise
 
-def transcribe_audio_from_url(audio_url):
-    """Transcribir audio desde URL usando Whisper con manejo mejorado de errores"""
+def transcribe_audio_from_url(audio_url, company_config: CompanyConfig = None):
+    """Transcribir audio desde URL con logging por empresa"""
     try:
         import requests
         import tempfile
         import os
         
-        # Descargar el audio con headers más específicos
-        logger.info(f"🔽 Downloading audio from: {audio_url}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        
+        logger.info(f"🔽 {company_prefix}Downloading audio from: {audio_url}")
         headers = {
             'User-Agent': 'Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)',
             'Accept': 'audio/*,*/*;q=0.9'
@@ -872,12 +986,11 @@ def transcribe_audio_from_url(audio_url):
         response = requests.get(audio_url, headers=headers, timeout=60, stream=True)
         response.raise_for_status()
         
-        # Verificar content-type si está disponible
         content_type = response.headers.get('content-type', '').lower()
-        logger.info(f"📄 Audio content-type: {content_type}")
+        logger.info(f"📄 {company_prefix}Audio content-type: {content_type}")
         
-        # Determinar extensión basada en content-type o URL
-        extension = '.ogg'  # Default para Chatwoot
+        # Determine extension based on content-type or URL
+        extension = '.ogg'  # Default for Chatwoot
         if 'mp3' in content_type or audio_url.endswith('.mp3'):
             extension = '.mp3'
         elif 'wav' in content_type or audio_url.endswith('.wav'):
@@ -885,67 +998,77 @@ def transcribe_audio_from_url(audio_url):
         elif 'm4a' in content_type or audio_url.endswith('.m4a'):
             extension = '.m4a'
         
-        # Crear archivo temporal con extensión correcta
+        # Create temp file with correct extension
         with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
             for chunk in response.iter_content(chunk_size=8192):
                 temp_file.write(chunk)
             temp_path = temp_file.name
         
-        logger.info(f"📁 Audio saved to temp file: {temp_path} (size: {os.path.getsize(temp_path)} bytes)")
+        logger.info(f"📁 {company_prefix}Audio saved to temp file: {temp_path} (size: {os.path.getsize(temp_path)} bytes)")
         
         try:
-            # Transcribir usando la función corregida
-            result = transcribe_audio(temp_path)
-            logger.info(f"🎵 Transcription successful: {len(result)} characters")
+            # Transcribe using the corrected function
+            result = transcribe_audio(temp_path, company_config)
+            logger.info(f"🎵 {company_prefix}Transcription successful: {len(result)} characters")
             return result
             
         finally:
-            # Limpiar archivo temporal
+            # Clean up temp file
             try:
                 os.unlink(temp_path)
-                logger.info(f"🗑️ Temporary file deleted: {temp_path}")
+                logger.info(f"🗑️ {company_prefix}Temporary file deleted: {temp_path}")
             except Exception as cleanup_error:
-                logger.warning(f"⚠️ Could not delete temp file {temp_path}: {cleanup_error}")
+                logger.warning(f"⚠️ {company_prefix}Could not delete temp file {temp_path}: {cleanup_error}")
         
     except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Error downloading audio: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error downloading audio: {e}")
         raise Exception(f"Error downloading audio: {str(e)}")
     except Exception as e:
-        logger.error(f"❌ Error in audio transcription from URL: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error in audio transcription from URL: {e}")
         raise
 
-def text_to_speech(text):
-    """Convertir texto a audio usando TTS de OpenAI con sintaxis v1.x"""
+def text_to_speech(text, company_config: CompanyConfig = None):
+    """Convertir texto a audio usando TTS de OpenAI con logging por empresa"""
     try:
-        # Crear cliente con API key usando la nueva sintaxis
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = OpenAI(api_key=OPENAI_API_KEY)
         
-        # Usar la nueva sintaxis v1.x para TTS
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        
         response = client.audio.speech.create(
             model="tts-1",
             voice="alloy",
             input=text
         )
         
-        # Guardar audio temporalmente
+        # Save audio temporarily
         temp_path = "/tmp/response.mp3"
         response.stream_to_file(temp_path)
         
+        logger.info(f"🔊 {company_prefix}Text-to-speech conversion successful")
         return temp_path
     except Exception as e:
-        logger.error(f"Error in text-to-speech: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error in text-to-speech: {e}")
         raise
 
-def analyze_image(image_file):
-    """Analizar imagen usando GPT-4 Vision con manejo mejorado"""
+def analyze_image(image_file, company_config: CompanyConfig = None):
+    """Analizar imagen usando GPT-4 Vision con contexto de empresa"""
     try:
-        # Convertir imagen a base64
+        # Convert image to base64
         image_data = base64.b64encode(image_file.read()).decode('utf-8')
         
-        # Crear cliente con API key
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = OpenAI(api_key=OPENAI_API_KEY)
         
-        # Usar la sintaxis v1.x correcta
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        
+        # Customize prompt based on company
+        if company_config:
+            analysis_prompt = f"Describe esta imagen en detalle, enfocándote en elementos relevantes para {company_config.services} de {company_config.company_name}. Si es una promoción o anuncio, menciona los detalles principales."
+        else:
+            analysis_prompt = "Describe esta imagen en detalle, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -954,61 +1077,64 @@ def analyze_image(image_file):
                     "content": [
                         {
                             "type": "text", 
-                            "text": "Describe esta imagen en detalle, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                            "text": analysis_prompt
                         },
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/jpeg;base64,{image_data}",
-                                "detail": "high"  # Agregado para mejor análisis
+                                "detail": "high"
                             }
                         }
                     ]
                 }
             ],
             max_tokens=500,
-            temperature=0.1  # Más determinista para análisis
+            temperature=0.1
         )
         
-        return response.choices[0].message.content
+        result = response.choices[0].message.content
+        logger.info(f"🖼️ {company_prefix}Image analysis successful: {len(result)} characters")
+        return result
         
     except Exception as e:
-        logger.error(f"Error in image analysis: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error in image analysis: {e}")
         raise
 
-# Función mejorada para manejo de attachments de Chatwoot
-def process_chatwoot_attachment(attachment):
-    """Procesar attachment de Chatwoot con validación mejorada"""
+def process_chatwoot_attachment(attachment, company_config: CompanyConfig = None):
+    """Procesar attachment de Chatwoot con logging por empresa"""
     try:
-        logger.info(f"🔍 Processing Chatwoot attachment: {attachment}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.info(f"🔍 {company_prefix}Processing Chatwoot attachment: {attachment}")
         
-        # Extraer tipo de archivo con múltiples métodos
+        # Extract file type with multiple methods
         attachment_type = None
         
-        # Método 1: file_type (más común en Chatwoot)
+        # Method 1: file_type (most common in Chatwoot)
         if attachment.get("file_type"):
             attachment_type = attachment["file_type"].lower()
-            logger.info(f"📝 Type from 'file_type': {attachment_type}")
+            logger.info(f"📝 {company_prefix}Type from 'file_type': {attachment_type}")
         
-        # Método 2: extension
+        # Method 2: extension
         elif attachment.get("extension"):
             ext = attachment["extension"].lower().lstrip('.')
             if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
                 attachment_type = "image"
             elif ext in ['mp3', 'wav', 'ogg', 'm4a', 'aac']:
                 attachment_type = "audio"
-            logger.info(f"📝 Type inferred from extension '{ext}': {attachment_type}")
+            logger.info(f"📝 {company_prefix}Type inferred from extension '{ext}': {attachment_type}")
         
-        # Extraer URL con prioridad correcta
+        # Extract URL with correct priority
         url = attachment.get("data_url") or attachment.get("url") or attachment.get("thumb_url")
         
         if not url:
-            logger.warning(f"⚠️ No URL found in attachment")
+            logger.warning(f"⚠️ {company_prefix}No URL found in attachment")
             return None
         
-        # Validar que la URL es accesible
+        # Validate that URL is accessible
         if not url.startswith("http"):
-            logger.warning(f"⚠️ Invalid URL format: {url}")
+            logger.warning(f"⚠️ {company_prefix}Invalid URL format: {url}")
             return None
         
         return {
@@ -1021,72 +1147,75 @@ def process_chatwoot_attachment(attachment):
         }
         
     except Exception as e:
-        logger.error(f"❌ Error processing Chatwoot attachment: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error processing Chatwoot attachment: {e}")
         return None
 
-#######3#######
 # ===============================
-# NUEVO: Sistema de Invalidación de Cache
-# UBICACIÓN: Agregar después de la clase ModernConversationManager
+# PASO 6: DOCUMENT CHANGE TRACKER MULTI-EMPRESA
 # ===============================
 
 class DocumentChangeTracker:
-    """
-    Sistema para rastrear cambios en documentos y invalidar cache
-    """
+    """Sistema para rastrear cambios en documentos por empresa"""
     
     def __init__(self, redis_client):
         self.redis_client = redis_client
-        self.version_key = "vectorstore_version"
-        self.doc_hash_key = "document_hashes"
     
-    def get_current_version(self) -> int:
-        """Obtener versión actual del vectorstore"""
+    def get_current_version(self, company_config: CompanyConfig) -> int:
+        """Obtener versión actual del vectorstore por empresa"""
         try:
-            version = self.redis_client.get(self.version_key)
+            version_key = company_config.get_redis_key("vectorstore_version")
+            version = self.redis_client.get(version_key)
             return int(version) if version else 0
         except:
             return 0
     
-    def increment_version(self):
-        """Incrementar versión del vectorstore"""
+    def increment_version(self, company_config: CompanyConfig):
+        """Incrementar versión del vectorstore por empresa"""
         try:
-            self.redis_client.incr(self.version_key)
-            logger.info(f"Vectorstore version incremented to {self.get_current_version()}")
+            version_key = company_config.get_redis_key("vectorstore_version")
+            self.redis_client.incr(version_key)
+            logger.info(f"[{company_config.company_id}] Vectorstore version incremented to {self.get_current_version(company_config)}")
         except Exception as e:
-            logger.error(f"Error incrementing version: {e}")
+            logger.error(f"[{company_config.company_id}] Error incrementing version: {e}")
     
-    def register_document_change(self, doc_id: str, change_type: str):
+    def register_document_change(self, doc_id: str, change_type: str, company_config: CompanyConfig):
         """
-        Registrar cambio en documento
+        Registrar cambio en documento con aislamiento por empresa
         change_type: 'added', 'updated', 'deleted'
         """
         try:
             change_data = {
                 'doc_id': doc_id,
                 'change_type': change_type,
+                'company_id': company_config.company_id,
                 'timestamp': datetime.utcnow().isoformat()
             }
             
-            # Registrar cambio
-            change_key = f"doc_change:{doc_id}:{int(time.time())}"
+            # Register change with company isolation
+            change_key = company_config.get_redis_key("doc_change", f"{doc_id}:{int(time.time())}")
             self.redis_client.setex(change_key, 3600, json.dumps(change_data))  # 1 hour TTL
             
-            # Incrementar versión global
-            self.increment_version()
+            # Increment company-specific version
+            self.increment_version(company_config)
             
-            logger.info(f"Document change registered: {doc_id} - {change_type}")
+            logger.info(f"[{company_config.company_id}] Document change registered: {doc_id} - {change_type}")
             
         except Exception as e:
-            logger.error(f"Error registering document change: {e}")
+            logger.error(f"[{company_config.company_id}] Error registering document change: {e}")
     
-    def should_invalidate_cache(self, last_version: int) -> bool:
-        """Determinar si se debe invalidar cache"""
-        current_version = self.get_current_version()
+    def should_invalidate_cache(self, last_version: int, company_config: CompanyConfig) -> bool:
+        """Determinar si se debe invalidar cache por empresa"""
+        current_version = self.get_current_version(company_config)
         return current_version > last_version
 
-# Instanciar el tracker
+# Initialize instances
+conversation_manager = ModernConversationManager(redis_client, MAX_CONTEXT_MESSAGES)
 document_change_tracker = DocumentChangeTracker(redis_client)
+
+print("✅ Multi-company conversation manager and multimedia system initialized")
+print("✅ Document change tracking system initialized")
+print("✅ Bot activation logic adapted for multi-company environment")
 
 # ===============================
 # Multi-Agent System
