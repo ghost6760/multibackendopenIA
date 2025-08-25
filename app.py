@@ -648,7 +648,7 @@ def is_message_already_processed(message_id, conversation_id, company_config: Co
 
 class ModernConversationManager:
     """
-    ADAPTADO: Conversation Manager para múltiples empresas con aislamiento de datos
+    CORREGIDO: Conversation Manager con aislamiento completo por empresa
     """
     
     def __init__(self, redis_client, max_messages: int = 10):
@@ -684,7 +684,7 @@ class ModernConversationManager:
     
     def _get_or_create_redis_history(self, user_id: str, company_config: CompanyConfig) -> BaseChatMessageHistory:
         """
-        ADAPTADO: Método interno para crear/obtener RedisChatMessageHistory con aislamiento por empresa
+        CORREGIDO: Método interno para crear/obtener RedisChatMessageHistory con aislamiento completo
         """
         # Use company-specific user_id
         full_user_id = f"{company_config.company_id}:{user_id}"
@@ -693,13 +693,14 @@ class ModernConversationManager:
             try:
                 redis_params = self._get_redis_connection_params()
                 
-                # Create RedisChatMessageHistory with company-specific key prefix
-                key_prefix = company_config.get_redis_key("chat_history", "")
+                # CRÍTICO: Usar session_id con prefijo de empresa para aislamiento completo
+                company_session_id = f"{company_config.company_id}:{user_id}"
                 
+                # Create RedisChatMessageHistory with company-specific session ID
                 self.message_histories[full_user_id] = RedisChatMessageHistory(
-                    session_id=user_id,  # Use original user_id as session
+                    session_id=company_session_id,  # ✅ CORREGIDO: Incluye prefijo de empresa
                     url=redis_params["url"],
-                    key_prefix=key_prefix,
+                    key_prefix="chat_history:",  # Prefijo estándar para chat history
                     ttl=redis_params["ttl"]
                 )
                 
@@ -719,7 +720,7 @@ class ModernConversationManager:
     
     def get_chat_history(self, user_id: str, company_config: CompanyConfig, format_type: str = "dict") -> Any:
         """
-        ADAPTADO: Método unificado para obtener chat history con aislamiento por empresa
+        MANTENIDO: Método unificado para obtener chat history con aislamiento por empresa
         """
         if not user_id:
             if format_type == "dict":
@@ -833,9 +834,12 @@ class ModernConversationManager:
             return False
     
     def _update_conversation_metadata(self, user_id: str, company_config: CompanyConfig):
-        """Update conversation metadata in Redis with company isolation"""
+        """
+        CORREGIDO: Update conversation metadata in Redis with proper company isolation
+        """
         try:
-            conversation_key = company_config.get_redis_key("conversation", user_id)
+            # CRÍTICO: Usar el prefijo de empresa correctamente
+            conversation_key = f"{company_config.redis_prefix}conversation:{user_id}"
             metadata = {
                 'last_updated': str(time.time()),
                 'user_id': user_id,
@@ -850,16 +854,18 @@ class ModernConversationManager:
             logger.error(f"Error updating metadata for user {user_id} in {company_config.company_id}: {e}")
     
     def load_conversations_from_redis(self):
-        """Load conversations from Redis with company awareness"""
+        """
+        CORREGIDO: Load conversations from Redis with proper company isolation
+        """
         try:
             loaded_count = 0
             
             # Load conversations for each configured company
             for company_config in COMPANIES_CONFIG.values():
                 try:
-                    # Search for company-specific conversation keys
-                    conversation_pattern = company_config.get_redis_key("conversation", "*")
-                    chat_history_pattern = company_config.get_redis_key("chat_history", "*")
+                    # CRÍTICO: Usar patrones de búsqueda correctos con prefijos de empresa
+                    conversation_pattern = f"{company_config.redis_prefix}conversation:*"
+                    chat_history_pattern = f"chat_history:{company_config.company_id}:*"
                     
                     conversation_keys = self.redis_client.keys(conversation_pattern)
                     chat_history_keys = self.redis_client.keys(chat_history_pattern)
@@ -867,15 +873,19 @@ class ModernConversationManager:
                     # Migrate old format conversations if needed
                     for key in conversation_keys:
                         try:
-                            # Extract user_id from key
-                            key_parts = key.split(':')
-                            if len(key_parts) >= 3:  # company:conversation:user_id
-                                user_id = ':'.join(key_parts[2:])
+                            # Extract user_id from key: "company_prefix:conversation:user_id"
+                            key_str = key.decode() if isinstance(key, bytes) else str(key)
+                            conversation_prefix = f"{company_config.redis_prefix}conversation:"
+                            
+                            if key_str.startswith(conversation_prefix):
+                                user_id = key_str[len(conversation_prefix):]
                                 context_data = self.redis_client.hgetall(key)
                                 
-                                if context_data and 'messages' in context_data:
+                                if context_data and b'messages' in context_data:
                                     # Migrate old messages to new format
-                                    old_messages = json.loads(context_data['messages'])
+                                    old_messages_bytes = context_data[b'messages']
+                                    old_messages = json.loads(old_messages_bytes.decode() if isinstance(old_messages_bytes, bytes) else old_messages_bytes)
+                                    
                                     history = self.get_chat_history(user_id, company_config, format_type="langchain")
                                     
                                     # Check if already migrated
@@ -896,10 +906,10 @@ class ModernConversationManager:
                             continue
                     
                     # Count conversations already in new format
-                    company_new_format = len([k for k in chat_history_keys 
-                                            if k not in [company_config.get_redis_key("chat_history", 
-                                                       k.split(':')[-1]) for k in conversation_keys]])
+                    company_new_format = len(chat_history_keys)
                     loaded_count += company_new_format
+                    
+                    logger.info(f"✅ Company {company_config.company_id}: {len(conversation_keys)} old format, {company_new_format} new format")
                     
                 except Exception as e:
                     logger.warning(f"Error loading conversations for {company_config.company_id}: {e}")
@@ -925,8 +935,8 @@ class ModernConversationManager:
             history = self.get_chat_history(user_id, company_config, format_type="langchain")
             history.clear()
             
-            # Clear metadata
-            conversation_key = company_config.get_redis_key("conversation", user_id)
+            # CORREGIDO: Clear metadata with proper company prefix
+            conversation_key = f"{company_config.redis_prefix}conversation:{user_id}"
             self.redis_client.delete(conversation_key)
             
             # Clear cache
@@ -940,6 +950,22 @@ class ModernConversationManager:
         except Exception as e:
             logger.error(f"❌ Error clearing conversation for user {user_id} in {company_config.company_id}: {e}")
             return False
+
+    def get_last_updated(self, user_id: str, company_config: CompanyConfig) -> str:
+        """
+        AÑADIDO: Get last updated timestamp for a conversation
+        """
+        try:
+            conversation_key = f"{company_config.redis_prefix}conversation:{user_id}"
+            metadata = self.redis_client.hgetall(conversation_key)
+            
+            if metadata and b'last_updated' in metadata:
+                return metadata[b'last_updated'].decode() if isinstance(metadata[b'last_updated'], bytes) else metadata[b'last_updated']
+            
+            return "Never"
+        except Exception as e:
+            logger.error(f"Error getting last updated for user {user_id} in {company_config.company_id}: {e}")
+            return "Unknown"
 
 # ===============================
 # PASO 5: SISTEMA MULTIMEDIA ADAPTADO
@@ -3361,7 +3387,7 @@ def list_conversations():
         # Get company-specific conversation manager
         conv_manager = modern_conversation_managers[company_config.company_id]
         
-        # Get conversation keys with company prefix
+        # CORREGIDO: Get conversation keys with proper company prefix
         pattern = f"{company_config.redis_prefix}conversation:*"
         keys = redis_client.keys(pattern)
         
@@ -3373,14 +3399,19 @@ def list_conversations():
         conversations = []
         for key in paginated_keys:
             try:
-                user_id = key.replace(f"{company_config.redis_prefix}conversation:", '')
-                messages = conv_manager.get_chat_history(user_id)
+                # CORREGIDO: Extract user_id properly
+                key_str = key.decode() if isinstance(key, bytes) else str(key)
+                conversation_prefix = f"{company_config.redis_prefix}conversation:"
                 
-                conversations.append({
-                    "user_id": user_id,
-                    "message_count": len(messages),
-                    "last_updated": conv_manager.get_last_updated(user_id)
-                })
+                if key_str.startswith(conversation_prefix):
+                    user_id = key_str[len(conversation_prefix):]
+                    messages = conv_manager.get_chat_history(user_id, company_config)
+                    
+                    conversations.append({
+                        "user_id": user_id,
+                        "message_count": len(messages),
+                        "last_updated": conv_manager.get_last_updated(user_id, company_config)
+                    })
             except Exception as e:
                 logger.warning(f"[{company_config.company_id}] Error parsing conversation {key}: {e}")
                 continue
@@ -3405,13 +3436,13 @@ def get_conversation(user_id):
             return create_error_response("Valid company ID required", status_code=400)
         
         conv_manager = modern_conversation_managers[company_config.company_id]
-        messages = conv_manager.get_chat_history(user_id)
+        messages = conv_manager.get_chat_history(user_id, company_config)
         
         return create_success_response({
             "user_id": user_id,
             "message_count": len(messages),
             "messages": messages,
-            "last_updated": conv_manager.get_last_updated(user_id)
+            "last_updated": conv_manager.get_last_updated(user_id, company_config)
         }, company_config)
         
     except Exception as e:
@@ -3427,13 +3458,15 @@ def delete_conversation(user_id):
             return create_error_response("Valid company ID required", status_code=400)
         
         conv_manager = modern_conversation_managers[company_config.company_id]
-        conv_manager.clear_conversation(user_id)
+        success = conv_manager.clear_conversation(user_id, company_config)
         
-        logger.info(f"[{company_config.company_id}] Conversation {user_id} deleted")
-        
-        return create_success_response({
-            "message": f"Conversation {user_id} deleted"
-        }, company_config)
+        if success:
+            logger.info(f"[{company_config.company_id}] Conversation {user_id} deleted")
+            return create_success_response({
+                "message": f"Conversation {user_id} deleted"
+            }, company_config)
+        else:
+            return create_error_response("Failed to delete conversation", company_config, 500)
         
     except Exception as e:
         company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
