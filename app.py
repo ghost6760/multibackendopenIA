@@ -2341,53 +2341,71 @@ def create_enhanced_multiagent_system(chat_model, conversation_manager, company_
 
 
 # ===============================
-# modern_rag_system_with_multiagent
+# modern_rag_system_with_multiagent - ADAPTADO PARA MÚLTIPLES EMPRESAS
 # ===============================
-def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings, conversation_manager):
+def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings, conversation_manager, company_config: CompanyConfig):
     """
-    Crear sistema RAG moderno con arquitectura multi-agente
+    ✅ ADAPTADO: Crear sistema RAG moderno con arquitectura multi-agente para múltiples empresas
     Reemplaza la clase ModernBenovaRAGSystem manteniendo compatibilidad
+    
+    Args:
+        vectorstore: Vector store específico de la empresa
+        chat_model: Modelo de chat
+        embeddings: Embeddings model
+        conversation_manager: Gestor de conversaciones
+        company_config: Configuración específica de la empresa
     """
-    class ModernBenovaRAGSystemMultiAgent:
+    class ModernRAGSystemMultiAgent:
         """
-        Wrapper que mantiene compatibilidad con el sistema existente
-        pero usa arquitectura multi-agente internamente
+        ✅ ADAPTADO: Wrapper que mantiene compatibilidad con el sistema existente
+        pero usa arquitectura multi-agente internamente con soporte multi-empresa
         """
         
-        def __init__(self, vectorstore, chat_model, embeddings, conversation_manager):
+        def __init__(self, vectorstore, chat_model, embeddings, conversation_manager, company_config):
             self.vectorstore = vectorstore
             self.chat_model = chat_model
             self.embeddings = embeddings
             self.conversation_manager = conversation_manager
-            self.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            self.company_config = company_config  # ✅ NUEVO: Configuración por empresa
             
-            # Inicializar sistema multi-agente
-            self.multi_agent_system = BenovaMultiAgentSystem(
-                chat_model, vectorstore, conversation_manager
+            # ✅ ADAPTADO: Retriever con filtrado automático por empresa
+            self.retriever = vectorstore.as_retriever(
+                search_kwargs={
+                    "k": 3,
+                    "filter": {"company_id": company_config.company_id}  # ✅ FILTRO POR EMPRESA
+                }
+            )
+            
+            # ✅ ADAPTADO: Inicializar sistema multi-agente con configuración específica
+            self.multi_agent_system = MultiAgentSystem(
+                chat_model, conversation_manager, company_config
             )
         
         def get_response(self, question: str, user_id: str) -> Tuple[str, List]:
             """
-            Método compatible con la interfaz existente - FIXED: Usar invoke
+            ✅ ADAPTADO: Método compatible con la interfaz existente - FIXED: Usar invoke
+            Ahora incluye aislamiento por empresa
             """
             try:
-                # Usar sistema multi-agente
+                logger.info(f"[{self.company_config.company_id}] Processing request for user: {user_id}")
+                
+                # ✅ ADAPTADO: Usar sistema multi-agente con configuración de empresa
                 response, agent_used = self.multi_agent_system.get_response(question, user_id)
                 
-                # Obtener documentos para compatibilidad
+                # Obtener documentos para compatibilidad con filtrado por empresa
                 docs = self.retriever.invoke(question)
                 
-                logger.info(f"Multi-agent response: {response[:100]}... (agent: {agent_used})")
+                logger.info(f"[{self.company_config.company_id}] Multi-agent response: {response[:100]}... (agent: {agent_used})")
                 
                 return response, docs
                 
             except Exception as e:
-                logger.error(f"Error in multi-agent RAG system: {e}")
+                logger.error(f"[{self.company_config.company_id}] Error in multi-agent RAG system: {e}")
                 return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo. 🔧", []
         
         def add_documents(self, documents: List[str], metadatas: List[Dict] = None):
             """
-            ACTUALIZADO: Agregar documentos usando sistema de chunking avanzado
+            ✅ ADAPTADO: Agregar documentos usando sistema de chunking avanzado con aislamiento por empresa
             """
             if not documents:
                 return 0
@@ -2407,55 +2425,98 @@ def create_modern_rag_system_with_multiagent(vectorstore, chat_model, embeddings
                         for j, (text, auto_meta) in enumerate(zip(texts, auto_metadatas)):
                             if text.strip():
                                 all_texts.append(text)
-                                # Combinar metadatas
+                                # ✅ NUEVO: Combinar metadatas con información de empresa
                                 combined_meta = base_metadata.copy()
                                 combined_meta.update(auto_meta)
-                                combined_meta.update({"chunk_index": j, "doc_index": i})
+                                combined_meta.update({
+                                    "company_id": self.company_config.company_id,  # ✅ AISLAMIENTO POR EMPRESA
+                                    "chunk_index": j, 
+                                    "doc_index": i,
+                                    "added_at": datetime.utcnow().isoformat()
+                                })
                                 all_metas.append(combined_meta)
                 
                 # Agregar al vectorstore
                 if all_texts:
                     self.vectorstore.add_texts(all_texts, metadatas=all_metas)
-                    logger.info(f"Added {len(all_texts)} advanced chunks to vectorstore")
+                    logger.info(f"[{self.company_config.company_id}] Added {len(all_texts)} advanced chunks to vectorstore")
                 
                 return len(all_texts)
                 
             except Exception as e:
-                logger.error(f"Error adding documents with advanced chunking: {e}")
+                logger.error(f"[{self.company_config.company_id}] Error adding documents with advanced chunking: {e}")
                 return 0
     
-    return ModernBenovaRAGSystemMultiAgent(vectorstore, chat_model, embeddings, conversation_manager)
+    return ModernRAGSystemMultiAgent(vectorstore, chat_model, embeddings, conversation_manager, company_config)
 
 # ===============================
-# Initialize Modern Components
+# Initialize Modern Components - ADAPTADO PARA MÚLTIPLES EMPRESAS
 # ===============================
 
-# Crear instancias de los componentes modernos
+# ✅ ADAPTADO: Crear instancias de los componentes modernos para cada empresa
+modern_conversation_managers = {}
+modern_rag_systems = {}
+
 try:
-    modern_conversation_manager = ModernConversationManager(redis_client, MAX_CONTEXT_MESSAGES)
-    
-    modern_rag_system = create_modern_rag_system_with_multiagent(
-        vectorstore, 
-        chat_model, 
-        embeddings, 
-        modern_conversation_manager
-    )
-    logger.info("✅ Modern components initialized successfully")
+    # Inicializar componentes para cada empresa configurada
+    for company_id, company_config in COMPANIES_CONFIG.items():
+        logger.info(f"[{company_id}] Initializing modern components...")
+        
+        # ✅ NUEVO: Conversation manager específico por empresa
+        company_conversation_manager = ModernConversationManager(redis_client, MAX_CONTEXT_MESSAGES)
+        modern_conversation_managers[company_id] = company_conversation_manager
+        
+        # ✅ NUEVO: Vector store específico por empresa
+        company_vectorstore = vector_store_manager.get_vectorstore(company_config)
+        
+        # ✅ ADAPTADO: RAG system específico por empresa
+        company_rag_system = create_modern_rag_system_with_multiagent(
+            company_vectorstore, 
+            ChatOpenAI(
+                model=company_config.model_name,
+                temperature=company_config.temperature,
+                max_tokens=company_config.max_tokens,
+                openai_api_key=OPENAI_API_KEY
+            ), 
+            embeddings,  # Se puede compartir entre empresas
+            company_conversation_manager,
+            company_config  # ✅ NUEVO: Pasar configuración de empresa
+        )
+        modern_rag_systems[company_id] = company_rag_system
+        
+        logger.info(f"✅ [{company_id}] Modern components initialized successfully")
+        
 except Exception as e:
     logger.error(f"❌ Error initializing modern components: {e}")
     sys.exit(1)
 
+# ✅ NUEVO: Función para obtener sistema RAG por empresa
+def get_rag_system_for_company(company_config: CompanyConfig):
+    """
+    Obtiene el sistema RAG específico para una empresa
+    """
+    if company_config.company_id in modern_rag_systems:
+        return modern_rag_systems[company_config.company_id]
+    
+    logger.warning(f"RAG system not found for company {company_config.company_id}, using default")
+    # Fallback al primer sistema disponible
+    if modern_rag_systems:
+        return list(modern_rag_systems.values())[0]
+    
+    raise Exception(f"No RAG systems available for company {company_config.company_id}")
+
 # ===============================
-# Chat Response Handler
+# Chat Response Handler - ADAPTADO PARA MÚLTIPLES EMPRESAS
 # ===============================
 
-def get_modern_chat_response_multiagent(user_id: str, user_message: str, media_type: str = "text", media_context: str = None) -> str:
+def get_modern_chat_response_multiagent(user_id: str, user_message: str, company_config: CompanyConfig, media_type: str = "text", media_context: str = None) -> str:
     """
-    Versión actualizada que usa sistema multi-agente con soporte para multimedia
+    ✅ ADAPTADO: Versión actualizada que usa sistema multi-agente con soporte para multimedia y múltiples empresas
     
     Args:
         user_id: Identificador único del usuario
         user_message: Mensaje de texto del usuario
+        company_config: Configuración específica de la empresa
         media_type: Tipo de medio ('text', 'voice', 'image')
         media_context: Contexto adicional del medio (transcripción o descripción)
     
@@ -2463,38 +2524,41 @@ def get_modern_chat_response_multiagent(user_id: str, user_message: str, media_t
         str: Respuesta del asistente
     """
     if not user_id or not user_id.strip():
-        logger.error("Invalid user_id provided")
+        logger.error(f"[{company_config.company_id}] Invalid user_id provided")
         return "Error interno: ID de usuario inválido."
     
     # Validar que al menos haya user_message o media_context
     if (not user_message or not user_message.strip()) and not media_context:
-        logger.error("Empty or invalid message content and no media context")
+        logger.error(f"[{company_config.company_id}] Empty or invalid message content and no media context")
         return "Por favor, envía un mensaje con contenido para poder ayudarte. 😊"
     
     try:
-        # Usar sistema multi-agente global con soporte multimedia
-        response, agent_used = modern_rag_system.multi_agent_system.get_response(
+        # ✅ ADAPTADO: Obtener sistema RAG específico de la empresa
+        company_rag_system = get_rag_system_for_company(company_config)
+        
+        # ✅ ADAPTADO: Usar sistema multi-agente de la empresa con soporte multimedia
+        response, agent_used = company_rag_system.multi_agent_system.get_response(
             question=user_message, 
             user_id=user_id, 
             media_type=media_type, 
             media_context=media_context
         )
         
-        logger.info(f"Multi-agent response for user {user_id}: {response[:100]}... (agent: {agent_used})")
+        logger.info(f"[{company_config.company_id}] Multi-agent response for user {user_id}: {response[:100]}... (agent: {agent_used})")
         
         return response
         
     except Exception as e:
-        logger.exception(f"Error in multi-agent chat response for user {user_id}: {e}")
+        logger.exception(f"[{company_config.company_id}] Error in multi-agent chat response for user {user_id}: {e}")
         return "Disculpa, tuve un problema técnico. Por favor intenta de nuevo en unos momentos. 🔧"
 
 # ===============================
-# CHATWOOT API FUNCTIONS
+# CHATWOOT API FUNCTIONS - ADAPTADAS PARA MÚLTIPLES EMPRESAS
 # ===============================
 
-def send_message_to_chatwoot(conversation_id, message_content):
-    """Send message to Chatwoot using API"""
-    url = f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/conversations/{conversation_id}/messages"
+def send_message_to_chatwoot(conversation_id, message_content, company_config: CompanyConfig):
+    """✅ ADAPTADO: Send message to Chatwoot using API específico de empresa"""
+    url = f"{company_config.chatwoot_base_url}/api/v1/accounts/{company_config.chatwoot_account_id}/conversations/{conversation_id}/messages"
 
     headers = {
         "api_access_token": CHATWOOT_API_KEY,
@@ -2516,25 +2580,27 @@ def send_message_to_chatwoot(conversation_id, message_content):
             verify=True
         )
 
-        logger.info(f"Chatwoot API Response Status: {response.status_code}")
+        logger.info(f"[{company_config.company_id}] Chatwoot API Response Status: {response.status_code}")
         
         if response.status_code == 200:
-            logger.info(f"✅ Message sent to conversation {conversation_id}")
+            logger.info(f"✅ [{company_config.company_id}] Message sent to conversation {conversation_id}")
             return True
         else:
-            logger.error(f"❌ Failed to send message: {response.status_code} - {response.text}")
+            logger.error(f"❌ [{company_config.company_id}] Failed to send message: {response.status_code} - {response.text}")
             return False
 
     except Exception as e:
-        logger.error(f"❌ Error sending message to Chatwoot: {e}")
+        logger.error(f"❌ [{company_config.company_id}] Error sending message to Chatwoot: {e}")
         return False
 
-def extract_contact_id(data):
+def extract_contact_id(data, company_config: CompanyConfig = None):
     """
-    Extract contact_id with unified priority system and validation
+    ✅ ADAPTADO: Extract contact_id with unified priority system and validation
+    Incluye logging específico por empresa
     Returns: (contact_id, method_used, is_valid)
     """
     conversation_data = data.get("conversation", {})
+    company_prefix = f"[{company_config.company_id}] " if company_config else ""
     
     # Priority order for contact extraction
     extraction_methods = [
@@ -2553,269 +2619,72 @@ def extract_contact_id(data):
                 # Validate contact_id format
                 contact_id = str(contact_id).strip()
                 if contact_id.isdigit() or contact_id.startswith("contact_"):
-                    logger.info(f"✅ Contact ID extracted: {contact_id} (method: {method_name})")
+                    logger.info(f"✅ {company_prefix}Contact ID extracted: {contact_id} (method: {method_name})")
                     return contact_id, method_name, True
         except Exception as e:
-            logger.warning(f"Error in extraction method {method_name}: {e}")
+            logger.warning(f"{company_prefix}Error in extraction method {method_name}: {e}")
             continue
     
-    logger.error("❌ No valid contact_id found in webhook data")
+    logger.error(f"❌ {company_prefix}No valid contact_id found in webhook data")
     return None, "none", False
     
 # ===============================
-# Webhook Handlers
+# WEBHOOK HANDLERS - ADAPTADOS PARA MÚLTIPLES EMPRESAS
 # ===============================
-def extract_company_id(data):
-    """
-    Extraer company_id del payload del webhook
-    """
-    # Intentar obtener desde custom_attributes
-    conversation_data = data.get("conversation", {})
-    custom_attributes = conversation_data.get("custom_attributes", {})
-    company_id = custom_attributes.get("company_id")
+
+class WebhookError(Exception):
+    """Custom exception for webhook errors"""
+    def __init__(self, message, status_code=400):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
+def validate_webhook_data(data):
+    """Validate webhook data structure"""
+    if not data:
+        raise WebhookError("No JSON data received", 400)
     
-    if company_id:
-        return company_id
+    event_type = data.get("event")
+    if not event_type:
+        raise WebhookError("Missing event type", 400)
     
-    # Intentar obtener desde inbox_id (mapeo preconfigurado)
-    inbox_id = conversation_data.get("inbox_id")
-    if inbox_id:
-        # Mapeo de inbox_id a company_id (configurable)
-        inbox_to_company = {
-            "1": "benova",
-            "2": "empresa2"
-        }
-        return inbox_to_company.get(str(inbox_id), "benova")  # Default a benova
-    
-    # Default a benova si no se encuentra
-    return "benova"
+    return event_type
 
-def extract_contact_id(data):
-    """
-    Extract contact_id with unified priority system and validation
-    Returns: (contact_id, method_used, is_valid)
-    """
-    conversation_data = data.get("conversation", {})
-    
-    # Priority order for contact extraction
-    extraction_methods = [
-        ("conversation.contact_inbox.contact_id", 
-         lambda: conversation_data.get("contact_inbox", {}).get("contact_id")),
-        ("conversation.meta.sender.id", 
-         lambda: conversation_data.get("meta", {}).get("sender", {}).get("id")),
-        ("root.sender.id", 
-         lambda: data.get("sender", {}).get("id") if data.get("sender", {}).get("type") != "agent" else None)
-    ]
-    
-    for method_name, extractor in extraction_methods:
-        try:
-            contact_id = extractor()
-            if contact_id and str(contact_id).strip():
-                # Validate contact_id format
-                contact_id = str(contact_id).strip()
-                if contact_id.isdigit() or contact_id.startswith("contact_"):
-                    logger.info(f"✅ Contact ID extracted: {contact_id} (method: {method_name})")
-                    return contact_id, method_name, True
-        except Exception as e:
-            logger.warning(f"Error in extraction method {method_name}: {e}")
-            continue
-    
-    logger.error("❌ No valid contact_id found in webhook data")
-    return None, "none", False
-
-def process_incoming_message(data):
-    """Process incoming message with company-specific configuration"""
-    try:
-        # Extraer company_id
-        company_id = extract_company_id(data)
-        company_config = get_company_config(company_id)
-        
-        # Validar que la empresa existe
-        if company_id not in COMPANIES_CONFIG and company_id != "default":
-            logger.error(f"Company {company_id} not found in configuration")
-            return {"status": "error", "message": "Company configuration not found"}
-        
-        # Validar message type
-        message_type = data.get("message_type")
-        if message_type != "incoming":
-            logger.info(f"🤖 Ignoring message type: {message_type}")
-            return {"status": "non_incoming_message", "ignored": True}
-
-        # Extract and validate conversation data
-        conversation_data = data.get("conversation", {})
-        if not conversation_data:
-            raise Exception("Missing conversation data")
-
-        conversation_id = conversation_data.get("id")
-        conversation_status = conversation_data.get("status")
-        
-        if not conversation_id:
-            raise Exception("Missing conversation ID")
-
-        # Validate conversation_id format
-        if not str(conversation_id).strip() or not str(conversation_id).isdigit():
-            raise Exception("Invalid conversation ID format")
-
-        # Check if bot should respond
-        if not should_bot_respond(conversation_id, conversation_status, company_config):
-            return {
-                "status": "bot_inactive",
-                "message": f"Bot is inactive for status: {conversation_status}",
-                "active_only_for": BOT_ACTIVE_STATUSES
-            }
-
-        # Extract and validate message content
-        content = data.get("content", "").strip()
-        message_id = data.get("id")
-
-        # Check for duplicate processing
-        if message_id and is_message_already_processed(message_id, conversation_id, company_config):
-            return {"status": "already_processed", "ignored": True}
-
-        # Extract contact information
-        contact_id, extraction_method, is_valid = extract_contact_id(data)
-        if not is_valid or not contact_id:
-            raise Exception("Could not extract valid contact_id from webhook data")
-
-        # Generate standardized user_id
-        conversation_manager = ModernConversationManager(redis_client, company_config=company_config)
-        user_id = conversation_manager._create_user_id(contact_id)
-
-        logger.info(f"🔄 Processing message from company {company_id}, conversation {conversation_id}")
-        logger.info(f"👤 User: {user_id} (contact: {contact_id}, method: {extraction_method})")
-        logger.info(f"💬 Message: {content[:100]}...")
-
-        # Crear vectorstore específico para la empresa
-        vectorstore = RedisVectorStore(
-            embeddings,
-            redis_url=REDIS_URL,
-            index_name=company_config.vectorstore_index,
-            vector_dim=1536
-        )
-        
-        # Crear sistema multi-agente para la empresa
-        multi_agent_system = MultiAgentSystem(
-            chat_model, 
-            vectorstore, 
-            conversation_manager,
-            company_config
-        )
-        
-        # Generar respuesta
-        assistant_reply, agent_used = multi_agent_system.get_response(
-            content, user_id, "text", None
-        )
-        
-        if not assistant_reply or not assistant_reply.strip():
-            assistant_reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías intentar de nuevo? 😊"
-        
-        logger.info(f"🤖 Assistant response: {assistant_reply[:100]}...")
-
-        # Send response to Chatwoot
-        success = send_message_to_chatwoot(conversation_id, assistant_reply)
-
-        if not success:
-            raise Exception("Failed to send response to Chatwoot")
-
-        logger.info(f"✅ Successfully processed message for conversation {conversation_id}")
-        
-        return {
-            "status": "success",
-            "message": "Response sent successfully",
-            "company_id": company_id,
-            "conversation_id": str(conversation_id),
-            "user_id": user_id,
-            "contact_id": contact_id,
-            "contact_extraction_method": extraction_method,
-            "conversation_status": conversation_status,
-            "message_id": message_id,
-            "bot_active": True,
-            "model_used": MODEL_NAME,
-            "embedding_model": EMBEDDING_MODEL,
-            "vectorstore": "RedisVectorStore",
-            "message_length": len(content),
-            "response_length": len(assistant_reply),
-            "agent_used": agent_used
-        }
-
-    except Exception as e:
-        logger.exception(f"💥 Error procesando mensaje (Company: {company_id})")
-        return {"status": "error", "message": str(e)}
-
-def send_message_to_chatwoot(conversation_id, message_content):
-    """Send message to Chatwoot using API"""
-    url = f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/conversations/{conversation_id}/messages"
-
-    headers = {
-        "api_access_token": CHATWOOT_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "content": message_content,
-        "message_type": "outgoing",
-        "private": False
-    }
-
-    try:
-        response = requests.post(
-            url, 
-            json=payload, 
-            headers=headers, 
-            timeout=30,
-            verify=True
-        )
-
-        logger.info(f"Chatwoot API Response Status: {response.status_code}")
-        
-        if response.status_code == 200:
-            logger.info(f"✅ Message sent to conversation {conversation_id}")
-            return True
-        else:
-            logger.error(f"❌ Failed to send message: {response.status_code} - {response.text}")
-            return False
-
-    except Exception as e:
-        logger.error(f"❌ Error sending message to Chatwoot: {e}")
-        return False
-
-def handle_conversation_updated(data):
-    """Handle conversation_updated events to update bot status"""
+def handle_conversation_updated(data, company_config: CompanyConfig):
+    """✅ ADAPTADO: Handle conversation_updated events to update bot status por empresa"""
     try:
         conversation_id = data.get("id")
         if not conversation_id:
-            logger.error("❌ Could not extract conversation_id from conversation_updated event")
+            logger.error(f"❌ [{company_config.company_id}] Could not extract conversation_id from conversation_updated event")
             return False
         
         conversation_status = data.get("status")
         if not conversation_status:
-            logger.warning(f"⚠️ No status found in conversation_updated for {conversation_id}")
+            logger.warning(f"⚠️ [{company_config.company_id}] No status found in conversation_updated for {conversation_id}")
             return False
         
-        # Extraer company_id para obtener la configuración correcta
-        company_id = extract_company_id(data)
-        company_config = get_company_config(company_id)
-        
-        logger.info(f"📋 Conversation {conversation_id} updated to status: {conversation_status}")
+        logger.info(f"📋 [{company_config.company_id}] Conversation {conversation_id} updated to status: {conversation_status}")
         update_bot_status(conversation_id, conversation_status, company_config)
         return True
         
     except Exception as e:
-        logger.error(f"Error handling conversation_updated: {e}")
+        logger.error(f"[{company_config.company_id}] Error handling conversation_updated: {e}")
         return False
 
 # ===============================
-# FUNCIONES AUXILIARES MULTIMEDIA - NUEVAS
+# FUNCIONES AUXILIARES MULTIMEDIA - ADAPTADAS PARA MÚLTIPLES EMPRESAS
 # ===============================
 
-def analyze_image_from_url(image_url):
-    """Analizar imagen desde URL usando GPT-4 Vision"""
+def analyze_image_from_url(image_url, company_config: CompanyConfig = None):
+    """✅ ADAPTADO: Analizar imagen desde URL usando GPT-4 Vision con contexto de empresa"""
     try:
         import requests
         from io import BytesIO
         
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        
         # Descargar la imagen
-        logger.info(f"🔽 Downloading image from: {image_url}")
+        logger.info(f"🔽 {company_prefix}Downloading image from: {image_url}")
         headers = {
             'User-Agent': 'Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)'
         }
@@ -2825,82 +2694,289 @@ def analyze_image_from_url(image_url):
         # Verificar que es una imagen
         content_type = response.headers.get('content-type', '').lower()
         if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'gif', 'webp']):
-            logger.warning(f"⚠️ Content type might not be image: {content_type}")
+            logger.warning(f"⚠️ {company_prefix}Content type might not be image: {content_type}")
         
         # Crear archivo en memoria
         image_file = BytesIO(response.content)
         
-        # Analizar usando la función existente
-        return analyze_image(image_file)
+        # ✅ ADAPTADO: Analizar usando la función existente con contexto de empresa
+        return analyze_image(image_file, company_config)
         
     except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Error downloading image: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error downloading image: {e}")
         raise Exception(f"Error downloading image: {str(e)}")
     except Exception as e:
-        logger.error(f"❌ Error in image analysis from URL: {e}")
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.error(f"❌ {company_prefix}Error in image analysis from URL: {e}")
         raise
 
-def transcribe_audio_from_url(audio_url):
-    """Transcribir audio desde URL usando Whisper"""
-    try:
-        import requests
-        import tempfile
-        import os
-        
-        # Descargar el audio
-        logger.info(f"🔽 Downloading audio from: {audio_url}")
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)'
-        }
-        response = requests.get(audio_url, headers=headers, timeout=60)
-        response.raise_for_status()
-        
-        # Crear archivo temporal
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_file:
-            temp_file.write(response.content)
-            temp_path = temp_file.name
-        
-        try:
-            # Transcribir usando la función existente
-            result = transcribe_audio(temp_path)
-            return result
-        finally:
-            # Limpiar archivo temporal
-            try:
-                os.unlink(temp_path)
-            except Exception as cleanup_error:
-                logger.warning(f"⚠️ Could not delete temp file {temp_path}: {cleanup_error}")
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Error downloading audio: {e}")
-        raise Exception(f"Error downloading audio: {str(e)}")
-    except Exception as e:
-        logger.error(f"❌ Error in audio transcription from URL: {e}")
-        raise
-
-def debug_webhook_data(data):
-    """Función para debugging completo del webhook de Chatwoot"""
-    logger.info("🔍 === WEBHOOK DEBUG INFO ===")
-    logger.info(f"Event: {data.get('event')}")
-    logger.info(f"Message ID: {data.get('id')}")
-    logger.info(f"Message Type: {data.get('message_type')}")
-    logger.info(f"Content: '{data.get('content')}'")
-    logger.info(f"Content Length: {len(data.get('content', ''))}")
+def debug_webhook_data(data, company_config: CompanyConfig = None):
+    """✅ ADAPTADO: Función para debugging completo del webhook de Chatwoot por empresa"""
+    company_prefix = f"[{company_config.company_id}] " if company_config else ""
+    
+    logger.info(f"🔍 {company_prefix}=== WEBHOOK DEBUG INFO ===")
+    logger.info(f"{company_prefix}Event: {data.get('event')}")
+    logger.info(f"{company_prefix}Message ID: {data.get('id')}")
+    logger.info(f"{company_prefix}Message Type: {data.get('message_type')}")
+    logger.info(f"{company_prefix}Content: '{data.get('content')}'")
+    logger.info(f"{company_prefix}Content Length: {len(data.get('content', ''))}")
     
     attachments = data.get('attachments', [])
-    logger.info(f"Attachments Count: {len(attachments)}")
+    logger.info(f"{company_prefix}Attachments Count: {len(attachments)}")
     
     for i, att in enumerate(attachments):
-        logger.info(f"  Attachment {i}:")
-        logger.info(f"    Keys: {list(att.keys())}")
-        logger.info(f"    Type: {att.get('type')}")
-        logger.info(f"    File Type: {att.get('file_type')}")
-        logger.info(f"    URL: {att.get('url')}")
-        logger.info(f"    Data URL: {att.get('data_url')}")
-        logger.info(f"    Thumb URL: {att.get('thumb_url')}")
+        logger.info(f"{company_prefix}  Attachment {i}:")
+        logger.info(f"{company_prefix}    Keys: {list(att.keys())}")
+        logger.info(f"{company_prefix}    Type: {att.get('type')}")
+        logger.info(f"{company_prefix}    File Type: {att.get('file_type')}")
+        logger.info(f"{company_prefix}    URL: {att.get('url')}")
+        logger.info(f"{company_prefix}    Data URL: {att.get('data_url')}")
+        logger.info(f"{company_prefix}    Thumb URL: {att.get('thumb_url')}")
     
-    logger.info("🔍 === END DEBUG INFO ===")
+    logger.info(f"🔍 {company_prefix}=== END DEBUG INFO ===")
 
+def process_incoming_message(data, company_config: CompanyConfig):
+    """✅ ADAPTADO: Process incoming message with comprehensive validation and error handling para empresa específica"""
+    try:
+        # Validate message type
+        message_type = data.get("message_type")
+        if message_type != "incoming":
+            logger.info(f"🤖 [{company_config.company_id}] Ignoring message type: {message_type}")
+            return {"status": "non_incoming_message", "ignored": True}
+
+        # Extract and validate conversation data
+        conversation_data = data.get("conversation", {})
+        if not conversation_data:
+            raise WebhookError("Missing conversation data", 400)
+
+        conversation_id = conversation_data.get("id")
+        conversation_status = conversation_data.get("status")
+        
+        if not conversation_id:
+            raise WebhookError("Missing conversation ID", 400)
+
+        # Validate conversation_id format
+        if not str(conversation_id).strip() or not str(conversation_id).isdigit():
+            raise WebhookError("Invalid conversation ID format", 400)
+
+        # ✅ ADAPTADO: Check if bot should respond con configuración de empresa
+        if not should_bot_respond(conversation_id, conversation_status, company_config):
+            return {
+                "status": "bot_inactive",
+                "message": f"Bot is inactive for status: {conversation_status}",
+                "active_only_for": BOT_ACTIVE_STATUSES,
+                "company_id": company_config.company_id
+            }
+
+        # Extract and validate message content
+        content = data.get("content", "").strip()
+        message_id = data.get("id")
+
+        # MEJORADO: Extraer attachments con debugging por empresa
+        attachments = data.get("attachments", [])
+        logger.info(f"📎 [{company_config.company_id}] Attachments received: {len(attachments)}")
+        for i, att in enumerate(attachments):
+            logger.info(f"📎 [{company_config.company_id}] Attachment {i}: {att}")
+
+        # ✅ ADAPTADO: Check for duplicate processing con aislamiento por empresa
+        if message_id and is_message_already_processed(message_id, conversation_id, company_config):
+            return {"status": "already_processed", "ignored": True, "company_id": company_config.company_id}
+
+        # ✅ ADAPTADO: Extract contact information con logging por empresa
+        contact_id, extraction_method, is_valid = extract_contact_id(data, company_config)
+        if not is_valid or not contact_id:
+            raise WebhookError("Could not extract valid contact_id from webhook data", 400)
+
+        # ✅ ADAPTADO: Generate standardized user_id con aislamiento por empresa
+        conversation_manager = modern_conversation_managers[company_config.company_id]
+        user_id = conversation_manager._create_user_id(contact_id, company_config)
+
+        logger.info(f"🔄 [{company_config.company_id}] Processing message from conversation {conversation_id}")
+        logger.info(f"👤 [{company_config.company_id}] User: {user_id} (contact: {contact_id}, method: {extraction_method})")
+        logger.info(f"💬 [{company_config.company_id}] Message: {content[:100]}...")
+
+        # CORREGIDO: Procesar archivos adjuntos multimedia con contexto de empresa
+        media_context = None
+        media_type = "text"
+        processed_attachment = None
+        
+        for attachment in attachments:
+            try:
+                logger.info(f"🔍 [{company_config.company_id}] Processing attachment: {attachment}")
+                
+                # MEJORADO: Múltiples formas de obtener el tipo
+                attachment_type = None
+                
+                # Método 1: Campo 'type' directo
+                if attachment.get("type"):
+                    attachment_type = attachment["type"].lower()
+                    logger.info(f"📝 [{company_config.company_id}] Type from 'type' field: {attachment_type}")
+                
+                # Método 2: Campo 'file_type' (Chatwoot a veces usa esto)
+                elif attachment.get("file_type"):
+                    attachment_type = attachment["file_type"].lower()
+                    logger.info(f"📝 [{company_config.company_id}] Type from 'file_type' field: {attachment_type}")
+                
+                # MEJORADO: Múltiples formas de obtener la URL
+                url = None
+                
+                # Método 1: Campo 'data_url' (común en Chatwoot)
+                if attachment.get("data_url"):
+                    url = attachment["data_url"]
+                    logger.info(f"🔗 [{company_config.company_id}] URL from 'data_url': {url}")
+                
+                # Método 2: Campo 'url'
+                elif attachment.get("url"):
+                    url = attachment["url"]
+                    logger.info(f"🔗 [{company_config.company_id}] URL from 'url': {url}")
+                
+                # Método 3: Campo 'thumb_url' como fallback
+                elif attachment.get("thumb_url"):
+                    url = attachment["thumb_url"]
+                    logger.info(f"🔗 [{company_config.company_id}] URL from 'thumb_url': {url}")
+                
+                if not url:
+                    logger.warning(f"⚠️ [{company_config.company_id}] No URL found in attachment: {attachment}")
+                    continue
+                
+                # MEJORADO: Construir URL completa si es necesaria con URL específica de empresa
+                if url and not url.startswith("http"):
+                    # Remover slash inicial si existe para evitar doble slash
+                    if url.startswith("/"):
+                        url = url[1:]
+                    url = f"{company_config.chatwoot_base_url}/{url}"
+                    logger.info(f"🔗 [{company_config.company_id}] Full URL constructed: {url}")
+                
+                # MEJORADO: Inferir tipo desde URL si no está disponible
+                if not attachment_type and url:
+                    url_lower = url.lower()
+                    if any(url_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                        attachment_type = "image"
+                        logger.info(f"📝 [{company_config.company_id}] Type inferred from URL: {attachment_type}")
+                    elif any(url_lower.endswith(ext) for ext in ['.mp3', '.wav', '.m4a', '.ogg']):
+                        attachment_type = "audio"
+                        logger.info(f"📝 [{company_config.company_id}] Type inferred from URL: {attachment_type}")
+                    elif "image" in url_lower:
+                        attachment_type = "image"
+                        logger.info(f"📝 [{company_config.company_id}] Type inferred from URL path: {attachment_type}")
+                
+                # Procesar según el tipo con contexto de empresa
+                if attachment_type in ["image", "audio"]:
+                    media_type = attachment_type
+                    processed_attachment = {
+                        "type": attachment_type,
+                        "url": url,
+                        "original_data": attachment
+                    }
+                    
+                    logger.info(f"🎯 [{company_config.company_id}] Processing {media_type}: {url}")
+                    
+                    if media_type == "audio":
+                        try:
+                            logger.info(f"🎵 [{company_config.company_id}] Transcribing audio: {url}")
+                            media_context = transcribe_audio_from_url(url, company_config)  # ✅ ADAPTADO
+                            logger.info(f"🎵 [{company_config.company_id}] Audio transcribed: {media_context[:100]}...")
+                        except Exception as audio_error:
+                            logger.error(f"❌ [{company_config.company_id}] Audio transcription failed: {audio_error}")
+                            media_context = f"[Audio file - transcription failed: {str(audio_error)}]"
+                    
+                    elif media_type == "image":
+                        try:
+                            logger.info(f"🖼️ [{company_config.company_id}] Analyzing image: {url}")
+                            media_context = analyze_image_from_url(url, company_config)  # ✅ ADAPTADO
+                            logger.info(f"🖼️ [{company_config.company_id}] Image analyzed: {media_context[:100]}...")
+                        except Exception as image_error:
+                            logger.error(f"❌ [{company_config.company_id}] Image analysis failed: {image_error}")
+                            media_context = f"[Image file - analysis failed: {str(image_error)}]"
+                    
+                    break  # Procesar solo el primer adjunto válido
+                else:
+                    logger.info(f"⏭️ [{company_config.company_id}] Skipping attachment type: {attachment_type}")
+                    
+            except Exception as e:
+                logger.error(f"❌ [{company_config.company_id}] Error processing attachment {attachment}: {e}")
+                continue
+        
+        # MEJORADO: Validar que hay contenido procesable
+        if not content and not media_context:
+            logger.error(f"[{company_config.company_id}] Empty or invalid message content and no media context")
+            # Proporcionar información de debugging
+            debug_info = {
+                "attachments_count": len(attachments),
+                "attachments_sample": attachments[:2] if attachments else [],
+                "content_length": len(content),
+                "media_type": media_type,
+                "processed_attachment": processed_attachment,
+                "company_id": company_config.company_id
+            }
+            logger.error(f"[{company_config.company_id}] Debug info: {debug_info}")
+            
+            return {
+                "status": "success",
+                "message": "Empty message handled",
+                "conversation_id": str(conversation_id),
+                "company_id": company_config.company_id,
+                "debug_info": debug_info,
+                "assistant_reply": "Por favor, envía un mensaje con contenido para poder ayudarte. 😊"
+            }
+        
+        # Si solo hay contenido multimedia sin texto, usar el análisis como mensaje
+        if not content and media_context:
+            content = media_context  # Usar la transcripción directamente
+            logger.info(f"📝 [{company_config.company_id}] Using media context as primary content: {media_context[:100]}...")
+        
+        # ✅ ADAPTADO: Generar respuesta con contexto multimedia y empresa específica
+        logger.info(f"🤖 [{company_config.company_id}] Generating response with media_type: {media_type}")
+        assistant_reply = get_modern_chat_response_multiagent(
+            user_id, 
+            content, 
+            company_config,  # ✅ NUEVO: Pasar configuración de empresa
+            media_type=media_type,
+            media_context=media_context
+        )
+        
+        if not assistant_reply or not assistant_reply.strip():
+            assistant_reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías intentar de nuevo? 😊"
+        
+        logger.info(f"🤖 [{company_config.company_id}] Assistant response: {assistant_reply[:100]}...")
+
+        # ✅ ADAPTADO: Send response to Chatwoot específico de empresa
+        success = send_message_to_chatwoot(conversation_id, assistant_reply, company_config)
+
+        if not success:
+            raise WebhookError("Failed to send response to Chatwoot", 500)
+
+        logger.info(f"✅ [{company_config.company_id}] Successfully processed message for conversation {conversation_id}")
+        
+        return {
+            "status": "success",
+            "message": "Response sent successfully",
+            "conversation_id": str(conversation_id),
+            "user_id": user_id,
+            "contact_id": contact_id,
+            "contact_extraction_method": extraction_method,
+            "conversation_status": conversation_status,
+            "message_id": message_id,
+            "bot_active": True,
+            "company_id": company_config.company_id,
+            "company_name": company_config.company_name,
+            "model_used": company_config.model_name,
+            "embedding_model": EMBEDDING_MODEL,
+            "vectorstore": f"RedisVectorStore_{company_config.vectorstore_index}",
+            "message_length": len(content),
+            "response_length": len(assistant_reply),
+            "media_processed": media_type if media_context else None,
+            "media_context_length": len(media_context) if media_context else 0,
+            "processed_attachment": processed_attachment
+        }
+
+    except WebhookError as we:
+        raise we
+    except Exception as e:
+        company_prefix = f"[{company_config.company_id}] " if company_config else ""
+        logger.exception(f"💥 {company_prefix}Error procesando mensaje (ID: {message_id})")
+        raise WebhookError("Internal server error", 500)
 
 
 # ===============================
