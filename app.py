@@ -2979,27 +2979,40 @@ def process_incoming_message(data, company_config: CompanyConfig):
         raise WebhookError("Internal server error", 500)
 
 
-# ===============================
-# Flask Endpoints
-# ===============================
 @app.route("/webhook", methods=["POST"])
 def chatwoot_webhook():
     try:
         data = request.get_json()
-        event_type = data.get("event")
+        event_type = validate_webhook_data(data)
         
-        logger.info(f"🔔 WEBHOOK RECEIVED - Event: {event_type}")
+        # Early company identification for logging
+        company_config = identify_company_from_webhook(data)
+        company_id = company_config.company_id if company_config else "unknown"
+        
+        logger.info(f"[{company_id}] WEBHOOK RECEIVED - Event: {event_type}")
 
         # Handle conversation updates
         if event_type == "conversation_updated":
             success = handle_conversation_updated(data)
             status_code = 200 if success else 400
-            return jsonify({"status": "conversation_updated_processed", "success": success}), status_code
+            return jsonify({
+                "status": "conversation_updated_processed", 
+                "success": success,
+                "company_id": company_id
+            }), status_code
 
         # Handle only message_created events
         if event_type != "message_created":
-            logger.info(f"⏭️ Ignoring event type: {event_type}")
-            return jsonify({"status": "ignored_event_type", "event": event_type}), 200
+            logger.info(f"[{company_id}] Ignoring event type: {event_type}")
+            return jsonify({
+                "status": "ignored_event_type", 
+                "event": event_type,
+                "company_id": company_id
+            }), 200
+
+        # Debug attachments if present
+        if data.get('attachments'):
+            debug_webhook_data(data)
 
         # Process incoming message
         result = process_incoming_message(data)
@@ -3009,23 +3022,18 @@ def chatwoot_webhook():
         
         return jsonify(result), 200
 
+    except WebhookError as e:
+        logger.error(f"Webhook error: {e.message} (Status: {e.status_code})")
+        return jsonify({"status": "error", "message": "Error interno del servidor"}), e.status_code
     except Exception as e:
         logger.exception("Error no manejado en webhook")
         return jsonify({"status": "error", "message": "Error interno del servidor"}), 500
-        
+
 # ===============================
-# DOCUMENT MANAGEMENT ENDPOINTS - CORREGIDOS
+# DOCUMENT MANAGEMENT ENDPOINTS - MULTI-COMPANY
 # ===============================
 
-def create_success_response(data, status_code=200):
-    """Create standardized success response"""
-    return jsonify({"status": "success", **data}), status_code
-
-def create_error_response(message, status_code=400):
-    """Create standardized error response"""
-    return jsonify({"status": "error", "message": message}), status_code
-
-def validate_document_data(data):
+def validate_document_data(data: Dict[str, Any]) -> tuple:
     """Validate document data"""
     if not data or 'content' not in data:
         raise ValueError("Content is required")
@@ -3034,7 +3042,7 @@ def validate_document_data(data):
     if not content:
         raise ValueError("Content cannot be empty")
     
-    # Parsear metadata si es string
+    # Parse metadata if string
     metadata = data.get('metadata', {})
     if isinstance(metadata, str):
         try:
@@ -3047,102 +3055,112 @@ def validate_document_data(data):
 @app.route("/documents", methods=["POST"])
 def add_document():
     try:
+        # Get company configuration
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required (X-Company-ID header)", status_code=400)
+        
         data = request.get_json()
         content, metadata = validate_document_data(data)
         
-        # Generar doc_id
+        # Generate doc_id
         doc_id = hashlib.md5(content.encode()).hexdigest()
         
-        # Agregar doc_id a los metadatos
+        # Add company_id to metadata
         metadata['doc_id'] = doc_id
+        metadata['company_id'] = company_config.company_id
         
-        # Usar modern_rag_system
-        num_chunks = modern_rag_system.add_documents([content], [metadata])
+        # Use company-specific vector store manager
+        vector_manager = vector_store_managers[company_config.company_id]
+        num_chunks = vector_manager.add_documents_with_company_metadata(
+            company_config, [content], [metadata]
+        )
         
-        # Crear clave del documento
-        doc_key = f"document:{doc_id}"
-        
-        # Guardar en Redis
+        # Save to Redis with company-specific key
+        doc_key = company_config.get_document_key(doc_id)
         doc_data = {
             'content': content,
             'metadata': json.dumps(metadata),
             'created_at': str(datetime.utcnow().isoformat()),
-            'chunk_count': str(num_chunks)
+            'chunk_count': str(num_chunks),
+            'company_id': company_config.company_id
         }
         
         redis_client.hset(doc_key, mapping=doc_data)
-        ##redis_client.expire(doc_key, 604800)  # 7 días TTL
         
-        # NUEVO: Registrar cambio en documento
-        document_change_tracker.register_document_change(doc_id, 'added')
+        # Register document change
+        document_change_tracker.register_document_change(doc_id, 'added', company_config.company_id)
         
-        logger.info(f"✅ Document {doc_id} added with {num_chunks} chunks")
+        logger.info(f"[{company_config.company_id}] Document {doc_id} added with {num_chunks} chunks")
         
         return create_success_response({
             "document_id": doc_id,
             "chunk_count": num_chunks,
             "message": f"Document added with {num_chunks} chunks"
-        }, 201)
+        }, company_config, 201)
         
     except ValueError as e:
-        return create_error_response(str(e), 400)
+        return create_error_response(str(e), company_config if 'company_config' in locals() else None, 400)
     except Exception as e:
-        logger.exception("Error adding document")
-        return create_error_response("Failed to add document", 500)
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error adding document: {e}")
+        return create_error_response("Failed to add document", company_config if 'company_config' in locals() else None, 500)
 
-################################################################################################
 @app.route("/documents", methods=["GET"])
 def list_documents():
     try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required (X-Company-ID header)", status_code=400)
+        
         page = int(request.args.get('page', 1))
         page_size = min(int(request.args.get('page_size', 50)), 100)
         
-        # Obtener claves de documentos
-        doc_pattern = "document:*"
+        # Get company-specific document keys
+        doc_pattern = company_config.get_redis_key("document", "*")
         doc_keys = redis_client.keys(doc_pattern)
         
-        # Obtener claves de vectores
-        vector_pattern = "benova_documents:*"
+        # Get company-specific vector keys
+        vector_pattern = f"{company_config.vectorstore_index}:*"
         vector_keys = redis_client.keys(vector_pattern)
         
-        # Organizar vectores por doc_id (solo usando metadata)
+        # Organize vectors by doc_id with company filtering
         vectors_by_doc = {}
         for vector_key in vector_keys:
             try:
-                # Obtener SOLO el campo metadata (evita campos binarios)
                 metadata_str = redis_client.hget(vector_key, 'metadata')
                 if metadata_str:
                     metadata = json.loads(metadata_str)
-                    doc_id = metadata.get('doc_id')
-                    if doc_id:
-                        if doc_id not in vectors_by_doc:
-                            vectors_by_doc[doc_id] = []
-                        # Filtrar metadata para excluir campos problemáticos
-                        safe_metadata = {k: v for k, v in metadata.items() if k != 'embedding'}
-                        vectors_by_doc[doc_id].append({
-                            "vector_key": vector_key,
-                            "metadata": safe_metadata
-                        })
+                    # Only include vectors for this company
+                    if metadata.get('company_id') == company_config.company_id:
+                        doc_id = metadata.get('doc_id')
+                        if doc_id:
+                            if doc_id not in vectors_by_doc:
+                                vectors_by_doc[doc_id] = []
+                            safe_metadata = {k: v for k, v in metadata.items() if k != 'embedding'}
+                            vectors_by_doc[doc_id].append({
+                                "vector_key": vector_key,
+                                "metadata": safe_metadata
+                            })
             except Exception as e:
-                logger.warning(f"Error parsing vector {vector_key}: {e}")
+                logger.warning(f"[{company_config.company_id}] Error parsing vector {vector_key}: {e}")
                 continue
         
-        # Aplicar paginación a documentos
+        # Apply pagination
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         paginated_doc_keys = doc_keys[start_idx:end_idx]
         
-        # Construir respuesta
+        # Build response
         documents = []
         for key in paginated_doc_keys:
             try:
                 doc_data = redis_client.hgetall(key)
-                if doc_data:
-                    doc_id = key.split(':')[1] if ':' in key else key
+                if doc_data and doc_data.get('company_id') == company_config.company_id:
+                    doc_id = key.split(':')[-1] if ':' in key else key
                     content = doc_data.get('content', '')
                     metadata = json.loads(doc_data.get('metadata', '{}'))
                     
-                    # Obtener vectores de este documento
                     doc_vectors = vectors_by_doc.get(doc_id, [])
                     
                     documents.append({
@@ -3153,41 +3171,47 @@ def list_documents():
                         "chunk_count": int(doc_data.get('chunk_count', 0)),
                         "vectors": {
                             "count": len(doc_vectors),
-                            "sample_vectors": doc_vectors[:3]  # Limitar a 3
+                            "sample_vectors": doc_vectors[:3]
                         }
                     })
             except Exception as e:
-                logger.warning(f"Error parsing document {key}: {e}")
+                logger.warning(f"[{company_config.company_id}] Error parsing document {key}: {e}")
                 continue
         
         return create_success_response({
             "total_documents": len(doc_keys),
-            "total_vectors": len(vector_keys),
+            "total_vectors": len([k for k in vector_keys if redis_client.hget(k, 'metadata') and 
+                                json.loads(redis_client.hget(k, 'metadata') or '{}').get('company_id') == company_config.company_id]),
             "page": page,
             "page_size": page_size,
             "documents": documents
-        })
+        }, company_config)
         
     except Exception as e:
-        logger.error(f"Error listing documents: {e}")
-        return create_error_response("Failed to list documents", 500)
-######################################################################################
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error listing documents: {e}")
+        return create_error_response("Failed to list documents", company_config if 'company_config' in locals() else None, 500)
 
 @app.route("/documents/search", methods=["POST"])
 def search_documents():
     try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
         data = request.get_json()
         if not data or 'query' not in data:
-            return create_error_response("Query is required", 400)
+            return create_error_response("Query is required", company_config, 400)
         
         query = data['query'].strip()
         if not query:
-            return create_error_response("Query cannot be empty", 400)
+            return create_error_response("Query cannot be empty", company_config, 400)
         
-        k = min(data.get('k', MAX_RETRIEVED_DOCS), 20)  # Limit max results
+        k = min(data.get('k', MAX_RETRIEVED_DOCS), 20)
         
-        # CORREGIDO: Usar modern_rag_system
-        docs = modern_rag_system.search_documents(query, k)
+        # Use company-specific vector store manager
+        vector_manager = vector_store_managers[company_config.company_id]
+        docs = vector_manager.search_documents_for_company(company_config, query, k)
         
         results = []
         for doc in docs:
@@ -3201,62 +3225,69 @@ def search_documents():
             "query": query,
             "results_count": len(results),
             "results": results
-        })
+        }, company_config)
         
     except Exception as e:
-        logger.error(f"Error searching documents: {e}")
-        return create_error_response("Failed to search documents", 500)
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error searching documents: {e}")
+        return create_error_response("Failed to search documents", company_config if 'company_config' in locals() else None, 500)
 
 @app.route("/documents/bulk", methods=["POST"])
 def bulk_add_documents():
     try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
         data = request.get_json()
         if not data or 'documents' not in data:
-            return create_error_response("Documents array is required", 400)
+            return create_error_response("Documents array is required", company_config, 400)
 
         documents = data['documents']
         if not isinstance(documents, list) or not documents:
-            return create_error_response("Documents must be a non-empty array", 400)
+            return create_error_response("Documents must be a non-empty array", company_config, 400)
 
         added_docs = 0
         total_chunks = 0
         errors = []
-        added_doc_ids = []  # NUEVO: Rastrear IDs agregados
+        added_doc_ids = []
+
+        vector_manager = vector_store_managers[company_config.company_id]
 
         for i, doc_data in enumerate(documents):
             try:
                 content, metadata = validate_document_data(doc_data)
 
-                # Generar doc_id
                 doc_id = hashlib.md5(content.encode()).hexdigest()
                 metadata['doc_id'] = doc_id
+                metadata['company_id'] = company_config.company_id
 
-                # Usar modern_rag_system
-                num_chunks = modern_rag_system.add_documents([content], [metadata])
+                num_chunks = vector_manager.add_documents_with_company_metadata(
+                    company_config, [content], [metadata]
+                )
                 total_chunks += num_chunks
 
-                # Save to Redis
-                doc_key = f"document:{doc_id}"
+                # Save to Redis with company-specific key
+                doc_key = company_config.get_document_key(doc_id)
                 doc_redis_data = {
                     'content': content,
                     'metadata': json.dumps(metadata),
                     'created_at': str(datetime.utcnow().isoformat()),
-                    'chunk_count': str(num_chunks)
+                    'chunk_count': str(num_chunks),
+                    'company_id': company_config.company_id
                 }
 
                 redis_client.hset(doc_key, mapping=doc_redis_data)
-                ####redis_client.expire(doc_key, 604800)  # 7 days TTL
-
                 added_docs += 1
-                added_doc_ids.append(doc_id)  # NUEVO: Guardar ID
+                added_doc_ids.append(doc_id)
 
             except Exception as e:
                 errors.append(f"Document {i}: {str(e)}")
                 continue
 
-        # NUEVO: Registrar cambios en batch
+        # Register changes in batch
         for doc_id in added_doc_ids:
-            document_change_tracker.register_document_change(doc_id, 'added')
+            document_change_tracker.register_document_change(doc_id, 'added', company_config.company_id)
 
         response_data = {
             "documents_added": added_docs,
@@ -3268,299 +3299,585 @@ def bulk_add_documents():
             response_data["errors"] = errors
             response_data["message"] += f". {len(errors)} documents failed."
 
-        logger.info(f"✅ Bulk added {added_docs} documents with {total_chunks} chunks")
+        logger.info(f"[{company_config.company_id}] Bulk added {added_docs} documents with {total_chunks} chunks")
 
-        return create_success_response(response_data, 201)
+        return create_success_response(response_data, company_config, 201)
 
     except Exception as e:
-        logger.error(f"Error bulk adding documents: {e}")
-        return create_error_response("Failed to bulk add documents", 500)
-
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error bulk adding documents: {e}")
+        return create_error_response("Failed to bulk add documents", company_config if 'company_config' in locals() else None, 500)
 
 @app.route("/documents/<doc_id>", methods=["DELETE"])
 def delete_document(doc_id):
-    """
-    Endpoint mejorado para eliminar documentos garantizando eliminación completa de vectores
-    Mantiene compatibilidad con el código existente
-    """
     try:
-        doc_key = f"document:{doc_id}"
-        if not redis_client.exists(doc_key):
-            return create_error_response("Document not found", 404)
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
         
-        index_name = "benova_documents"
-        pattern = f"{index_name}:*"
+        doc_key = company_config.get_document_key(doc_id)
+        if not redis_client.exists(doc_key):
+            return create_error_response("Document not found", company_config, 404)
+        
+        # Verify document belongs to company
+        doc_data = redis_client.hgetall(doc_key)
+        if doc_data.get('company_id') != company_config.company_id:
+            return create_error_response("Document not found", company_config, 404)
+        
+        # Use company-specific vector store manager to delete vectors
+        vector_manager = vector_store_managers[company_config.company_id]
+        vectors_deleted = vector_manager.delete_document_vectors(company_config, doc_id)
+        
+        # Delete document
+        redis_client.delete(doc_key)
+        document_change_tracker.register_document_change(doc_id, 'deleted', company_config.company_id)
+        
+        logger.info(f"[{company_config.company_id}] Document {doc_id} deleted with {vectors_deleted} vectors")
+        
+        return create_success_response({
+            "message": "Document deleted successfully",
+            "vectors_deleted": vectors_deleted
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error deleting document {doc_id}: {e}")
+        return create_error_response("Failed to delete document", company_config if 'company_config' in locals() else None, 500)
+
+# ===============================
+# CONVERSATION MANAGEMENT ENDPOINTS - MULTI-COMPANY
+# ===============================
+
+@app.route("/conversations", methods=["GET"])
+def list_conversations():
+    try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
+        page = int(request.args.get('page', 1))
+        page_size = min(int(request.args.get('page_size', 50)), 100)
+        
+        # Get company-specific conversation manager
+        conv_manager = modern_conversation_managers[company_config.company_id]
+        
+        # Get conversation keys with company prefix
+        pattern = f"{company_config.redis_prefix}conversation:*"
         keys = redis_client.keys(pattern)
         
-        vectors_to_delete = []
-        vectors_found_direct = 0
-        vectors_found_metadata = 0
+        # Apply pagination
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_keys = keys[start_idx:end_idx]
         
-        for key in keys:
+        conversations = []
+        for key in paginated_keys:
             try:
-                vector_found = False
+                user_id = key.replace(f"{company_config.redis_prefix}conversation:", '')
+                messages = conv_manager.get_chat_history(user_id)
                 
-                # MÉTODO 1: Verificar el campo 'doc_id' directamente en el hash (lógica original)
-                doc_id_in_hash = redis_client.hget(key, 'doc_id')
-                if doc_id_in_hash == doc_id:
-                    vectors_to_delete.append(key)
-                    vectors_found_direct += 1
-                    vector_found = True
-                    logger.debug(f"Found vector {key} via direct doc_id field")
-                
-                # MÉTODO 2: Si no se encontró, buscar en metadata JSON (mejora)
-                if not vector_found:
-                    metadata_str = redis_client.hget(key, 'metadata')
-                    if metadata_str:
-                        try:
-                            metadata = json.loads(metadata_str)
-                            if metadata.get('doc_id') == doc_id:
-                                vectors_to_delete.append(key)
-                                vectors_found_metadata += 1
-                                vector_found = True
-                                logger.debug(f"Found vector {key} via metadata doc_id")
-                        except json.JSONDecodeError:
-                            logger.warning(f"Invalid JSON metadata in vector {key}")
-                            continue
-                
+                conversations.append({
+                    "user_id": user_id,
+                    "message_count": len(messages),
+                    "last_updated": conv_manager.get_last_updated(user_id)
+                })
             except Exception as e:
-                logger.warning(f"Error checking vector {key}: {e}")
+                logger.warning(f"[{company_config.company_id}] Error parsing conversation {key}: {e}")
                 continue
         
-        # Eliminar vectores si se encontraron
-        total_vectors_deleted = 0
-        if vectors_to_delete:
-            # Eliminar duplicados (por si acaso)
-            unique_vectors = list(set(vectors_to_delete))
-            redis_client.delete(*unique_vectors)
-            total_vectors_deleted = len(unique_vectors)
+        return create_success_response({
+            "total_conversations": len(keys),
+            "page": page,
+            "page_size": page_size,
+            "conversations": conversations
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error listing conversations: {e}")
+        return create_error_response("Failed to list conversations", company_config if 'company_config' in locals() else None, 500)
+
+@app.route("/conversations/<user_id>", methods=["GET"])
+def get_conversation(user_id):
+    try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
+        conv_manager = modern_conversation_managers[company_config.company_id]
+        messages = conv_manager.get_chat_history(user_id)
+        
+        return create_success_response({
+            "user_id": user_id,
+            "message_count": len(messages),
+            "messages": messages,
+            "last_updated": conv_manager.get_last_updated(user_id)
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error getting conversation: {e}")
+        return create_error_response("Failed to get conversation", company_config if 'company_config' in locals() else None, 500)
+
+@app.route("/conversations/<user_id>", methods=["DELETE"])
+def delete_conversation(user_id):
+    try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
+        conv_manager = modern_conversation_managers[company_config.company_id]
+        conv_manager.clear_conversation(user_id)
+        
+        logger.info(f"[{company_config.company_id}] Conversation {user_id} deleted")
+        
+        return create_success_response({
+            "message": f"Conversation {user_id} deleted"
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error deleting conversation: {e}")
+        return create_error_response("Failed to delete conversation", company_config if 'company_config' in locals() else None, 500)
+
+@app.route("/conversations/<user_id>/test", methods=["POST"])
+def test_conversation(user_id):
+    try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return create_error_response("Message is required", company_config, 400)
+        
+        message = data['message'].strip()
+        if not message:
+            return create_error_response("Message cannot be empty", company_config, 400)
+        
+        # Get bot response using company-specific system
+        response = get_multi_company_chat_response(company_config, user_id, message)
+        
+        return create_success_response({
+            "user_id": user_id,
+            "user_message": message,
+            "bot_response": response,
+            "timestamp": time.time()
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error testing conversation: {e}")
+        return create_error_response("Failed to test conversation", company_config if 'company_config' in locals() else None, 500)
+
+# ===============================
+# MULTIMEDIA PROCESSING ENDPOINTS - MULTI-COMPANY
+# ===============================
+
+@app.route("/process-voice", methods=["POST"])
+def process_voice_message():
+    try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
+        if 'audio' not in request.files:
+            return create_error_response("No audio file provided", company_config, 400)
+        
+        audio_file = request.files['audio']
+        user_id = request.form.get('user_id')
+        conversation_id = request.form.get('conversation_id')
+        
+        # Save temporary file
+        temp_path = f"/tmp/{audio_file.filename}"
+        audio_file.save(temp_path)
+        
+        # Transcribe audio using Whisper
+        transcript = transcribe_audio(temp_path)
+        
+        # Process with company-specific multi-agent system
+        response = get_multi_company_chat_response(
+            company_config=company_config,
+            user_id=user_id,
+            message="",  # Empty text message since everything comes from audio
+            media_type="voice",
+            media_context=transcript
+        )
+        
+        # Convert response to audio if requested
+        if request.form.get('return_audio', False):
+            audio_response = text_to_speech(response)
+            return send_file(audio_response, mimetype="audio/mpeg")
+        
+        logger.info(f"[{company_config.company_id}] Processed voice message for user {user_id}")
+        
+        return create_success_response({
+            "transcript": transcript,
+            "response": response
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error processing voice message: {e}")
+        return create_error_response("Failed to process voice message", company_config if 'company_config' in locals() else None, 500)
+
+@app.route("/process-image", methods=["POST"])
+def process_image_message():
+    try:
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
+        
+        if 'image' not in request.files:
+            return create_error_response("No image file provided", company_config, 400)
+        
+        image_file = request.files['image']
+        user_id = request.form.get('user_id')
+        question = request.form.get('question', "").strip()
+        
+        # Analyze image with GPT-4V
+        image_description = analyze_image(image_file)
+        
+        # Process with company-specific multi-agent system
+        response = get_multi_company_chat_response(
+            company_config=company_config,
+            user_id=user_id,
+            message=question,  # Text question (can be empty)
+            media_type="image",
+            media_context=image_description
+        )
+        
+        logger.info(f"[{company_config.company_id}] Processed image message for user {user_id}")
+        
+        return create_success_response({
+            "image_description": image_description,
+            "response": response
+        }, company_config)
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error processing image message: {e}")
+        return create_error_response("Failed to process image message", company_config if 'company_config' in locals() else None, 500)
+
+# ===============================
+# SYSTEM STATUS ENDPOINTS - MULTI-COMPANY
+# ===============================
+
+def check_component_health():
+    """Check health of system components"""
+    components = {}
+    
+    # Check Redis
+    try:
+        redis_client.ping()
+        components["redis"] = "connected"
+    except Exception as e:
+        components["redis"] = f"error: {str(e)}"
+    
+    # Check OpenAI for each company
+    for company_id, config in COMPANIES_CONFIG.items():
+        try:
+            # Test embedding with company-specific vector manager
+            vector_manager = vector_store_managers[company_id]
+            vector_manager.embeddings.embed_query("test")
+            components[f"openai_{company_id}"] = "connected"
+        except Exception as e:
+            components[f"openai_{company_id}"] = f"error: {str(e)}"
+        
+        # Check vectorstore for each company
+        try:
+            vector_manager = vector_store_managers[company_id]
+            vector_manager.vectorstore.similarity_search("test", k=1)
+            components[f"vectorstore_{company_id}"] = "connected"
+        except Exception as e:
+            components[f"vectorstore_{company_id}"] = f"error: {str(e)}"
+    
+    return components
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    try:
+        components = check_component_health()
+        
+        # Get statistics for all companies
+        company_stats = {}
+        for company_id, config in COMPANIES_CONFIG.items():
+            conversation_count = len(redis_client.keys(f"{config.redis_prefix}conversation:*"))
+            document_count = len(redis_client.keys(f"{config.redis_prefix}document:*"))
+            bot_status_count = len(redis_client.keys(f"{config.redis_prefix}bot_status:*"))
             
-            logger.info(f"✅ Removed {total_vectors_deleted} vectors for doc {doc_id}")
-            logger.info(f"   - Found via direct field: {vectors_found_direct}")
-            logger.info(f"   - Found via metadata: {vectors_found_metadata}")
-        else:
-            logger.warning(f"⚠️ No vectors found for doc {doc_id} - this might indicate an issue")
-        
-        # Eliminar documento y registrar cambio (lógica original intacta)
-        redis_client.delete(doc_key)
-        document_change_tracker.register_document_change(doc_id, 'deleted')
-        
-        # MEJORA: Verificación post-eliminación opcional
-        verification_enabled = True  # Puedes hacer esto configurable
-        cleanup_verification = None
-        
-        if verification_enabled:
-            # Verificar que no quedaron vectores huérfanos
-            remaining_vectors = []
-            for key in redis_client.keys(pattern):
-                try:
-                    # Verificar método 1
-                    doc_id_direct = redis_client.hget(key, 'doc_id')
-                    if doc_id_direct == doc_id:
-                        remaining_vectors.append(key)
-                        continue
-                    
-                    # Verificar método 2
-                    metadata_str = redis_client.hget(key, 'metadata')
-                    if metadata_str:
-                        try:
-                            metadata = json.loads(metadata_str)
-                            if metadata.get('doc_id') == doc_id:
-                                remaining_vectors.append(key)
-                        except json.JSONDecodeError:
-                            pass
-                except Exception:
-                    pass
-            
-            cleanup_verification = {
-                "cleanup_complete": len(remaining_vectors) == 0,
-                "remaining_vectors": len(remaining_vectors),
-                "remaining_vector_keys": remaining_vectors[:3] if remaining_vectors else []
+            company_stats[company_id] = {
+                "conversations": conversation_count,
+                "documents": document_count,
+                "bot_statuses": bot_status_count
             }
-            
-            if remaining_vectors:
-                logger.error(f"❌ CLEANUP INCOMPLETE: {len(remaining_vectors)} vectors still exist for deleted doc {doc_id}")
-                # Intentar eliminar los vectores restantes
-                try:
-                    redis_client.delete(*remaining_vectors)
-                    logger.info(f"🔧 Force-deleted {len(remaining_vectors)} remaining vectors")
-                    cleanup_verification["force_cleanup_applied"] = True
-                except Exception as cleanup_error:
-                    logger.error(f"Failed to force-delete remaining vectors: {cleanup_error}")
-                    cleanup_verification["force_cleanup_failed"] = True
         
-        # Construir respuesta manteniendo compatibilidad
+        # Determine overall health
+        healthy = all("error" not in str(status) for status in components.values())
+        
         response_data = {
-            "message": "Document deleted successfully",
-            "vectors_deleted": total_vectors_deleted,
-            "vectors_breakdown": {
-                "found_via_direct_field": vectors_found_direct,
-                "found_via_metadata": vectors_found_metadata,
-                "total": total_vectors_deleted
+            "timestamp": time.time(),
+            "components": components,
+            "company_statistics": company_stats,
+            "configuration": {
+                "model": MODEL_NAME,
+                "embedding_model": EMBEDDING_MODEL,
+                "max_tokens": MAX_TOKENS,
+                "temperature": TEMPERATURE,
+                "max_context_messages": MAX_CONTEXT_MESSAGES,
+                "similarity_threshold": SIMILARITY_THRESHOLD,
+                "max_retrieved_docs": MAX_RETRIEVED_DOCS,
+                "companies_configured": list(COMPANIES_CONFIG.keys())
             }
         }
         
-        # Agregar verificación solo si está habilitada y hay información relevante
-        if cleanup_verification and (not cleanup_verification["cleanup_complete"] or total_vectors_deleted == 0):
-            response_data["cleanup_verification"] = cleanup_verification
-        
-        logger.info(f"✅ Document {doc_id} deleted successfully with {total_vectors_deleted} vectors removed")
-        
-        return create_success_response(response_data)
+        if healthy:
+            return jsonify({"status": "healthy", **response_data}), 200
+        else:
+            return jsonify({"status": "unhealthy", **response_data}), 503
         
     except Exception as e:
-        logger.error(f"❌ Error deleting document {doc_id}: {e}")
-        return create_error_response("Failed to delete document", 500)
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": time.time()
+        }), 503
 
-
-@app.route("/documents/cleanup", methods=["POST"])
-def cleanup_orphaned_vectors():
-    """
-    Nuevo endpoint para limpiar vectores huérfanos
-    """
+@app.route("/status", methods=["GET"])
+def get_status():
     try:
-        data = request.get_json()
-        dry_run = data.get('dry_run', True) if data else True
+        company_config = get_company_from_request()
         
-        # Obtener todos los documentos existentes
-        doc_pattern = "document:*"
-        doc_keys = redis_client.keys(doc_pattern)
-        existing_doc_ids = set()
+        # If company specified, return company-specific status
+        if company_config:
+            conversation_count = len(redis_client.keys(f"{company_config.redis_prefix}conversation:*"))
+            document_count = len(redis_client.keys(f"{company_config.redis_prefix}document:*"))
+            bot_status_keys = redis_client.keys(f"{company_config.redis_prefix}bot_status:*")
+            
+            active_bots = 0
+            for key in bot_status_keys:
+                try:
+                    status_data = redis_client.hgetall(key)
+                    if status_data.get('active') == 'True':
+                        active_bots += 1
+                except Exception:
+                    continue
+            
+            processed_message_count = len(redis_client.keys(f"{company_config.redis_prefix}processed_message:*"))
+            
+            return create_success_response({
+                "timestamp": time.time(),
+                "statistics": {
+                    "total_conversations": conversation_count,
+                    "active_bots": active_bots,
+                    "total_bot_statuses": len(bot_status_keys),
+                    "processed_messages": processed_message_count,
+                    "total_documents": document_count
+                },
+                "environment": {
+                    "chatwoot_url": CHATWOOT_BASE_URL,
+                    "account_id": ACCOUNT_ID,
+                    "model": company_config.model_name,
+                    "embedding_model": EMBEDDING_MODEL,
+                    "redis_url": REDIS_URL,
+                    "vectorstore_index": company_config.vectorstore_index
+                }
+            }, company_config)
         
-        for key in doc_keys:
-            doc_id = key.split(':', 1)[1] if ':' in key else key
-            existing_doc_ids.add(doc_id)
-        
-        # Obtener todos los vectores
-        vector_pattern = f"{vector_manager.index_name}:*"
-        vector_keys = redis_client.keys(vector_pattern)
-        
-        orphaned_vectors = []
-        total_vectors = len(vector_keys)
-        
-        for vector_key in vector_keys:
-            try:
-                # Buscar doc_id en el vector
-                doc_id = None
+        # Return global status for all companies
+        else:
+            global_stats = {
+                "total_companies": len(COMPANIES_CONFIG),
+                "companies": {},
+                "global_totals": {
+                    "conversations": 0,
+                    "documents": 0,
+                    "bot_statuses": 0,
+                    "processed_messages": 0
+                }
+            }
+            
+            for company_id, config in COMPANIES_CONFIG.items():
+                conversation_count = len(redis_client.keys(f"{config.redis_prefix}conversation:*"))
+                document_count = len(redis_client.keys(f"{config.redis_prefix}document:*"))
+                bot_status_count = len(redis_client.keys(f"{config.redis_prefix}bot_status:*"))
+                processed_message_count = len(redis_client.keys(f"{config.redis_prefix}processed_message:*"))
                 
-                # Método 1: Campo directo
-                doc_id_direct = redis_client.hget(vector_key, 'doc_id')
-                if doc_id_direct:
-                    doc_id = doc_id_direct
-                else:
-                    # Método 2: Metadata JSON
-                    metadata_str = redis_client.hget(vector_key, 'metadata')
-                    if metadata_str:
-                        try:
-                            metadata = json.loads(metadata_str)
-                            doc_id = metadata.get('doc_id')
-                        except json.JSONDecodeError:
-                            pass
-                
-                # Si el vector tiene doc_id pero el documento no existe
-                if doc_id and doc_id not in existing_doc_ids:
-                    orphaned_vectors.append({
-                        "vector_key": vector_key,
-                        "doc_id": doc_id
-                    })
-                    
-            except Exception as e:
-                logger.warning(f"Error checking vector {vector_key}: {e}")
-                continue
-        
-        # Eliminar vectores huérfanos si no es dry_run
-        deleted_count = 0
-        if not dry_run and orphaned_vectors:
-            keys_to_delete = [v["vector_key"] for v in orphaned_vectors]
-            redis_client.delete(*keys_to_delete)
-            deleted_count = len(keys_to_delete)
-            logger.info(f"✅ Deleted {deleted_count} orphaned vectors")
-        
-        return create_success_response({
-            "total_vectors": total_vectors,
-            "total_documents": len(existing_doc_ids),
-            "orphaned_vectors_found": len(orphaned_vectors),
-            "orphaned_vectors_deleted": deleted_count,
-            "dry_run": dry_run,
-            "orphaned_samples": orphaned_vectors[:10]  # Muestra solo 10 ejemplos
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in cleanup: {e}")
-        return create_error_response("Failed to cleanup orphaned vectors", 500)
-
-@app.route("/documents/<doc_id>/vectors", methods=["GET"])
-def get_document_vectors(doc_id):
-    """
-    Nuevo endpoint para inspeccionar vectores de un documento específico
-    """
-    try:
-        vectors = vector_manager.find_vectors_by_doc_id(doc_id)
-        
-        vector_details = []
-        for vector_key in vectors:
-            try:
-                # Obtener metadata sin el embedding (para evitar datos binarios)
-                metadata_str = redis_client.hget(vector_key, 'metadata')
-                doc_id_direct = redis_client.hget(vector_key, 'doc_id')
-                
-                vector_info = {
-                    "vector_key": vector_key,
-                    "doc_id_direct": doc_id_direct,
-                    "has_metadata": bool(metadata_str)
+                global_stats["companies"][company_id] = {
+                    "conversations": conversation_count,
+                    "documents": document_count,
+                    "bot_statuses": bot_status_count,
+                    "processed_messages": processed_message_count
                 }
                 
-                if metadata_str:
-                    try:
-                        metadata = json.loads(metadata_str)
-                        # Filtrar campos problemáticos
-                        safe_metadata = {k: v for k, v in metadata.items() 
-                                       if k not in ['embedding', 'vector']}
-                        vector_info["metadata"] = safe_metadata
-                    except json.JSONDecodeError:
-                        vector_info["metadata_error"] = "Invalid JSON"
-                
-                vector_details.append(vector_info)
-                
-            except Exception as e:
-                logger.warning(f"Error getting details for vector {vector_key}: {e}")
-                continue
-        
-        return create_success_response({
-            "doc_id": doc_id,
-            "vectors_found": len(vectors),
-            "vectors": vector_details
-        })
+                # Add to global totals
+                global_stats["global_totals"]["conversations"] += conversation_count
+                global_stats["global_totals"]["documents"] += document_count
+                global_stats["global_totals"]["bot_statuses"] += bot_status_count
+                global_stats["global_totals"]["processed_messages"] += processed_message_count
+            
+            return jsonify({
+                "status": "success",
+                "timestamp": time.time(),
+                "statistics": global_stats,
+                "environment": {
+                    "chatwoot_url": CHATWOOT_BASE_URL,
+                    "account_id": ACCOUNT_ID,
+                    "model": MODEL_NAME,
+                    "embedding_model": EMBEDDING_MODEL,
+                    "redis_url": REDIS_URL
+                }
+            }), 200
         
     except Exception as e:
-        logger.error(f"Error getting vectors for doc {doc_id}: {e}")
-        return create_error_response("Failed to get document vectors", 500)
+        logger.error(f"Status check failed: {e}")
+        company_id = getattr(company_config, 'company_id', 'global') if 'company_config' in locals() else 'global'
+        return create_error_response("Failed to get status", company_config if 'company_config' in locals() else None, 500)
 
-@app.route("/documents/diagnostics", methods=["GET"])
-def document_diagnostics():
-    """
-    Endpoint para diagnosticar el estado del vectorstore
-    """
+@app.route("/reset", methods=["POST"])
+def reset_system():
     try:
-        # Contar documentos
-        doc_pattern = "document:*"
+        company_config = get_company_from_request()
+        
+        if company_config:
+            # Reset specific company
+            patterns = [
+                f"{company_config.redis_prefix}processed_message:*",
+                f"{company_config.redis_prefix}bot_status:*"
+            ]
+            
+            for pattern in patterns:
+                keys = redis_client.keys(pattern)
+                if keys:
+                    redis_client.delete(*keys)
+            
+            # Clear company conversations
+            conv_manager = modern_conversation_managers[company_config.company_id]
+            conversation_keys = redis_client.keys(f"{company_config.redis_prefix}conversation:*")
+            for key in conversation_keys:
+                user_id = key.replace(f"{company_config.redis_prefix}conversation:", '')
+                conv_manager.clear_conversation(user_id)
+            
+            logger.info(f"[{company_config.company_id}] Company system reset completed")
+            
+            return create_success_response({
+                "message": f"System reset completed for {company_config.company_name}",
+                "timestamp": time.time()
+            }, company_config)
+        
+        else:
+            # Reset all companies
+            for company_id, config in COMPANIES_CONFIG.items():
+                patterns = [
+                    f"{config.redis_prefix}processed_message:*",
+                    f"{config.redis_prefix}bot_status:*"
+                ]
+                
+                for pattern in patterns:
+                    keys = redis_client.keys(pattern)
+                    if keys:
+                        redis_client.delete(*keys)
+                
+                # Clear conversations for this company
+                conv_manager = modern_conversation_managers[company_id]
+                conversation_keys = redis_client.keys(f"{config.redis_prefix}conversation:*")
+                for key in conversation_keys:
+                    user_id = key.replace(f"{config.redis_prefix}conversation:", '')
+                    conv_manager.clear_conversation(user_id)
+                
+                logger.info(f"[{company_id}] Company system reset completed")
+            
+            logger.info("Global system reset completed")
+            
+            return jsonify({
+                "status": "success",
+                "message": "Global system reset completed for all companies",
+                "companies_reset": list(COMPANIES_CONFIG.keys()),
+                "timestamp": time.time()
+            }), 200
+        
+    except Exception as e:
+        company_id = getattr(company_config, 'company_id', 'global') if 'company_config' in locals() else 'global'
+        logger.error(f"[{company_id}] System reset failed: {e}")
+        return create_error_response("Failed to reset system", company_config if 'company_config' in locals() else None, 500)
+
+# ===============================
+# COMPANY MANAGEMENT ENDPOINTS
+# ===============================
+
+@app.route("/companies", methods=["GET"])
+def list_companies():
+    """List all configured companies"""
+    try:
+        companies = []
+        for company_id, config in COMPANIES_CONFIG.items():
+            # Get basic stats for each company
+            conversation_count = len(redis_client.keys(f"{config.redis_prefix}conversation:*"))
+            document_count = len(redis_client.keys(f"{config.redis_prefix}document:*"))
+            
+            companies.append({
+                "company_id": company_id,
+                "company_name": config.company_name,
+                "redis_prefix": config.redis_prefix,
+                "vectorstore_index": config.vectorstore_index,
+                "services": config.services,
+                "statistics": {
+                    "conversations": conversation_count,
+                    "documents": document_count
+                }
+            })
+        
+        return jsonify({
+            "status": "success",
+            "total_companies": len(companies),
+            "companies": companies
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing companies: {e}")
+        return create_error_response("Failed to list companies", status_code=500)
+
+@app.route("/companies/<company_id>/diagnostics", methods=["GET"])
+def company_diagnostics(company_id):
+    """Get detailed diagnostics for a specific company"""
+    try:
+        if company_id not in COMPANIES_CONFIG:
+            return create_error_response("Company not found", status_code=404)
+        
+        company_config = COMPANIES_CONFIG[company_id]
+        
+        # Count documents
+        doc_pattern = f"{company_config.redis_prefix}document:*"
         doc_keys = redis_client.keys(doc_pattern)
         total_docs = len(doc_keys)
         
-        # Contar vectores
-        vector_pattern = f"benova_documents:*"
+        # Count vectors
+        vector_pattern = f"{company_config.vectorstore_index}:*"
         vector_keys = redis_client.keys(vector_pattern)
-        total_vectors = len(vector_keys)
+        company_vectors = []
         
-        # Analizar vectores por doc_id
+        # Filter vectors by company
+        for vector_key in vector_keys:
+            try:
+                metadata_str = redis_client.hget(vector_key, 'metadata')
+                if metadata_str:
+                    metadata = json.loads(metadata_str)
+                    if metadata.get('company_id') == company_id:
+                        company_vectors.append(vector_key)
+            except Exception:
+                continue
+        
+        total_vectors = len(company_vectors)
+        
+        # Analyze vectors by doc_id
         doc_id_counts = {}
         vectors_without_doc_id = 0
         
-        for vector_key in vector_keys:
+        for vector_key in company_vectors:
             try:
                 doc_id = None
                 
-                # Buscar doc_id
                 doc_id_direct = redis_client.hget(vector_key, 'doc_id')
                 if doc_id_direct:
                     doc_id = doc_id_direct
@@ -3579,346 +3896,170 @@ def document_diagnostics():
                     vectors_without_doc_id += 1
                     
             except Exception as e:
-                logger.warning(f"Error analyzing vector {vector_key}: {e}")
+                logger.warning(f"[{company_id}] Error analyzing vector {vector_key}: {e}")
                 continue
         
-        # Identificar inconsistencias
+        # Identify orphaned documents
         orphaned_docs = []
         for doc_key in doc_keys:
-            doc_id = doc_key.split(':', 1)[1] if ':' in doc_key else doc_key
+            doc_id = doc_key.split(':')[-1] if ':' in doc_key else doc_key
             if doc_id not in doc_id_counts:
                 orphaned_docs.append(doc_id)
+        
+        # Get conversation statistics
+        conv_pattern = f"{company_config.redis_prefix}conversation:*"
+        conv_keys = redis_client.keys(conv_pattern)
         
         return create_success_response({
             "total_documents": total_docs,
             "total_vectors": total_vectors,
+            "total_conversations": len(conv_keys),
             "vectors_without_doc_id": vectors_without_doc_id,
             "documents_with_vectors": len(doc_id_counts),
             "orphaned_documents": len(orphaned_docs),
             "avg_vectors_per_doc": round(sum(doc_id_counts.values()) / len(doc_id_counts), 2) if doc_id_counts else 0,
             "sample_doc_vector_counts": dict(list(doc_id_counts.items())[:10]),
-            "orphaned_doc_samples": orphaned_docs[:5]
-        })
+            "orphaned_doc_samples": orphaned_docs[:5],
+            "vectorstore_index": company_config.vectorstore_index,
+            "redis_prefix": company_config.redis_prefix
+        }, company_config)
         
     except Exception as e:
-        logger.error(f"Error in diagnostics: {e}")
-        return create_error_response("Failed to run diagnostics", 500)
+        logger.error(f"[{company_id}] Error in diagnostics: {e}")
+        return create_error_response("Failed to run diagnostics", status_code=500)
 
 # ===============================
-# CONVERSATION MANAGEMENT ENDPOINTS - CORREGIDOS
+# DOCUMENTS CLEANUP ENDPOINTS - MULTI-COMPANY
 # ===============================
 
-@app.route("/conversations", methods=["GET"])
-def list_conversations():
+@app.route("/documents/cleanup", methods=["POST"])
+def cleanup_orphaned_vectors():
+    """Clean up orphaned vectors for a specific company"""
     try:
-        # CORREGIDO: Usar modern_conversation_manager
-        page = int(request.args.get('page', 1))
-        page_size = min(int(request.args.get('page_size', 50)), 100)
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
         
-        # Get conversation keys from Redis using modern pattern
-        pattern = f"{modern_conversation_manager.redis_prefix}*"
-        keys = redis_client.keys(pattern)
-        
-        # Apply pagination
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        paginated_keys = keys[start_idx:end_idx]
-        
-        conversations = []
-        for key in paginated_keys:
-            try:
-                user_id = key.replace(modern_conversation_manager.redis_prefix, '')
-                messages = modern_conversation_manager.get_chat_history(user_id)
-                
-                conversations.append({
-                    "user_id": user_id,
-                    "message_count": len(messages),
-                    "last_updated": modern_conversation_manager.get_last_updated(user_id)
-                })
-            except Exception as e:
-                logger.warning(f"Error parsing conversation {key}: {e}")
-                continue
-        
-        return create_success_response({
-            "total_conversations": len(keys),
-            "page": page,
-            "page_size": page_size,
-            "conversations": conversations
-        })
-        
-    except Exception as e:
-        logger.error(f"Error listing conversations: {e}")
-        return create_error_response("Failed to list conversations", 500)
-
-@app.route("/conversations/<user_id>", methods=["GET"])
-def get_conversation(user_id):
-    try:
-        # CORREGIDO: Usar modern_conversation_manager
-        messages = modern_conversation_manager.get_chat_history(user_id)
-        
-        return create_success_response({
-            "user_id": user_id,
-            "message_count": len(messages),
-            "messages": messages,
-            "last_updated": modern_conversation_manager.get_last_updated(user_id)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting conversation: {e}")
-        return create_error_response("Failed to get conversation", 500)
-
-@app.route("/conversations/<user_id>", methods=["DELETE"])
-def delete_conversation(user_id):
-    try:
-        # CORREGIDO: Usar modern_conversation_manager
-        modern_conversation_manager.clear_conversation(user_id)
-        
-        logger.info(f"✅ Conversation {user_id} deleted")
-        
-        return create_success_response({
-            "message": f"Conversation {user_id} deleted"
-        })
-        
-    except Exception as e:
-        logger.error(f"Error deleting conversation: {e}")
-        return create_error_response("Failed to delete conversation", 500)
-
-@app.route("/conversations/<user_id>/test", methods=["POST"])
-def test_conversation(user_id):
-    try:
         data = request.get_json()
-        if not data or 'message' not in data:
-            return create_error_response("Message is required", 400)
+        dry_run = data.get('dry_run', True) if data else True
         
-        message = data['message'].strip()
-        if not message:
-            return create_error_response("Message cannot be empty", 400)
+        # Get existing documents for this company
+        doc_pattern = f"{company_config.redis_prefix}document:*"
+        doc_keys = redis_client.keys(doc_pattern)
+        existing_doc_ids = set()
         
-        # Get bot response
-        response = get_modern_chat_response_multiagent(user_id, message)
+        for key in doc_keys:
+            doc_data = redis_client.hgetall(key)
+            if doc_data.get('company_id') == company_config.company_id:
+                doc_id = key.split(':')[-1] if ':' in key else key
+                existing_doc_ids.add(doc_id)
         
-        return create_success_response({
-            "user_id": user_id,
-            "user_message": message,
-            "bot_response": response,
-            "timestamp": time.time()
-        })
+        # Get vectors for this company
+        vector_pattern = f"{company_config.vectorstore_index}:*"
+        vector_keys = redis_client.keys(vector_pattern)
         
-    except Exception as e:
-        logger.error(f"Error testing conversation: {e}")
-        return create_error_response("Failed to test conversation", 500)
-
-#######1############
-@app.route("/process-voice", methods=["POST"])
-def process_voice_message():
-    try:
-        if 'audio' not in request.files:
-            return create_error_response("No audio file provided", 400)
+        orphaned_vectors = []
+        total_company_vectors = 0
         
-        audio_file = request.files['audio']
-        user_id = request.form.get('user_id')
-        conversation_id = request.form.get('conversation_id')
-        
-        # Guardar archivo temporalmente
-        temp_path = f"/tmp/{audio_file.filename}"
-        audio_file.save(temp_path)
-        
-        # Transcribir audio a texto usando Whisper
-        transcript = transcribe_audio(temp_path)
-        
-        # Procesar con sistema multi-agente usando parámetros multimedia
-        response = get_modern_chat_response_multiagent(
-            user_id=user_id,
-            user_message="",  # Mensaje textual vacío ya que todo viene del audio
-            media_type="voice",
-            media_context=transcript
-        )
-        
-        # Convertir respuesta a audio si es necesario
-        if request.form.get('return_audio', False):
-            audio_response = text_to_speech(response)
-            return send_file(audio_response, mimetype="audio/mpeg")
-        
-        return create_success_response({
-            "transcript": transcript,
-            "response": response
-        })
-        
-    except Exception as e:
-        logger.error(f"Error processing voice message: {e}")
-        return create_error_response("Failed to process voice message", 500)
-
-@app.route("/process-image", methods=["POST"])
-def process_image_message():
-    try:
-        if 'image' not in request.files:
-            return create_error_response("No image file provided", 400)
-        
-        image_file = request.files['image']
-        user_id = request.form.get('user_id')
-        question = request.form.get('question', "").strip()
-        
-        # Analizar imagen con GPT-4V
-        image_description = analyze_image(image_file)
-        
-        # Procesar con sistema multi-agente usando parámetros multimedia
-        response = get_modern_chat_response_multiagent(
-            user_id=user_id,
-            user_message=question,  # Pregunta textual (puede estar vacía)
-            media_type="image",
-            media_context=image_description
-        )
-        
-        return create_success_response({
-            "image_description": image_description,
-            "response": response
-        })
-        
-    except Exception as e:
-        logger.error(f"Error processing image message: {e}")
-        return create_error_response("Failed to process image message", 500)
-
-###########1###############################################
-
-# ===============================
-# SYSTEM STATUS ENDPOINTS - CORREGIDOS
-# ===============================
-
-def check_component_health():
-    """Check health of system components"""
-    components = {}
-    
-    # Check Redis
-    try:
-        redis_client.ping()
-        components["redis"] = "connected"
-    except Exception as e:
-        components["redis"] = f"error: {str(e)}"
-    
-    # Check OpenAI
-    try:
-        # CORREGIDO: Usar modern_rag_system
-        modern_rag_system.embeddings.embed_query("test")
-        components["openai"] = "connected"
-    except Exception as e:
-        components["openai"] = f"error: {str(e)}"
-    
-    # Check vectorstore
-    try:
-        # CORREGIDO: Usar modern_rag_system
-        modern_rag_system.vectorstore.similarity_search("test", k=1)
-        components["vectorstore"] = "connected"
-    except Exception as e:
-        components["vectorstore"] = f"error: {str(e)}"
-    
-    return components
-
-# ===============================
-# Health Check Endpoint
-# ===============================
-@app.route("/health", methods=["GET"])
-def health_check():
-    try:
-        # Check Redis
-        redis_client.ping()
-        
-        # Check OpenAI
-        embeddings.embed_query("test")
-        
-        # Información de empresas configuradas
-        companies_info = {}
-        for company_id, config in COMPANIES_CONFIG.items():
-            companies_info[company_id] = {
-                "vectorstore_index": config["vectorstore_index"],
-                "redis_prefix": config["redis_prefix"],
-                "configured": True
-            }
-        
-        return jsonify({
-            "status": "healthy",
-            "timestamp": time.time(),
-            "companies": companies_info,
-            "environment": os.getenv('ENVIRONMENT', 'production')
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": time.time()
-        }), 503
-
-@app.route("/status", methods=["GET"])
-def get_status():
-    try:
-        # CORREGIDO: Usar modern patterns
-        conversation_count = len(redis_client.keys(f"{modern_conversation_manager.redis_prefix}*"))
-        document_count = len(redis_client.keys("document:*"))
-        bot_status_keys = redis_client.keys("bot_status:*")
-        
-        # Count active bots
-        active_bots = 0
-        for key in bot_status_keys:
+        for vector_key in vector_keys:
             try:
-                status_data = redis_client.hgetall(key)
-                if status_data.get('active') == 'True':
-                    active_bots += 1
-            except Exception:
+                # Check if vector belongs to this company
+                metadata_str = redis_client.hget(vector_key, 'metadata')
+                if not metadata_str:
+                    continue
+                    
+                metadata = json.loads(metadata_str)
+                if metadata.get('company_id') != company_config.company_id:
+                    continue
+                
+                total_company_vectors += 1
+                
+                # Check for orphaned status
+                doc_id = metadata.get('doc_id')
+                if doc_id and doc_id not in existing_doc_ids:
+                    orphaned_vectors.append({
+                        "vector_key": vector_key,
+                        "doc_id": doc_id
+                    })
+                    
+            except Exception as e:
+                logger.warning(f"[{company_config.company_id}] Error checking vector {vector_key}: {e}")
                 continue
         
-        # Get processed message count
-        processed_message_count = len(redis_client.keys("processed_message:*"))
+        # Delete orphaned vectors if not dry_run
+        deleted_count = 0
+        if not dry_run and orphaned_vectors:
+            keys_to_delete = [v["vector_key"] for v in orphaned_vectors]
+            redis_client.delete(*keys_to_delete)
+            deleted_count = len(keys_to_delete)
+            logger.info(f"[{company_config.company_id}] Deleted {deleted_count} orphaned vectors")
         
         return create_success_response({
-            "timestamp": time.time(),
-            "statistics": {
-                "total_conversations": conversation_count,
-                "active_bots": active_bots,
-                "total_bot_statuses": len(bot_status_keys),
-                "processed_messages": processed_message_count,
-                "total_documents": document_count
-            },
-            "environment": {
-                "chatwoot_url": CHATWOOT_BASE_URL,
-                "account_id": ACCOUNT_ID,
-                "model": MODEL_NAME,
-                "embedding_model": EMBEDDING_MODEL,
-                "redis_url": REDIS_URL
-            }
-        })
+            "total_company_vectors": total_company_vectors,
+            "total_company_documents": len(existing_doc_ids),
+            "orphaned_vectors_found": len(orphaned_vectors),
+            "orphaned_vectors_deleted": deleted_count,
+            "dry_run": dry_run,
+            "orphaned_samples": orphaned_vectors[:10]
+        }, company_config)
         
     except Exception as e:
-        logger.error(f"Status check failed: {e}")
-        return create_error_response("Failed to get status", 500)
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error in cleanup: {e}")
+        return create_error_response("Failed to cleanup orphaned vectors", company_config if 'company_config' in locals() else None, 500)
 
-@app.route("/reset", methods=["POST"])
-def reset_system():
+@app.route("/documents/<doc_id>/vectors", methods=["GET"])
+def get_document_vectors(doc_id):
+    """Get vectors for a specific document and company"""
     try:
-        # CORREGIDO: Usar modern_conversation_manager
-        # Clear Redis caches
-        patterns = ["processed_message:*", "bot_status:*"]
-        for pattern in patterns:
-            keys = redis_client.keys(pattern)
-            if keys:
-                redis_client.delete(*keys)
+        company_config = get_company_from_request()
+        if not company_config:
+            return create_error_response("Valid company ID required", status_code=400)
         
-        # Clear all conversations using modern manager
-        conversation_keys = redis_client.keys(f"{modern_conversation_manager.redis_prefix}*")
-        for key in conversation_keys:
-            user_id = key.replace(modern_conversation_manager.redis_prefix, '')
-            modern_conversation_manager.clear_conversation(user_id)
+        vector_manager = vector_store_managers[company_config.company_id]
+        vectors = vector_manager.find_vectors_by_doc_id(doc_id, company_config.company_id)
         
-        logger.info("✅ System reset completed")
+        vector_details = []
+        for vector_key in vectors:
+            try:
+                metadata_str = redis_client.hget(vector_key, 'metadata')
+                doc_id_direct = redis_client.hget(vector_key, 'doc_id')
+                
+                vector_info = {
+                    "vector_key": vector_key,
+                    "doc_id_direct": doc_id_direct,
+                    "has_metadata": bool(metadata_str)
+                }
+                
+                if metadata_str:
+                    try:
+                        metadata = json.loads(metadata_str)
+                        # Filter problematic fields and verify company
+                        if metadata.get('company_id') == company_config.company_id:
+                            safe_metadata = {k: v for k, v in metadata.items() 
+                                           if k not in ['embedding', 'vector']}
+                            vector_info["metadata"] = safe_metadata
+                        else:
+                            vector_info["metadata_error"] = "Wrong company"
+                    except json.JSONDecodeError:
+                        vector_info["metadata_error"] = "Invalid JSON"
+                
+                vector_details.append(vector_info)
+                
+            except Exception as e:
+                logger.warning(f"[{company_config.company_id}] Error getting details for vector {vector_key}: {e}")
+                continue
         
         return create_success_response({
-            "message": "System reset completed",
-            "timestamp": time.time()
-        })
+            "doc_id": doc_id,
+            "vectors_found": len(vectors),
+            "vectors": vector_details
+        }, company_config)
         
     except Exception as e:
-        logger.error(f"System reset failed: {e}")
-        return create_error_response("Failed to reset system", 500)
+        company_id = getattr(company_config, 'company_id', 'unknown') if 'company_config' in locals() else 'unknown'
+        logger.error(f"[{company_id}] Error getting vectors for doc {doc_id}: {e}")
+        return create_error_response("Failed to get document vectors", company_config if 'company_config' in locals() else None, 500)
 
 # ===============================
 # STATIC FILE SERVING
@@ -3933,110 +4074,113 @@ def serve_frontend():
     return send_file('index.html')
 
 # ===============================
-# ERROR HANDLERS - MEJORADOS
+# ERROR HANDLERS
 # ===============================
 
 @app.errorhandler(404)
 def not_found(error):
-    return create_error_response("Endpoint not found", 404)
+    return create_error_response("Endpoint not found", status_code=404)
 
 @app.errorhandler(405)
 def method_not_allowed(error):
-    return create_error_response("Method not allowed", 405)
+    return create_error_response("Method not allowed", status_code=405)
 
 @app.errorhandler(500)
 def internal_error(error):
     logger.error(f"Internal server error: {error}")
-    return create_error_response("Internal server error", 500)
+    return create_error_response("Internal server error", status_code=500)
 
 @app.errorhandler(Exception)
 def handle_exception(e):
     logger.error(f"Unhandled exception: {e}")
-    return create_error_response("An unexpected error occurred", 500)
+    return create_error_response("An unexpected error occurred", status_code=500)
 
 # ===============================
-# STARTUP AND CLEANUP - ACTUALIZADOS
+# STARTUP AND CLEANUP
 # ===============================
 
 def startup_checks():
     """Startup verification checks"""
     try:
-        logger.info("🚀 Starting Benova Bot with Modern Architecture...")
+        logger.info("Starting Multi-Company Bot System...")
         
         # Check Redis connection
         redis_client.ping()
-        logger.info("✅ Redis connection verified")
+        logger.info("Redis connection verified")
         
-        # Check OpenAI connection
-        modern_rag_system.embeddings.embed_query("test startup")
-        logger.info("✅ OpenAI connection verified")
+        # Initialize company managers
+        initialize_company_managers()
         
-        # Check vectorstore
-        modern_rag_system.vectorstore.similarity_search("test", k=1)
-        logger.info("✅ Vectorstore connection verified")
-        
-        # Initialize conversation manager
-        logger.info("✅ Modern conversation manager initialized")
+        # Verify each company's setup
+        for company_id, config in COMPANIES_CONFIG.items():
+            try:
+                # Test OpenAI connection
+                vector_manager = vector_store_managers[company_id]
+                vector_manager.embeddings.embed_query("test startup")
+                logger.info(f"[{company_id}] OpenAI connection verified")
+                
+                # Test vectorstore
+                vector_manager.vectorstore.similarity_search("test", k=1)
+                logger.info(f"[{company_id}] Vectorstore connection verified")
+                
+            except Exception as e:
+                logger.error(f"[{company_id}] Setup verification failed: {e}")
+                raise
         
         # Display configuration
-        logger.info("📋 Configuration:")
+        logger.info("Configuration Summary:")
+        logger.info(f"   Companies: {list(COMPANIES_CONFIG.keys())}")
         logger.info(f"   Model: {MODEL_NAME}")
         logger.info(f"   Embedding Model: {EMBEDDING_MODEL}")
-        logger.info(f"   Max Tokens: {MAX_TOKENS}")
-        logger.info(f"   Temperature: {TEMPERATURE}")
-        logger.info(f"   Max Context Messages: {MAX_CONTEXT_MESSAGES}")
-        logger.info(f"   Similarity Threshold: {SIMILARITY_THRESHOLD}")
-        logger.info(f"   Max Retrieved Docs: {MAX_RETRIEVED_DOCS}")
         logger.info(f"   Redis URL: {REDIS_URL}")
         
-        logger.info("🎉 Benova Bot startup completed successfully!")
+        logger.info("Multi-Company Bot System startup completed successfully!")
         
     except Exception as e:
-        logger.error(f"❌ Startup check failed: {e}")
+        logger.error(f"Startup check failed: {e}")
         raise
 
 def cleanup():
     """Clean up resources on shutdown"""
     try:
-        logger.info("🧹 Cleaning up resources...")
+        logger.info("Cleaning up resources...")
         
-        # Clear in-memory data using modern manager
-        # modern_conversation_manager handles its own cleanup
+        # Company-specific managers handle their own cleanup
+        for company_id in COMPANIES_CONFIG:
+            logger.info(f"[{company_id}] Resources cleaned up")
         
-        logger.info("💾 All resources cleaned up")
-        logger.info("👋 Benova Bot shutdown completed")
+        logger.info("All resources cleaned up")
+        logger.info("Multi-Company Bot System shutdown completed")
         
     except Exception as e:
-        logger.error(f"❌ Cleanup failed: {e}")
+        logger.error(f"Cleanup failed: {e}")
 
 # ===============================
 # MAIN EXECUTION
 # ===============================
 
-# ===============================
-# Main Execution
-# ===============================
 if __name__ == "__main__":
     try:
+        # Validate OpenAI setup before starting
+        if not validate_openai_setup():
+            logger.error("OpenAI setup validation failed. Check your configuration.")
+            sys.exit(1)
+        
         # Run startup checks
-        logger.info("🚀 Starting Multi-Company Bot Server...")
+        startup_checks()
         
-        # Check Redis connection
-        redis_client.ping()
-        logger.info("✅ Redis connection verified")
-        
-        # Check OpenAI connection
-        embeddings.embed_query("test startup")
-        logger.info("✅ OpenAI connection verified")
-        
-        # Display configuration
-        logger.info("📋 Configuration:")
-        logger.info(f"   Model: {MODEL_NAME}")
-        logger.info(f"   Embedding Model: {EMBEDDING_MODEL}")
-        logger.info(f"   Companies: {list(COMPANIES_CONFIG.keys())}")
+        # Setup cleanup handler
+        import atexit
+        atexit.register(cleanup)
         
         # Start server
-        logger.info(f"🌐 Starting server on port {PORT}")
+        logger.info(f"Starting Multi-Company server on port {PORT}")
+        logger.info(f"Webhook endpoint: http://localhost:{PORT}/webhook")
+        logger.info(f"Health check: http://localhost:{PORT}/health")
+        logger.info(f"Status: http://localhost:{PORT}/status")
+        logger.info(f"Companies: http://localhost:{PORT}/companies")
+        logger.info(f"Configured companies: {list(COMPANIES_CONFIG.keys())}")
+        
         app.run(
             host="0.0.0.0",
             port=PORT,
@@ -4045,7 +4189,9 @@ if __name__ == "__main__":
         )
         
     except KeyboardInterrupt:
-        logger.info("🛑 Received shutdown signal")
+        logger.info("Received shutdown signal")
+        cleanup()
     except Exception as e:
-        logger.error(f"❌ Failed to start server: {e}")
+        logger.error(f"Failed to start server: {e}")
+        cleanup()
         sys.exit(1)
