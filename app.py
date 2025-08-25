@@ -3015,7 +3015,7 @@ def chatwoot_webhook():
             debug_webhook_data(data)
 
         # Process incoming message
-        result = process_incoming_message(data)
+        result = process_incoming_message(data, company_config) ###################### primer cambio#########################3
         
         if result.get("ignored"):
             return jsonify(result), 200
