@@ -66,12 +66,11 @@ class BaseAgent(ABC):
     
     def _post_process_response(self, response: str, inputs: Dict[str, Any]) -> str:
         """Post-procesar respuesta del agente"""
-        # Personalizar respuesta con datos de empresa si es necesario
         return response
     
     def _get_fallback_response(self) -> str:
         """Respuesta de respaldo en caso de error"""
-        return f"Disculpa, tuve un problema técnico. Por favor intenta de nuevo o contacta con {self.company_config.company_name}. 🔧"
+        return f"Disculpa, tuve un problema técnico. Por favor intenta de nuevo o contacta con {self.company_config.company_name}."
     
     def _log_agent_activity(self, action: str, details: Dict[str, Any] = None):
         """Log de actividad del agente con contexto de empresa"""
@@ -84,3 +83,4 @@ class BaseAgent(ABC):
             log_data.update(details)
         
         logger.info(f"[{self.company_config.company_id}] {self.agent_name}: {action}", extra=log_data)
+
