@@ -1,4 +1,10 @@
 from app.agents.base_agent import BaseAgent
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.schema.output_parser import StrOutputParser
+from typing import Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EmergencyAgent(BaseAgent):
     """Agente de emergencias médicas multi-tenant"""
@@ -24,10 +30,9 @@ PROTOCOLO DE RESPUESTA:
 SERVICIOS DE EMERGENCIA: {self.company_config.services}
 
 TONO: Profesional, empático, tranquilizador pero urgente.
-EMOJIS: Máximo 3 por respuesta.
 LONGITUD: Máximo 3 oraciones.
 
-FINALIZA SIEMPRE con: "Escalando tu caso de emergencia en {self.company_config.company_name} ahora mismo. 🚨"
+FINALIZA SIEMPRE con: "Escalando tu caso de emergencia en {self.company_config.company_name} ahora mismo."
 
 Historial de conversación:
 {{chat_history}}
