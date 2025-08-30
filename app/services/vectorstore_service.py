@@ -317,3 +317,21 @@ class VectorstoreService:
                 "healthy": False,
                 "error": str(e)
             }
+
+
+    def init_vectorstore(app):
+        """Initialize vectorstore system for multi-tenant Flask app"""
+        try:
+            # En el sistema multi-tenant, los vectorstores se inicializan 
+            # bajo demanda por cada empresa, no de forma global
+            from app.config.company_config import get_company_manager
+            
+            company_manager = get_company_manager()
+            companies = company_manager.get_all_companies()
+            
+            logger.info(f"Vectorstore system initialized for {len(companies)} companies (multi-tenant mode)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Vectorstore initialization failed: {e}")
+            raise
