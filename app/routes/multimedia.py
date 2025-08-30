@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 from app.services.openai_service import OpenAIService
 from app.services.multi_agent_factory import get_multi_agent_factory
 from app.models.conversation import ConversationManager
@@ -244,10 +244,6 @@ def test_multimedia_processing():
             })
             
     except Exception as e:
-        return create_error_response(f"Failed to get multimedia stats: {e}", 500)
-            return create_error_response("Invalid media_type or missing file", 400)
-            
-    except Exception as e:
         logger.error(f"[{company_id if 'company_id' in locals() else 'unknown'}] Error in multimedia test: {e}")
         return create_error_response("Multimedia test failed", 500)
 
@@ -328,3 +324,14 @@ def get_multimedia_stats():
                 "system_type": "multi-tenant"
             })
         else:
+            # Stats generales del sistema
+            return create_success_response({
+                "voice_enabled": current_app.config.get('VOICE_ENABLED', False),
+                "image_enabled": current_app.config.get('IMAGE_ENABLED', False),
+                "openai_model": current_app.config.get('MODEL_NAME', 'gpt-4o-mini'),
+                "system_type": "multi-tenant-multimedia",
+                "message": "Use ?show_all=true for per-company stats"
+            })
+            
+    except Exception as e:
+        return create_error_response(f"Failed to get multimedia stats: {e}", 500)
