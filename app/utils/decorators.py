@@ -55,9 +55,9 @@ def cache_result(timeout=300):
             
             return result
         return decorated_function
+    return decorator
 
-
-  def require_company_context(f):
+def require_company_context(f):
     """Decorator to ensure company context is present and valid"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -89,4 +89,3 @@ def cache_result(timeout=300):
         return f(*args, **kwargs)
     
     return decorated_function
-    return decorator
