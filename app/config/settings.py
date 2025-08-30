@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Tuple
 
 class Config:
     """Base configuration class"""
