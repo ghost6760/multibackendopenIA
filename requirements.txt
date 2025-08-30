@@ -11,9 +11,11 @@ langchain-openai>=0.2.0
 langchain-redis>=0.1.0
 langchain-core>=0.3.0
 redis>=5.0.0
+langgraph>=0.2.0
+langgraph-checkpoint-redis>=0.0.8
 markdown==3.7
 ########websocket#########
 flask-sock==0.6.0
-python-dateutil>=2.9.0
-regex>=2024.4.16
-flask-cors==4.0.0
+openai>=1.12.0
+Pillow>=10.0.0
+python-multipart>=0.0.6
