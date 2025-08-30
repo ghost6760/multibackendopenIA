@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Multi-Tenant Chatbot - Panel de Control</title>
+    <link rel="stylesheet" href="style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏢 Panel de Control Multi-Tenant</h1>
+            <div class="company-selector">
+                <label for="currentCompany">Empresa Activa:</label>
+                <select id="currentCompany">
+                    <option value="">Cargando empresas...</option>
+                </select>
+                <button id="refreshCompanies" class="btn-secondary">🔄</button>
+            </div>
+        </header>
+
+        <!-- Company Status Section -->
+        <section class="company-status-section">
+            <div class="card">
+                <h2>📊 Estado de la Empresa</h2>
+                <div id="companyInfo" class="company-info">
+                    <p>Selecciona una empresa para ver su estado</p>
+                </div>
+                <div class="company-actions">
+                    <button id="checkHealthBtn" class="btn-secondary">🩺 Health Check</button>
+                    <button id="viewStatsBtn" class="btn-secondary">📈 Estadísticas</button>
+                    <button id="resetCacheBtn" class="btn-danger">🗑️ Limpiar Cache</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Multi-Company Overview -->
+        <section class="overview-section">
+            <div class="card">
+                <h2>🌐 Vista General del Sistema</h2>
+                <div id="systemOverview" class="system-grid">
+                    <!-- Se llena dinámicamente -->
+                </div>
+                <button id="viewAllCompanies" class="btn-primary">Ver Todas las Empresas</button>
+            </div>
+        </section>
+
+        <!-- Documents Section -->
+        <section class="document-section">
+            <h2>📄 Gestión de Documentos</h2>
+            
+            <!-- Add Document -->
+            <div class="card">
+                <h3>➕ Agregar Documento</h3>
+                <form id="addDocumentForm">
+                    <textarea id="docContent" placeholder="Contenido del documento..." required></textarea>
+                    <input type="text" id="docMetadata" placeholder='Metadata (JSON, ej: {"categoria": "informacion"})'>
+                    <div class="form-actions">
+                        <button type="submit">📄 Agregar Documento</button>
+                        <span class="company-indicator">Para empresa: <strong id="docCompanyIndicator">-</strong></span>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Bulk Upload -->
+            <div class="card">
+                <h3>📁 Subir Múltiples Documentos</h3>
+                <form id="bulkUploadForm">
+                    <input type="file" id="bulkFiles" multiple accept=".txt,.md,.docx">
+                    <div class="form-actions">
+                        <button type="submit">📤 Subir Archivos</button>
+                        <span class="company-indicator">Para empresa: <strong id="bulkCompanyIndicator">-</strong></span>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Search Documents -->
+            <div class="card">
+                <h3>🔍 Buscar Documentos</h3>
+                <form id="searchDocumentsForm">
+                    <input type="text" id="searchQuery" placeholder="Buscar en documentos..." required>
+                    <input type="number" id="searchK" value="3" min="1" max="20" placeholder="Cantidad de resultados">
+                    <div class="form-actions">
+                        <button type="submit">🔍 Buscar</button>
+                        <span class="company-indicator">En empresa: <strong id="searchCompanyIndicator">-</strong></span>
+                    </div>
+                </form>
+                <div id="searchResults" class="search-results"></div>
+            </div>
+
+            <!-- Documents List -->
+            <div class="card">
+                <h3>📋 Documentos Almacenados</h3>
+                <div class="list-actions">
+                    <button id="listDocumentsBtn" class="btn-secondary">📄 Listar Documentos</button>
+                    <button id="cleanupVectorsBtn" class="btn-danger">🧹 Limpiar Vectores Huérfanos</button>
+                    <button id="diagnosticsBtn" class="btn-secondary">🔧 Diagnósticos</button>
+                </div>
+                <div id="documentsList" class="documents-grid"></div>
+            </div>
+        </section>
+
+        <!-- Conversations Section -->
+        <section class="conversations-section">
+            <h2>💬 Gestión de Conversaciones</h2>
+            
+            <div class="card">
+                <h3>📞 Conversaciones Activas</h3>
+                <div class="list-actions">
+                    <button id="listConversationsBtn" class="btn-secondary">💬 Listar Conversaciones</button>
+                    <button id="conversationStatsBtn" class="btn-secondary">📊 Estadísticas</button>
+                </div>
+                <div id="conversationsList" class="conversations-grid"></div>
+            </div>
+        </section>
+
+        <!-- Chat Testing Section -->
+        <section class="chat-section">
+            <h2>🤖 Probar Chatbot</h2>
+            
+            <div class="card">
+                <div class="chat-header">
+                    <h3>💭 Chat de Prueba</h3>
+                    <div class="chat-company-info">
+                        <span>Probando con: <strong id="chatCompanyName">-</strong></span>
+                        <span class="chat-services" id="chatCompanyServices">-</span>
+                    </div>
+                </div>
+                
+                <div id="chatHistory" class="chat-container"></div>
+                
+                <!-- Chat Form -->
+                <form id="chatForm">
+                    <div class="chat-input-container">
+                        <input type="text" id="userMessage" placeholder="Escribe tu mensaje...">
+                        <input type="text" id="testUserId" placeholder="User ID (opcional)" value="test_user">
+                        <button type="submit">📤 Enviar</button>
+                    </div>
+                </form>
+                
+                <!-- Multimedia Controls -->
+                <div class="multimedia-controls">
+                    <div class="multimedia-group">
+                        <h4>🎤 Audio</h4>
+                        <button id="recordVoiceBtn" class="btn-multimedia">🎙️ Grabar Voz</button>
+                        <input type="file" id="voiceFile" accept="audio/*" hidden>
+                        <label for="voiceFile" class="btn-secondary">📁 Subir Audio</label>
+                    </div>
+                    
+                    <div class="multimedia-group">
+                        <h4>📸 Imagen</h4>
+                        <button id="captureImageBtn" class="btn-multimedia">📸 Tomar Foto</button>
+                        <input type="file" id="imageFile" accept="image/*" hidden>
+                        <label for="imageFile" class="btn-secondary">🖼️ Subir Imagen</label>
+                    </div>
+                </div>
+                
+                <!-- Recording Status -->
+                <div id="recordingStatus" class="recording-status" style="display: none;">
+                    <span class="recording-indicator">🔴</span>
+                    <span>Grabando audio para <strong id="recordingCompany">-</strong>...</span>
+                    <button id="stopRecordingBtn" class="btn-stop">⏹️ Parar</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- System Administration -->
+        <section class="admin-section">
+            <h2>⚙️ Administración del Sistema</h2>
+            
+            <div class="card">
+                <h3>🛠️ Herramientas de Sistema</h3>
+                <div class="admin-grid">
+                    <button id="systemHealthBtn" class="admin-btn">🩺 Health Check Global</button>
+                    <button id="reloadConfigBtn" class="admin-btn">🔄 Recargar Configuración</button>
+                    <button id="systemStatsBtn" class="admin-btn">📊 Estadísticas del Sistema</button>
+                    <button id="multimediaTestBtn" class="admin-btn">🎬 Test Multimedia</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>🔧 Herramientas Avanzadas</h3>
+                <div class="admin-grid">
+                    <button id="vectorRecoveryBtn" class="admin-btn danger">🛠️ Forzar Recovery Vectorstore</button>
+                    <button id="protectionStatusBtn" class="admin-btn">🛡️ Estado Protección</button>
+                    <button id="exportConfigBtn" class="admin-btn">💾 Exportar Configuración</button>
+                    <button id="migrationToolBtn" class="admin-btn">🔄 Herramienta de Migración</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Camera Modal -->
+        <div id="cameraModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>📸 Capturar Imagen</h3>
+                    <span class="company-context">Para empresa: <strong id="cameraCompany">-</strong></span>
+                    <button id="closeCameraBtn" class="btn-close">&times;</button>
+                </div>
+                <div class="camera-container">
+                    <video id="cameraVideo" autoplay></video>
+                    <canvas id="cameraCanvas" style="display: none;"></canvas>
+                </div>
+                <div class="camera-controls">
+                    <button id="takePictureBtn" class="btn-primary">📸 Tomar Foto</button>
+                    <button id="cancelCameraBtn" class="btn-secondary">❌ Cancelar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p id="loadingMessage">Cargando...</p>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toastContainer" class="toast-container"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
