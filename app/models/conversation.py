@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 import logging
 import json
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
