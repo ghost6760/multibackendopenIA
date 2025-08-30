@@ -1,35 +1,37 @@
-# Dockerfile optimizado para Railway con solución OpenBLAS
+# Dockerfile optimizado para Railway - Estructura Modular
 FROM python:3.11-slim
 
-# Configurar variables de entorno CRÍTICAS para OpenBLAS
-ENV OPENBLAS_NUM_THREADS=1 \
-    GOTO_NUM_THREADS=1 \
-    OMP_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1 \
-    NUMEXPR_NUM_THREADS=1 \
-    VECLIB_MAXIMUM_THREADS=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=8080
+# Configurar variables de entorno
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100
 
-# Instalar solo dependencias esenciales
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
+# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements primero para mejor caching
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements e instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar aplicación
+# Copiar código de la aplicación
 COPY . .
 
-# Usar usuario no-root
-RUN useradd --create-home app && chown -R app:app /app
+# Crear usuario no-root para seguridad
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app
+
 USER app
 
-EXPOSE $PORT
+# Exponer puerto (Railway lo asigna dinámicamente)
+EXPOSE 8080
 
-# Usar Gunicorn con configuración optimizada
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --worker-class gthread app:app"]
+# IMPORTANTE: Cambiar el comando para usar wsgi:app en lugar de app:app
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "--keep-alive", "5", "wsgi:app"]
