@@ -1,8 +1,9 @@
 from app.agents.base_agent import BaseAgent
 from langchain.schema.runnable import RunnableLambda
+from langchain.prompts import ChatPromptTemplate
+from typing import Dict, Any
 import requests
 import logging
-from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
