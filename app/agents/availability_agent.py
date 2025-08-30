@@ -1,7 +1,7 @@
 from app.agents.base_agent import BaseAgent
 from langchain.schema.runnable import RunnableLambda
 from langchain.prompts import ChatPromptTemplate
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Tuple
 import logging
 
 class AvailabilityAgent(BaseAgent):
