@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from app.services.multi_agent_orchestrator import MultiAgentOrchestrator
 from app.services.openai_service import OpenAIService
 from app.services.vectorstore_service import VectorstoreService
