@@ -1,4 +1,4 @@
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from app.config.company_config import CompanyConfig, get_company_config
 from app.agents import (
     RouterAgent, EmergencyAgent, SalesAgent, 
