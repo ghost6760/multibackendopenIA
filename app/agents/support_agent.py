@@ -1,4 +1,12 @@
+# app/agents/support_agent.py - VERSIÓN COMPLETA con imports corregidos
+
 from app.agents.base_agent import BaseAgent
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.schema.output_parser import StrOutputParser
+from typing import Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SupportAgent(BaseAgent):
     """Agente de soporte multi-tenant"""
