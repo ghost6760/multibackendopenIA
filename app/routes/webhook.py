@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from app.services.chatwoot_service import ChatwootService
-from app.services.multi_agent_orchestrator import get_orchestrator_for_company
+from app.services.multi_agent_factory import get_orchestrator_for_company
 from app.models.conversation import ConversationManager
 from app.config.company_config import extract_company_id_from_webhook, validate_company_context
 from app.utils.validators import validate_webhook_data
