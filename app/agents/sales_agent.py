@@ -1,5 +1,11 @@
 from app.agents.base_agent import BaseAgent
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.runnable import RunnableLambda
+from typing import Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SalesAgent(BaseAgent):
     """Agente de ventas multi-tenant con RAG personalizado"""
@@ -48,10 +54,9 @@ ESTRUCTURA DE RESPUESTA:
 5. Llamada a la acción para agendar
 
 TONO: Cálido, profesional, persuasivo.
-EMOJIS: Máximo 3 por respuesta.
 LONGITUD: Máximo 5 oraciones.
 
-FINALIZA SIEMPRE con: "¿Te gustaría agendar tu cita en {self.company_config.company_name}? 📅"
+FINALIZA SIEMPRE con: "¿Te gustaría agendar tu cita en {self.company_config.company_name}?"
 
 Historial de conversación:
 {{chat_history}}
@@ -71,29 +76,24 @@ Pregunta del usuario: {{question}}"""),
                 return f"""Información básica de {self.company_config.company_name}:
 - Servicios: {self.company_config.services}
 - Atención personalizada y profesional
-- Tratamientos de calidad certificados
-Para información específica, te conectaré con un especialista."""
+- Tratamientos de calidad certificados"""
             
             # Buscar documentos con filtro de empresa
             docs = self.vectorstore_service.search_by_company(question, self.company_config.company_id)
             
             if not docs:
-                return f"""Información general de {self.company_config.company_name}:
-- Centro especializado en {self.company_config.services}
-- Atención personalizada de calidad
-- Profesionales certificados
-Para información específica de tratamientos, te conectaré con un especialista."""
+                return f"Información general de {self.company_config.company_name} disponible."
             
             return "\n\n".join(doc.page_content for doc in docs)
             
         except Exception as e:
             logger.error(f"Error retrieving sales context: {e}")
-            return f"Información básica disponible de {self.company_config.company_name}. Te conectaré con un especialista para detalles específicos."
+            return f"Información básica disponible de {self.company_config.company_name}."
     
     def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
         """Ejecutar cadena de ventas"""
         if not hasattr(self, 'chain'):
-            # Chain no creado, usar respuesta básica
-            return f"Hola, soy {self.company_config.sales_agent_name}. Estamos especializados en {self.company_config.services}. ¿En qué puedo ayudarte? 😊"
+            return f"Hola, soy {self.company_config.sales_agent_name}. Estamos especializados en {self.company_config.services}. ¿En qué puedo ayudarte?"
         
         return self.chain.invoke(inputs)
+
