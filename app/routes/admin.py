@@ -187,7 +187,7 @@ def reset_system():
                 keys = redis_client.keys(pattern)
                 # Filter by company for global patterns
                 if pattern.startswith("processed_message:"):
-                    keys = [k for k in keys if company_id in k.decode() if isinstance(k, bytes) else company_id in k]
+                    keys = [k for k in keys if company_id in (k.decode() if isinstance(k, bytes) else k)]
                 
                 if keys:
                     redis_client.delete(*keys)
