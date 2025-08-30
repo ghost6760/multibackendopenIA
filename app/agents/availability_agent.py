@@ -1,5 +1,8 @@
 from app.agents.base_agent import BaseAgent
 from langchain.schema.runnable import RunnableLambda
+from langchain.prompts import ChatPromptTemplate
+from typing import Dict, Any
+import logging
 
 class AvailabilityAgent(BaseAgent):
     """Agente de disponibilidad multi-tenant"""
