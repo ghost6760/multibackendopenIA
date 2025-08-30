@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, validator
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
 class DocumentInput(BaseModel):
