@@ -1,6 +1,6 @@
 # app/agents/base_agent.py
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import BaseMessage
 from langchain.schema.output_parser import StrOutputParser
