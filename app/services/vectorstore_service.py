@@ -63,8 +63,8 @@ class VectorstoreService:
         """Obtener retriever específico de la empresa"""
         return self.vectorstore.as_retriever(search_kwargs={"k": k})
     
-    def search_by_company(self, query: str, company_id: str = None, k: int = 3) -> List[Dict[str, Any]]:
-        """Buscar documentos filtrados por empresa"""
+    def search_by_company(self, query: str, company_id: str = None, k: int = 3) -> List[Any]:
+        """Buscar documentos filtrados por empresa - CORREGIDO para devolver objetos LangChain"""
         try:
             # Verificar que coincida la empresa
             target_company = company_id or self.company_id
@@ -72,25 +72,21 @@ class VectorstoreService:
                 logger.warning(f"Company ID mismatch: {target_company} != {self.company_id}")
                 return []
             
-            # Realizar búsqueda
+            # Realizar búsqueda usando el vectorstore directamente
             docs = self.vectorstore.similarity_search(query, k=k)
             
-            results = []
+            # CORREGIDO: Filtrar por empresa pero mantener objetos Document de LangChain
+            filtered_docs = []
             for doc in docs:
                 metadata = getattr(doc, 'metadata', {})
                 
                 # Filtrar por empresa si está especificado en metadata
                 doc_company = metadata.get('company_id', self.company_id)
                 if doc_company == self.company_id:
-                    results.append({
-                        "content": doc.page_content,
-                        "metadata": metadata,
-                        "score": getattr(doc, 'score', None),
-                        "company_id": doc_company
-                    })
+                    filtered_docs.append(doc)
             
-            logger.info(f"Found {len(results)} documents for company {self.company_id}")
-            return results
+            logger.info(f"Found {len(filtered_docs)} documents for company {self.company_id}")
+            return filtered_docs
             
         except Exception as e:
             logger.error(f"Error searching documents for {self.company_id}: {e}")
