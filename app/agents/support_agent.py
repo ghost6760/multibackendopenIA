@@ -73,7 +73,7 @@ Consulta del usuario: {{question}}"""),
         ])
     
     def _get_support_context(self, inputs):
-        """Obtener contexto de soporte filtrado"""
+        """Obtener contexto de soporte filtrado - CORREGIDO"""
         try:
             question = inputs.get("question", "")
             
@@ -89,7 +89,19 @@ Para consultas específicas, te conectaré con un especialista."""
             if not docs:
                 return f"Información general de {self.company_config.company_name} disponible."
             
-            return "\n\n".join(doc.page_content for doc in docs)
+            # CORREGIDO: Usar page_content directamente de los objetos Document de LangChain
+            context_parts = []
+            for doc in docs:
+                if hasattr(doc, 'page_content') and doc.page_content:
+                    context_parts.append(doc.page_content)
+                elif isinstance(doc, dict) and 'content' in doc:
+                    # Fallback para formato dict si es necesario
+                    context_parts.append(doc['content'])
+            
+            if context_parts:
+                return "\n\n".join(context_parts)
+            else:
+                return f"Información general de {self.company_config.company_name} disponible."
             
         except Exception as e:
             logger.error(f"Error retrieving support context: {e}")
