@@ -51,6 +51,15 @@ class ChatwootService:
         
         logger.info(f"ChatwootService initialized for company: {self.company_id}")
 
+    def should_bot_respond(self, conversation_id: int, conversation_status: str) -> bool:
+        """Check if bot should respond to message with company context"""
+        if conversation_status in self.bot_active_statuses:
+            return True
+        
+        # Update status
+        self.update_bot_status(conversation_id, conversation_status)
+        return False
+
     def update_bot_status(self, conversation_id: int, conversation_status: str):
         """Update bot status for a specific conversation with company context"""
         is_active = conversation_status in self.bot_active_statuses
@@ -97,8 +106,208 @@ class ChatwootService:
             logger.error(f"[{self.company_id}] Error checking processed message: {e}")
             return False
 
-    # Los métodos de multimedia (transcribe_audio_from_url, analyze_image_from_url, etc.)
-    # se mantienen igual que en el código original ya que no necesitan cambios multi-tenant
+    def extract_contact_id(self, data: Dict[str, Any]) -> Tuple[str, str, bool]:
+        """Extract contact ID from webhook data"""
+        try:
+            # Método 1: Desde sender
+            sender = data.get("sender", {})
+            if sender and "id" in sender:
+                contact_id = str(sender["id"])
+                return contact_id, "sender_id", True
+            
+            # Método 2: Desde conversation.contact_inbox.contact
+            conversation = data.get("conversation", {})
+            contact_inbox = conversation.get("contact_inbox", {})
+            contact = contact_inbox.get("contact", {})
+            if contact and "id" in contact:
+                contact_id = str(contact["id"])
+                return contact_id, "contact_inbox_contact_id", True
+            
+            # Método 3: ID directo en conversation
+            if "contact_id" in conversation:
+                contact_id = str(conversation["contact_id"])
+                return contact_id, "conversation_contact_id", True
+            
+            # Fallback
+            logger.warning(f"[{self.company_id}] Could not extract contact_id, using fallback")
+            return "unknown_contact", "fallback", False
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error extracting contact_id: {e}")
+            return "unknown_contact", "error", False
+
+    def send_message(self, conversation_id: int, message: str) -> bool:
+        """Send message to Chatwoot conversation"""
+        try:
+            url = f"{self.base_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/messages"
+            headers = {
+                "api_access_token": self.api_key,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "content": message,
+                "message_type": "outgoing"
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info(f"✅ [{self.company_id}] Message sent to conversation {conversation_id}")
+                return True
+            else:
+                logger.error(f"❌ [{self.company_id}] Failed to send message: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error sending message: {e}")
+            return False
+
+    def handle_conversation_updated(self, data: Dict[str, Any]) -> bool:
+        """Handle conversation status updates"""
+        try:
+            conversation_data = data.get("conversation", {})
+            conversation_id = conversation_data.get("id")
+            conversation_status = conversation_data.get("status")
+            
+            if conversation_id and conversation_status:
+                self.update_bot_status(conversation_id, conversation_status)
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error handling conversation update: {e}")
+            return False
+
+    def debug_webhook_data(self, data: Dict[str, Any]):
+        """Debug webhook data for development"""
+        try:
+            logger.info(f"🔍 [{self.company_id}] WEBHOOK DEBUG:")
+            logger.info(f"   Event: {data.get('event', 'N/A')}")
+            logger.info(f"   Message Type: {data.get('message_type', 'N/A')}")
+            logger.info(f"   Content Length: {len(data.get('content', ''))}")
+            logger.info(f"   Attachments: {len(data.get('attachments', []))}")
+            
+            conversation = data.get("conversation", {})
+            logger.info(f"   Conversation ID: {conversation.get('id', 'N/A')}")
+            logger.info(f"   Conversation Status: {conversation.get('status', 'N/A')}")
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error in debug: {e}")
+
+    def process_attachment(self, attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Process individual attachment"""
+        try:
+            data_url = attachment.get("data_url")
+            file_type = attachment.get("file_type", "")
+            
+            if not data_url:
+                logger.warning(f"[{self.company_id}] Attachment missing data_url")
+                return None
+            
+            # Determine attachment type
+            attachment_type = None
+            if file_type.startswith("image/"):
+                attachment_type = "image"
+            elif file_type.startswith("audio/"):
+                attachment_type = "audio"
+            else:
+                logger.info(f"[{self.company_id}] Unsupported attachment type: {file_type}")
+                return None
+            
+            logger.info(f"[{self.company_id}] Processing {attachment_type} attachment")
+            
+            return {
+                "type": attachment_type,
+                "url": data_url,
+                "file_type": file_type,
+                "size": attachment.get("file_size", 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error processing attachment: {e}")
+            return None
+
+    def transcribe_audio_from_url(self, audio_url: str) -> str:
+        """Transcribe audio from URL with improved error handling"""
+        try:
+            logger.info(f"[{self.company_id}] Downloading audio from: {audio_url}")
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)',
+                'Accept': 'audio/*,*/*;q=0.9'
+            }
+            
+            response = requests.get(audio_url, headers=headers, timeout=60, stream=True)
+            response.raise_for_status()
+            
+            # Verify content-type if available
+            content_type = response.headers.get('content-type', '').lower()
+            logger.info(f"[{self.company_id}] Audio content-type: {content_type}")
+            
+            # Determine extension based on content-type or URL
+            extension = '.ogg'  # Default for Chatwoot
+            if 'mp3' in content_type or audio_url.endswith('.mp3'):
+                extension = '.mp3'
+            elif 'wav' in content_type or audio_url.endswith('.wav'):
+                extension = '.wav'
+            elif 'm4a' in content_type or audio_url.endswith('.m4a'):
+                extension = '.m4a'
+            
+            # Create temporary file with correct extension
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    temp_file.write(chunk)
+                temp_path = temp_file.name
+            
+            logger.info(f"[{self.company_id}] Audio saved to temp file: {temp_path} (size: {os.path.getsize(temp_path)} bytes)")
+            
+            try:
+                result = self.openai_service.transcribe_audio(temp_path)
+                logger.info(f"[{self.company_id}] Transcription successful: {len(result)} characters")
+                return result
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                    logger.info(f"[{self.company_id}] Temporary file deleted: {temp_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"[{self.company_id}] Could not delete temp file {temp_path}: {cleanup_error}")
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[{self.company_id}] Error downloading audio: {e}")
+            raise Exception(f"Error downloading audio: {str(e)}")
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error in audio transcription from URL: {e}")
+            raise
+
+    def analyze_image_from_url(self, image_url: str) -> str:
+        """Analyze image from URL using GPT-4 Vision"""
+        try:
+            logger.info(f"[{self.company_id}] Downloading image from: {image_url}")
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)'
+            }
+            response = requests.get(image_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            # Verify it's an image
+            content_type = response.headers.get('content-type', '').lower()
+            if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'gif', 'webp']):
+                logger.warning(f"[{self.company_id}] Content type might not be image: {content_type}")
+            
+            # Create file in memory
+            image_file = BytesIO(response.content)
+            
+            # Analyze using OpenAI service
+            return self.openai_service.analyze_image(image_file)
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[{self.company_id}] Error downloading image: {e}")
+            raise Exception(f"Error downloading image: {str(e)}")
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error in image analysis from URL: {e}")
+            raise
 
     def process_incoming_message(self, data: Dict[str, Any],
                                  conversation_manager: ConversationManager,
@@ -158,7 +367,7 @@ class ChatwootService:
             logger.info(f"👤 User: {user_id} (contact: {contact_id}, method: {extraction_method})")
             logger.info(f"💬 Message: {content[:100]}...")
 
-            # Process multimedia attachments (igual que el original)
+            # Process multimedia attachments
             media_context = None
             media_type = "text"
             processed_attachment = None
