@@ -1,0 +1,560 @@
+{
+  "benova": {
+    "company_name": "Benova",
+    "redis_prefix": "benova:",
+    "vectorstore_index": "benova_documents",
+    "schedule_service_url": "http://127.0.0.1:4040",
+    "sales_agent_name": "María, asesora especializada de Benova",
+    "services": "medicina estética y tratamientos de belleza",
+    "treatments": {
+      "limpieza facial": {
+        "duration": 60,
+        "sessions": 1,
+        "deposit": 0,
+        "category": "cosmetologia",
+        "agenda_id": "cosmetologia",
+        "preparation_time": 10,
+        "followup_time": 5,
+        "requires_consultation": false,
+        "consultation_duration": 15,
+        "max_advance_days": 30,
+        "min_advance_hours": 2
+      },
+      "tratamiento corporal": {
+        "duration": 60,
+        "sessions": 2,
+        "deposit": 0,
+        "category": "cosmetologia", 
+        "agenda_id": "cosmetologia",
+        "preparation_time": 15,
+        "followup_time": 10,
+        "requires_consultation": false,
+        "consultation_duration": 15,
+        "max_advance_days": 30,
+        "min_advance_hours": 4
+      },
+      "valoración médica": {
+        "duration": 15,
+        "sessions": 1,
+        "deposit": 0,
+        "category": "medicina",
+        "agenda_id": "medicina",
+        "preparation_time": 5,
+        "followup_time": 5,
+        "requires_consultation": false,
+        "consultation_duration": 15,
+        "max_advance_days": 14,
+        "min_advance_hours": 2
+      },
+      "valoración + tratamiento": {
+        "duration": 45,
+        "sessions": 1,
+        "deposit": 100000,
+        "category": "medicina",
+        "agenda_id": "medicina", 
+        "preparation_time": 10,
+        "followup_time": 15,
+        "requires_consultation": true,
+        "consultation_duration": 15,
+        "max_advance_days": 21,
+        "min_advance_hours": 24
+      },
+      "botox": {
+        "duration": 30,
+        "sessions": 1,
+        "deposit": 50000,
+        "category": "medicina",
+        "agenda_id": "medicina",
+        "preparation_time": 10,
+        "followup_time": 20,
+        "requires_consultation": true,
+        "consultation_duration": 15,
+        "max_advance_days": 45,
+        "min_advance_hours": 48
+      }
+    },
+    "agendas": {
+      "cosmetologia": {
+        "name": "Agenda Cosmetología Benova",
+        "calendar_id": "cosmetologia@benova.com",
+        "working_hours": {
+          "monday": {"start": "08:00", "end": "18:00"},
+          "tuesday": {"start": "08:00", "end": "18:00"},
+          "wednesday": {"start": "08:00", "end": "18:00"},
+          "thursday": {"start": "08:00", "end": "18:00"},
+          "friday": {"start": "08:00", "end": "18:00"},
+          "saturday": {"start": "08:00", "end": "14:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 15,
+        "max_concurrent": 2,
+        "categories": ["cosmetologia"]
+      },
+      "medicina": {
+        "name": "Agenda Medicina Estética Benova",
+        "calendar_id": "medicina@benova.com",
+        "working_hours": {
+          "monday": {"start": "09:00", "end": "17:00"},
+          "tuesday": {"start": "09:00", "end": "17:00"},
+          "wednesday": {"start": "09:00", "end": "17:00"},
+          "thursday": {"start": "09:00", "end": "17:00"},
+          "friday": {"start": "09:00", "end": "17:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 10,
+        "max_concurrent": 1,
+        "categories": ["medicina"]
+      }
+    },
+    "required_booking_fields": [
+      "nombre completo",
+      "número de cédula",
+      "fecha de nacimiento", 
+      "correo electrónico",
+      "motivo",
+      "teléfono"
+    ],
+    "integration_type": "google_calendar",
+    "integration_config": {
+      "credentials_path": "/app/credentials/benova_calendar_credentials.json",
+      "calendar_timezone": "America/Bogota",
+      "send_calendar_invites": true,
+      "default_reminder_minutes": [60, 1440]
+    },
+    "notification_settings": {
+      "email_confirmations": true,
+      "sms_reminders": true,
+      "whatsapp_notifications": false,
+      "calendar_invites": true,
+      "confirmation_template": "benova_confirmation_template",
+      "reminder_template": "benova_reminder_template"
+    },
+    "booking_policies": {
+      "allow_same_day": false,
+      "require_deposit": true,
+      "auto_confirm": false,
+      "cancellation_hours": 24,
+      "reschedule_limit": 2,
+      "deposit_payment_methods": ["transfer", "cash", "card"],
+      "deposit_expiry_hours": 48
+    }
+  },
+  "medispa": {
+    "company_name": "MediSpa Elite",
+    "redis_prefix": "medispa:",
+    "vectorstore_index": "medispa_documents", 
+    "schedule_service_url": "http://127.0.0.1:4041",
+    "sales_agent_name": "Dr. López, especialista de MediSpa Elite",
+    "services": "medicina estética avanzada y bienestar integral",
+    "treatments": {
+      "consulta dermatológica": {
+        "duration": 45,
+        "sessions": 1,
+        "deposit": 0,
+        "category": "medicina",
+        "agenda_id": "dermatologia",
+        "preparation_time": 10,
+        "followup_time": 10,
+        "requires_consultation": false,
+        "consultation_duration": 0,
+        "max_advance_days": 60,
+        "min_advance_hours": 4
+      },
+      "tratamiento láser": {
+        "duration": 90,
+        "sessions": 1,
+        "deposit": 200000,
+        "category": "medicina",
+        "agenda_id": "laser_room",
+        "preparation_time": 20,
+        "followup_time": 30,
+        "requires_consultation": true,
+        "consultation_duration": 30,
+        "max_advance_days": 45,
+        "min_advance_hours": 72
+      },
+      "hidrafacial premium": {
+        "duration": 75,
+        "sessions": 1,
+        "deposit": 150000,
+        "category": "estetica",
+        "agenda_id": "estetica",
+        "preparation_time": 15,
+        "followup_time": 15,
+        "requires_consultation": false,
+        "consultation_duration": 15,
+        "max_advance_days": 30,
+        "min_advance_hours": 12
+      }
+    },
+    "agendas": {
+      "dermatologia": {
+        "name": "Consultas Dermatología MediSpa",
+        "calendar_id": "dermato@medispa.com",
+        "working_hours": {
+          "monday": {"start": "08:00", "end": "16:00"},
+          "tuesday": {"start": "08:00", "end": "16:00"},
+          "wednesday": {"start": "08:00", "end": "16:00"},
+          "thursday": {"start": "08:00", "end": "16:00"},
+          "friday": {"start": "08:00", "end": "16:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 15,
+        "max_concurrent": 1,
+        "categories": ["medicina"]
+      },
+      "laser_room": {
+        "name": "Sala de Láser MediSpa",
+        "calendar_id": "laser@medispa.com", 
+        "working_hours": {
+          "tuesday": {"start": "10:00", "end": "18:00"},
+          "thursday": {"start": "10:00", "end": "18:00"},
+          "friday": {"start": "10:00", "end": "18:00"},
+          "saturday": {"start": "08:00", "end": "14:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 30,
+        "max_concurrent": 1,
+        "categories": ["medicina", "laser"]
+      },
+      "estetica": {
+        "name": "Sala Estética MediSpa",
+        "calendar_id": "estetica@medispa.com",
+        "working_hours": {
+          "monday": {"start": "09:00", "end": "18:00"},
+          "tuesday": {"start": "09:00", "end": "18:00"},
+          "wednesday": {"start": "09:00", "end": "18:00"},
+          "thursday": {"start": "09:00", "end": "18:00"},
+          "friday": {"start": "09:00", "end": "18:00"},
+          "saturday": {"start": "09:00", "end": "15:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 20,
+        "max_concurrent": 2,
+        "categories": ["estetica"]
+      }
+    },
+    "required_booking_fields": [
+      "nombre completo",
+      "número de cédula",
+      "fecha de nacimiento",
+      "correo electrónico", 
+      "motivo",
+      "teléfono",
+      "historial médico relevante"
+    ],
+    "integration_type": "calendly",
+    "integration_config": {
+      "api_key": "your_calendly_api_key_here",
+      "organization_uri": "https://api.calendly.com/organizations/YOUR_ORG",
+      "webhook_signing_key": "your_webhook_signing_key",
+      "default_location": "MediSpa Elite - Sede Principal"
+    },
+    "notification_settings": {
+      "email_confirmations": true,
+      "sms_reminders": true,
+      "whatsapp_notifications": true,
+      "calendar_invites": true,
+      "confirmation_template": "medispa_confirmation_template",
+      "reminder_template": "medispa_reminder_template"
+    },
+    "booking_policies": {
+      "allow_same_day": false,
+      "require_deposit": true,
+      "auto_confirm": false,
+      "cancellation_hours": 48,
+      "reschedule_limit": 1,
+      "deposit_payment_methods": ["transfer", "card"],
+      "deposit_expiry_hours": 24,
+      "medical_history_required": true,
+      "consultation_mandatory_for": ["tratamiento láser", "plasma rico en plaquetas"]
+    }
+  },
+  "clinica_dental": {
+    "company_name": "Clínica Dental Sonrisa",
+    "redis_prefix": "dental:",
+    "vectorstore_index": "dental_documents",
+    "schedule_service_url": "https://webhook.site/your-dental-webhook-url",
+    "sales_agent_name": "Dra. García, odontóloga de Clínica Dental Sonrisa",
+    "services": "odontología integral y estética dental",
+    "treatments": {
+      "consulta odontológica": {
+        "duration": 30,
+        "sessions": 1,
+        "deposit": 0,
+        "category": "diagnostico",
+        "agenda_id": "consultorio_1",
+        "preparation_time": 5,
+        "followup_time": 5,
+        "requires_consultation": false,
+        "consultation_duration": 0,
+        "max_advance_days": 90,
+        "min_advance_hours": 2
+      },
+      "limpieza dental": {
+        "duration": 45,
+        "sessions": 1,
+        "deposit": 30000,
+        "category": "prevencion",
+        "agenda_id": "consultorio_1",
+        "preparation_time": 10,
+        "followup_time": 10,
+        "requires_consultation": false,
+        "consultation_duration": 15,
+        "max_advance_days": 60,
+        "min_advance_hours": 4
+      },
+      "ortodoncia consulta": {
+        "duration": 45,
+        "sessions": 1,
+        "deposit": 50000,
+        "category": "ortodoncia",
+        "agenda_id": "ortodoncista",
+        "preparation_time": 15,
+        "followup_time": 15,
+        "requires_consultation": false,
+        "consultation_duration": 0,
+        "max_advance_days": 45,
+        "min_advance_hours": 24
+      },
+      "implante dental": {
+        "duration": 120,
+        "sessions": 1,
+        "deposit": 500000,
+        "category": "cirugia",
+        "agenda_id": "consultorio_cirugia",
+        "preparation_time": 30,
+        "followup_time": 45,
+        "requires_consultation": true,
+        "consultation_duration": 45,
+        "max_advance_days": 30,
+        "min_advance_hours": 168
+      }
+    },
+    "agendas": {
+      "consultorio_1": {
+        "name": "Consultorio General 1",
+        "calendar_id": "general1@dentalsonrisa.com",
+        "working_hours": {
+          "monday": {"start": "08:00", "end": "18:00"},
+          "tuesday": {"start": "08:00", "end": "18:00"},
+          "wednesday": {"start": "08:00", "end": "18:00"},
+          "thursday": {"start": "08:00", "end": "18:00"},
+          "friday": {"start": "08:00", "end": "18:00"},
+          "saturday": {"start": "08:00", "end": "12:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 10,
+        "max_concurrent": 1,
+        "categories": ["diagnostico", "prevencion"]
+      },
+      "ortodoncista": {
+        "name": "Consultorio Ortodoncia",
+        "calendar_id": "ortodoncista@dentalsonrisa.com",
+        "working_hours": {
+          "tuesday": {"start": "14:00", "end": "18:00"},
+          "wednesday": {"start": "14:00", "end": "18:00"},
+          "friday": {"start": "08:00", "end": "12:00"},
+          "saturday": {"start": "08:00", "end": "12:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 15,
+        "max_concurrent": 1,
+        "categories": ["ortodoncia"]
+      },
+      "consultorio_cirugia": {
+        "name": "Consultorio Cirugía",
+        "calendar_id": "cirugia@dentalsonrisa.com",
+        "working_hours": {
+          "monday": {"start": "08:00", "end": "14:00"},
+          "wednesday": {"start": "08:00", "end": "14:00"},
+          "friday": {"start": "08:00", "end": "14:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 45,
+        "max_concurrent": 1,
+        "categories": ["cirugia"]
+      }
+    },
+    "required_booking_fields": [
+      "nombre completo",
+      "número de cédula",
+      "fecha de nacimiento",
+      "correo electrónico",
+      "motivo",
+      "teléfono",
+      "eps o seguro médico",
+      "medicamentos actuales"
+    ],
+    "integration_type": "webhook",
+    "integration_config": {
+      "webhook_secret": "dental_webhook_secret_2024",
+      "webhook_url": "https://webhook.site/your-dental-webhook-url",
+      "response_timeout": 30,
+      "retry_attempts": 3
+    },
+    "notification_settings": {
+      "email_confirmations": true,
+      "sms_reminders": true,
+      "whatsapp_notifications": true,
+      "calendar_invites": false,
+      "confirmation_template": "dental_confirmation_template",
+      "reminder_template": "dental_reminder_template",
+      "post_treatment_followup": true
+    },
+    "booking_policies": {
+      "allow_same_day": true,
+      "require_deposit": true,
+      "auto_confirm": true,
+      "cancellation_hours": 12,
+      "reschedule_limit": 3,
+      "deposit_payment_methods": ["transfer", "cash", "card", "eps"],
+      "deposit_expiry_hours": 72,
+      "emergency_slots_reserved": 2,
+      "insurance_verification_required": true
+    }
+  },
+  "spa_wellness": {
+    "company_name": "Wellness Spa & Relax",
+    "redis_prefix": "wellness:",
+    "vectorstore_index": "wellness_documents",
+    "schedule_service_url": "http://127.0.0.1:4043",
+    "sales_agent_name": "Ana, terapeuta especialista de Wellness Spa",
+    "services": "relajación, bienestar y terapias holísticas",
+    "treatments": {
+      "masaje relajante": {
+        "duration": 60,
+        "sessions": 1,
+        "deposit": 0,
+        "category": "terapias",
+        "agenda_id": "sala_masajes",
+        "preparation_time": 10,
+        "followup_time": 15,
+        "requires_consultation": false,
+        "consultation_duration": 0,
+        "max_advance_days": 30,
+        "min_advance_hours": 2
+      },
+      "masaje terapéutico": {
+        "duration": 90,
+        "sessions": 1,
+        "deposit": 20000,
+        "category": "terapias",
+        "agenda_id": "sala_masajes",
+        "preparation_time": 15,
+        "followup_time": 20,
+        "requires_consultation": true,
+        "consultation_duration": 15,
+        "max_advance_days": 45,
+        "min_advance_hours": 4
+      },
+      "facial hidratante": {
+        "duration": 75,
+        "sessions": 1,
+        "deposit": 15000,
+        "category": "faciales",
+        "agenda_id": "sala_faciales",
+        "preparation_time": 10,
+        "followup_time": 10,
+        "requires_consultation": false,
+        "consultation_duration": 10,
+        "max_advance_days": 30,
+        "min_advance_hours": 3
+      },
+      "aromaterapia": {
+        "duration": 90,
+        "sessions": 1,
+        "deposit": 0,
+        "category": "terapias",
+        "agenda_id": "sala_aromaterapia",
+        "preparation_time": 20,
+        "followup_time": 30,
+        "requires_consultation": false,
+        "consultation_duration": 10,
+        "max_advance_days": 21,
+        "min_advance_hours": 2
+      }
+    },
+    "agendas": {
+      "sala_masajes": {
+        "name": "Sala de Masajes",
+        "calendar_id": "masajes@wellnessspa.com",
+        "working_hours": {
+          "monday": {"start": "09:00", "end": "19:00"},
+          "tuesday": {"start": "09:00", "end": "19:00"},
+          "wednesday": {"start": "09:00", "end": "19:00"},
+          "thursday": {"start": "09:00", "end": "19:00"},
+          "friday": {"start": "09:00", "end": "19:00"},
+          "saturday": {"start": "09:00", "end": "17:00"},
+          "sunday": {"start": "10:00", "end": "16:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 20,
+        "max_concurrent": 2,
+        "categories": ["terapias"]
+      },
+      "sala_faciales": {
+        "name": "Sala de Tratamientos Faciales",
+        "calendar_id": "faciales@wellnessspa.com",
+        "working_hours": {
+          "tuesday": {"start": "10:00", "end": "18:00"},
+          "wednesday": {"start": "10:00", "end": "18:00"},
+          "thursday": {"start": "10:00", "end": "18:00"},
+          "friday": {"start": "10:00", "end": "18:00"},
+          "saturday": {"start": "09:00", "end": "17:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 15,
+        "max_concurrent": 1,
+        "categories": ["faciales"]
+      },
+      "sala_aromaterapia": {
+        "name": "Sala de Aromaterapia",
+        "calendar_id": "aroma@wellnessspa.com",
+        "working_hours": {
+          "monday": {"start": "10:00", "end": "18:00"},
+          "wednesday": {"start": "10:00", "end": "18:00"},
+          "friday": {"start": "10:00", "end": "18:00"},
+          "sunday": {"start": "11:00", "end": "17:00"}
+        },
+        "timezone": "America/Bogota",
+        "buffer_time": 30,
+        "max_concurrent": 1,
+        "categories": ["terapias", "relajacion"]
+      }
+    },
+    "required_booking_fields": [
+      "nombre completo",
+      "teléfono",
+      "correo electrónico",
+      "motivo",
+      "alergias o condiciones especiales"
+    ],
+    "integration_type": "generic_rest",
+    "integration_config": {
+      "api_base_url": "http://127.0.0.1:4043",
+      "api_key": "wellness_api_key_2024",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-API-Key": "wellness_api_key_2024"
+      }
+    },
+    "notification_settings": {
+      "email_confirmations": true,
+      "sms_reminders": false,
+      "whatsapp_notifications": true,
+      "calendar_invites": false,
+      "confirmation_template": "wellness_confirmation_template",
+      "reminder_template": "wellness_reminder_template"
+    },
+    "booking_policies": {
+      "allow_same_day": true,
+      "require_deposit": false,
+      "auto_confirm": true,
+      "cancellation_hours": 4,
+      "reschedule_limit": 3,
+      "deposit_payment_methods": ["transfer", "cash"],
+      "deposit_expiry_hours": 24
+    }
+  }
+}
