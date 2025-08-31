@@ -72,19 +72,6 @@
       "masaje", "facial", "relajación", "terapia", "bienestar",
       "aromaterapia", "reflexología", "yoga", "meditación"
     ]
-  }
-}d", "horario", "fecha", "hora",
-      "procede", "proceder", "confirmar cita"
-    ],
-    "emergency_keywords": [
-      "dolor intenso", "sangrado", "emergencia", 
-      "reacción alérgica", "inflamación severa", "urgencia médica"
-    ],
-    "sales_keywords": [
-      "precio", "costo", "inversión", "promoción", "oferta",
-      "tratamiento", "procedimiento", "beneficio", "servicio",
-      "limpieza", "masaje", "botox", "relleno"
-    ]
   },
   "medispa": {
     "company_name": "MediSpa Elite",
@@ -145,4 +132,17 @@
     },
     "schedule_keywords": [
       "agendar", "reservar", "programar", "cita", "consulta",
-      "agenda", "disponibilida
+      "agenda", "disponibilidad", "horario", "fecha", "hora",
+      "procede", "proceder", "confirmar cita", "appointment"
+    ],
+    "emergency_keywords": [
+      "dolor de muela", "dolor intenso", "sangrado", "emergencia",
+      "infección", "hinchazón", "urgencia dental", "trauma dental"
+    ],
+    "sales_keywords": [
+      "precio", "costo", "inversión", "promoción", "oferta",
+      "tratamiento", "procedimiento", "beneficio", "servicio",
+      "limpieza", "blanqueamiento", "ortodoncia", "implante"
+    ]
+  }
+}
