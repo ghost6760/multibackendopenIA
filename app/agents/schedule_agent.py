@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ScheduleAgent(BaseAgent):
-    """Agente de agendamiento multi-tenant con integración Selenium"""
+    """Agente de agendamiento multi-tenant con integración Selenium y RAG"""
     
     def _initialize_agent(self):
         """Inicializar agente de agendamiento"""
@@ -16,6 +16,7 @@ class ScheduleAgent(BaseAgent):
         self.selenium_service_available = False
         self.selenium_status_last_check = 0
         self.selenium_status_cache_duration = 30
+        self.vectorstore_service = None  # Se inyecta externamente
         
         # Verificar conexión inicial con servicio Selenium específico
         self._verify_selenium_service()
@@ -23,11 +24,18 @@ class ScheduleAgent(BaseAgent):
         # Crear cadena
         self._create_chain()
     
+    def set_vectorstore_service(self, vectorstore_service):
+        """Inyectar servicio de vectorstore específico de la empresa"""
+        self.vectorstore_service = vectorstore_service
+        # Recrear cadena con RAG
+        self._create_chain()
+    
     def _create_chain(self):
-        """Crear cadena de agendamiento"""
+        """Crear cadena de agendamiento con RAG opcional"""
         self.chain = (
             {
                 "selenium_status": self._get_selenium_status,
+                "schedule_context": self._get_schedule_context,
                 "question": lambda x: x.get("question", ""),
                 "chat_history": lambda x: x.get("chat_history", []),
                 "user_id": lambda x: x.get("user_id", "default_user"),
@@ -47,6 +55,61 @@ class ScheduleAgent(BaseAgent):
             return f"✅ Sistema de agendamiento ACTIVO para {self.company_config.company_name} (Conectado a {self.company_config.schedule_service_url})"
         else:
             return f"⚠️ Sistema de agendamiento NO DISPONIBLE para {self.company_config.company_name} (Verificar conexión: {self.company_config.schedule_service_url})"
+    
+    def _get_schedule_context(self, inputs):
+        """Obtener contexto de agendamiento desde documentos RAG"""
+        try:
+            question = inputs.get("question", "")
+            
+            if not self.vectorstore_service:
+                return self._get_basic_schedule_info()
+            
+            # Buscar información relacionada con agendamiento
+            schedule_query = f"cita agenda horario duración preparación requisitos {question}"
+            docs = self.vectorstore_service.search_by_company(
+                schedule_query,
+                self.company_config.company_id,
+                k=2
+            )
+            
+            if not docs:
+                return self._get_basic_schedule_info()
+            
+            # Extraer información relevante para agendamiento
+            context_parts = []
+            for doc in docs:
+                if hasattr(doc, 'page_content') and doc.page_content:
+                    content = doc.page_content.lower()
+                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos']):
+                        context_parts.append(doc.page_content)
+                elif isinstance(doc, dict) and 'content' in doc:
+                    content = doc['content'].lower()
+                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos']):
+                        context_parts.append(doc['content'])
+            
+            if context_parts:
+                basic_info = self._get_basic_schedule_info()
+                rag_info = "\n\nInformación adicional específica:\n" + "\n".join(context_parts)
+                return basic_info + rag_info
+            else:
+                return self._get_basic_schedule_info()
+                
+        except Exception as e:
+            logger.error(f"Error retrieving schedule context: {e}")
+            return self._get_basic_schedule_info()
+    
+    def _get_basic_schedule_info(self):
+        """Información básica de agendamiento desde configuración"""
+        treatment_info = []
+        for treatment, duration in self.company_config.treatment_durations.items():
+            treatment_info.append(f"- {treatment}: {duration} minutos")
+        
+        return f"""Información de agendamiento de {self.company_config.company_name}:
+
+Duraciones de tratamientos:
+{chr(10).join(treatment_info)}
+
+Servicios: {self.company_config.services}"""
     
     def _verify_selenium_service(self, force_check: bool = False) -> bool:
         """Verificar servicio Selenium específico de la empresa"""
@@ -78,24 +141,28 @@ class ScheduleAgent(BaseAgent):
             return False
     
     def _process_schedule_request(self, inputs):
-        """Procesar solicitud de agendamiento con lógica específica de empresa"""
+        """Procesar solicitud de agendamiento con lógica específica de empresa y RAG"""
         try:
             question = inputs.get("question", "")
             user_id = inputs.get("user_id", "default_user")
             chat_history = inputs.get("chat_history", [])
+            schedule_context = inputs.get("schedule_context", "")
             
-            logger.info(f"[{self.company_config.company_id}] Processing schedule request: {question}")
+            self._log_agent_activity("processing_schedule", {
+                "question": question[:50],
+                "rag_enabled": self.vectorstore_service is not None
+            })
             
             # Verificar si es una consulta de disponibilidad
             if self._is_availability_check(question):
-                return self._handle_availability_check(question, chat_history)
+                return self._handle_availability_check(question, chat_history, schedule_context)
             
             # Verificar si es agendamiento completo
             if self._should_use_selenium(question, chat_history):
                 return self._handle_selenium_scheduling(question, user_id, chat_history)
             
-            # Respuesta base para solicitudes de agendamiento
-            return self._generate_base_schedule_response(question, inputs)
+            # Respuesta base para solicitudes de agendamiento con contexto RAG
+            return self._generate_base_schedule_response(question, inputs, schedule_context)
             
         except Exception as e:
             logger.error(f"Error in schedule processing for {self.company_config.company_name}: {e}")
@@ -121,14 +188,24 @@ class ScheduleAgent(BaseAgent):
         
         return has_schedule_intent and self.selenium_service_available and has_patient_info
     
-    def _handle_availability_check(self, question: str, chat_history: list):
-        """Manejar consulta de disponibilidad"""
+    def _handle_availability_check(self, question: str, chat_history: list, schedule_context: str):
+        """Manejar consulta de disponibilidad con contexto RAG"""
         try:
             date = self._extract_date_from_question(question, chat_history)
             treatment = self._extract_treatment_from_question(question)
             
             if not date:
-                return f"Por favor especifica la fecha en formato DD-MM-YYYY para consultar disponibilidad en {self.company_config.company_name}."
+                # Usar información del RAG si está disponible
+                context_info = ""
+                if schedule_context and "duración" in schedule_context.lower():
+                    context_info = f"\n\nInformación sobre tratamientos:\n{schedule_context}"
+                
+                return f"""Para consultar disponibilidad en {self.company_config.company_name}, necesito:
+
+📅 Fecha específica (DD-MM-YYYY)
+🩺 Tipo de {self.company_config.services.lower()} que te interesa{context_info}
+
+¿Puedes proporcionarme estos datos?"""
             
             duration = self._get_treatment_duration(treatment)
             availability_data = self._call_check_availability(date)
@@ -163,19 +240,33 @@ class ScheduleAgent(BaseAgent):
             logger.error(f"Error in Selenium scheduling for {self.company_config.company_name}: {e}")
             return f"Error en el agendamiento automático. Te conectaré con un especialista de {self.company_config.company_name}."
     
-    def _generate_base_schedule_response(self, question: str, inputs: Dict[str, Any]):
-        """Generar respuesta base para agendamiento"""
-        return f"""Perfecto, te ayudo con tu cita en {self.company_config.company_name}.
+    def _generate_base_schedule_response(self, question: str, inputs: Dict[str, Any], schedule_context: str):
+        """Generar respuesta base para agendamiento con contexto RAG"""
+        basic_response = f"""Perfecto, te ayudo con tu cita en {self.company_config.company_name}.
 
 Para agendar necesito:
 - Nombre completo
 - Número de cédula  
 - Teléfono de contacto
 - Fecha y hora preferida
-- Tipo de {self.company_config.services.lower()} que te interesa
+- Tipo de {self.company_config.services.lower()} que te interesa"""
 
-¿Puedes proporcionarme esta información? 📅"""
+        # Agregar información específica del RAG si está disponible
+        if schedule_context and len(schedule_context) > 100:
+            # Extraer información relevante para el usuario
+            context_lines = schedule_context.split('\n')
+            relevant_info = []
+            for line in context_lines:
+                if any(word in line.lower() for word in ['preparación', 'requisitos', 'recomendación', 'antes']):
+                    relevant_info.append(line.strip())
+            
+            if relevant_info:
+                basic_response += f"\n\nInformación adicional:\n" + "\n".join(relevant_info[:3])
+        
+        basic_response += f"\n\n¿Puedes proporcionarme esta información? 📅"
+        return basic_response
     
+    # Métodos auxiliares (mantienen la misma implementación)
     def _extract_date_from_question(self, question, chat_history=None):
         """Extraer fecha de la pregunta o historial"""
         import re
