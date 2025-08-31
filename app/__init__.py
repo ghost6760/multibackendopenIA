@@ -139,7 +139,7 @@ def create_app(config_class=Config):
     
     @app.route('/company/<company_id>/status')
     def company_status(company_id):
-        """Estado específico de una empresa"""
+        """Estado específico de una empresa - CORREGIDO"""
         try:
             company_manager = get_company_manager()
             
@@ -166,7 +166,8 @@ def create_app(config_class=Config):
                 health = orchestrator.health_check()
                 status_info.update({
                     "system_healthy": health.get("system_healthy", False),
-                    "agents_available": health.get("agents_status", {}).keys()
+                    # CORREGIDO: Convertir dict_keys a lista
+                    "agents_available": list(health.get("agents_status", {}).keys())
                 })
             
             return jsonify({
