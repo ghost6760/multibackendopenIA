@@ -11,10 +11,23 @@ import logging
 import json
 import time
 
+logger = logging.getLogger(__name__)from typing import Dict, Any, List, Optional, Tuple
+from app.config.company_config import CompanyConfig, get_company_config
+from app.agents import (
+    RouterAgent, EmergencyAgent, SalesAgent, 
+    SupportAgent, ScheduleAgent, AvailabilityAgent
+)
+from app.services.openai_service import OpenAIService
+from app.services.vectorstore_service import VectorstoreService
+from app.models.conversation import ConversationManager
+import logging
+import json
+import time
+
 logger = logging.getLogger(__name__)
 
 class MultiAgentOrchestrator:
-    """Orquestador multi-agente multi-tenant"""
+    """Orquestador multi-agente multi-tenant con RAG mejorado"""
     
     def __init__(self, company_id: str, openai_service: OpenAIService = None):
         self.company_id = company_id
@@ -34,15 +47,16 @@ class MultiAgentOrchestrator:
         logger.info(f"MultiAgentOrchestrator initialized for company: {company_id}")
     
     def set_vectorstore_service(self, vectorstore_service: VectorstoreService):
-        """Inyectar servicio de vectorstore específico de la empresa"""
+        """Inyectar servicio de vectorstore específico de la empresa - ACTUALIZADO"""
         self.vectorstore_service = vectorstore_service
         
-        # Configurar agentes que necesitan vectorstore
-        if 'sales' in self.agents:
-            self.agents['sales'].set_vectorstore_service(vectorstore_service)
+        # ACTUALIZADO: Configurar RAG para todos los agentes que lo necesitan
+        rag_agents = ['sales', 'support', 'emergency', 'schedule']
         
-        if 'support' in self.agents:
-            self.agents['support'].set_vectorstore_service(vectorstore_service)
+        for agent_name in rag_agents:
+            if agent_name in self.agents:
+                self.agents[agent_name].set_vectorstore_service(vectorstore_service)
+                logger.info(f"[{self.company_id}] RAG configured for {agent_name} agent")
     
     def _initialize_agents(self):
         """Inicializar todos los agentes especializados"""
@@ -50,25 +64,26 @@ class MultiAgentOrchestrator:
             # Router Agent (siempre necesario)
             self.agents['router'] = RouterAgent(self.company_config, self.openai_service)
             
-            # Emergency Agent
+            # Emergency Agent - ACTUALIZADO con RAG
             self.agents['emergency'] = EmergencyAgent(self.company_config, self.openai_service)
             
-            # Sales Agent
+            # Sales Agent - Con RAG
             self.agents['sales'] = SalesAgent(self.company_config, self.openai_service)
             
-            # Support Agent
+            # Support Agent - Con RAG
             self.agents['support'] = SupportAgent(self.company_config, self.openai_service)
             
-            # Schedule Agent
+            # Schedule Agent - ACTUALIZADO con RAG
             self.agents['schedule'] = ScheduleAgent(self.company_config, self.openai_service)
             
-            # Availability Agent
+            # Availability Agent (sin RAG, usa schedule agent)
             self.agents['availability'] = AvailabilityAgent(self.company_config, self.openai_service)
             
             # Conectar availability agent con schedule agent
             self.agents['availability'].set_schedule_agent(self.agents['schedule'])
             
             logger.info(f"[{self.company_id}] All agents initialized: {list(self.agents.keys())}")
+            logger.info(f"[{self.company_id}] RAG-enabled agents: sales, support, emergency, schedule")
             
         except Exception as e:
             logger.error(f"[{self.company_id}] Error initializing agents: {e}")
@@ -185,20 +200,28 @@ class MultiAgentOrchestrator:
         # Detectar si puede necesitar RAG
         might_need_rag = self._might_need_rag(question)
         if might_need_rag:
-            logger.info(f"   → Possible RAG query detected for {self.company_config.company_name}")
+            rag_status = "available" if self.vectorstore_service else "not configured"
+            logger.info(f"   → Possible RAG query detected for {self.company_config.company_name} (RAG: {rag_status})")
     
     def _log_query_completion(self, agent_used: str, response: str):
         """Log finalización de consulta"""
         logger.info(f"🤖 [{self.company_id}] RESPONSE GENERATED - Agent: {agent_used}")
         logger.info(f"   → Response length: {len(response)} characters")
         logger.info(f"   → Company: {self.company_config.company_name}")
+        
+        # Log si el agente usado tiene RAG
+        rag_agents = ['sales', 'support', 'emergency', 'schedule']
+        if agent_used in rag_agents:
+            rag_status = "enabled" if self.vectorstore_service else "disabled"
+            logger.info(f"   → RAG status for {agent_used}: {rag_status}")
     
     def _might_need_rag(self, question: str) -> bool:
         """Determinar si consulta podría necesitar RAG"""
         rag_keywords = [
             "precio", "costo", "inversión", "duración", "tiempo",
             "tratamiento", "procedimiento", "servicio", "beneficio",
-            "horario", "disponibilidad", "agendar", "cita", "información"
+            "horario", "disponibilidad", "agendar", "cita", "información",
+            "dolor", "emergencia", "protocolo", "preparación", "requisitos"
         ]
         return any(keyword in question.lower() for keyword in rag_keywords)
     
@@ -217,7 +240,7 @@ class MultiAgentOrchestrator:
             return []
     
     def health_check(self) -> Dict[str, Any]:
-        """Verificar salud del sistema multi-agente"""
+        """Verificar salud del sistema multi-agente - ACTUALIZADO"""
         try:
             agents_status = {}
             
@@ -249,6 +272,13 @@ class MultiAgentOrchestrator:
             # Estado del sistema
             all_healthy = all(status == "healthy" for status in agents_status.values())
             
+            # NUEVO: Información sobre RAG
+            rag_info = {
+                "rag_available": self.vectorstore_service is not None,
+                "rag_enabled_agents": ["sales", "support", "emergency", "schedule"],
+                "rag_disabled_agents": ["router", "availability"]
+            }
+            
             return {
                 "system_healthy": all_healthy,
                 "company_id": self.company_id,
@@ -256,7 +286,8 @@ class MultiAgentOrchestrator:
                 "agents_status": agents_status,
                 "vectorstore_connected": self.vectorstore_service is not None,
                 "schedule_service_url": self.company_config.schedule_service_url,
-                "system_type": "multi-agent-multi-tenant"
+                "system_type": "multi-agent-multi-tenant",
+                "rag_status": rag_info
             }
             
         except Exception as e:
@@ -268,13 +299,15 @@ class MultiAgentOrchestrator:
             }
     
     def get_system_stats(self) -> Dict[str, Any]:
-        """Obtener estadísticas del sistema"""
+        """Obtener estadísticas del sistema - ACTUALIZADO"""
         return {
             "company_id": self.company_id,
             "company_name": self.company_config.company_name,
             "agents_available": list(self.agents.keys()),
-            "system_type": "multi-agent-multi-tenant",
+            "rag_enabled_agents": ["sales", "support", "emergency", "schedule"],
+            "system_type": "multi-agent-multi-tenant-rag",
             "vectorstore_index": self.company_config.vectorstore_index,
             "schedule_service_url": self.company_config.schedule_service_url,
-            "services": self.company_config.services
+            "services": self.company_config.services,
+            "rag_status": "enabled" if self.vectorstore_service else "disabled"
         }
