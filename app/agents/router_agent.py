@@ -46,13 +46,13 @@ ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categor
    - Cualquier otra consulta
 
 RESPONDE SOLO con el formato JSON:
-{{
+{{{{
     "intent": "EMERGENCY|SALES|SCHEDULE|SUPPORT",
     "confidence": 0.0-1.0,
     "keywords": ["palabra1", "palabra2"],
     "reasoning": "breve explicación",
     "company_context": "{self.company_config.company_name}"
-}}
+}}}}
 
 Mensaje del usuario: {{question}}"""),
             ("human", "{question}")
