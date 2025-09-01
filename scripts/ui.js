@@ -515,9 +515,26 @@ function createStatusBadge(status, text = null) {
     return badge;
 }
 
-// Create global UI manager instance
+// Create global UI manager instance OR extend existing one
 console.log('🎨 Creating UI Manager...');
-window.UI = new UIManager();
+const uiManager = new UIManager();
+
+// If window.UI already exists (from config.js), extend it
+if (window.UI) {
+    // Preserve existing methods from config.js
+    const existingMethods = { ...window.UI };
+    window.UI = uiManager;
+    
+    // Add back the methods from config.js
+    Object.keys(existingMethods).forEach(key => {
+        if (typeof existingMethods[key] === 'function' && !window.UI[key]) {
+            window.UI[key] = existingMethods[key];
+        }
+    });
+    console.log('🔧 Extended existing UI manager with new methods');
+} else {
+    window.UI = uiManager;
+}
 
 // Window resize handler for responsive updates
 window.addEventListener('resize', window.UI.throttle(() => {
