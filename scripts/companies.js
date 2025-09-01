@@ -2,331 +2,43 @@
 'use strict';
 
 /**
- * Company Management Module for Multi-Tenant Admin Panel
- * Handles company selection, status monitoring, and company-specific operations
+ * Company Management for Multi-Tenant Admin Panel
+ * Handles company selection, status, and context switching
  */
-class CompanyManager {
+class CompaniesManager {
     constructor() {
         this.companies = {};
         this.currentCompanyId = null;
-        this.statusCache = new Map();
-        this.statusRefreshInterval = null;
         this.isInitialized = false;
         
         this.init = this.init.bind(this);
-        this.refreshCompanyStatus = this.refreshCompanyStatus.bind(this);
+        this.onCompanyChange = this.onCompanyChange.bind(this);
     }
-
+    
     /**
-     * Initialize Company Manager
+     * Initialize Companies Manager
      */
     async init() {
         if (this.isInitialized) return;
-
+        
         try {
-            await this.loadCompanies();
             this.setupEventListeners();
-            this.startStatusMonitoring();
+            
+            // Load companies on initialization
+            await this.loadCompanies();
             
             this.isInitialized = true;
             
             if (window.APP_CONFIG.DEBUG.enabled) {
-                console.log('🏢 Company Manager initialized');
+                console.log('🏢 Companies Manager initialized');
             }
+            
         } catch (error) {
-            console.error('❌ Failed to initialize Company Manager:', error);
+            console.error('❌ Failed to initialize Companies Manager:', error);
             throw error;
         }
     }
-
-    /**
-     * Load all companies from API
-     */
-    async loadCompanies() {
-        try {
-            window.UI.showLoading('Cargando empresas...');
-            
-            const response = await window.API.getCompanies();
-            
-            if (response && response.companies) {
-                this.companies = response.companies;
-                this.updateCompanySelector();
-                this.updateSystemOverview();
-                
-                // Auto-select first company if none selected
-                if (!this.currentCompanyId && Object.keys(this.companies).length > 0) {
-                    const firstCompanyId = Object.keys(this.companies)[0];
-                    await this.selectCompany(firstCompanyId);
-                }
-                
-                window.UI.showToast(`✅ ${Object.keys(this.companies).length} empresas cargadas`, 'success');
-                
-                if (window.APP_CONFIG.DEBUG.enabled) {
-                    console.log('🏢 Companies loaded:', Object.keys(this.companies));
-                }
-            } else {
-                throw new Error('No companies data received');
-            }
-            
-        } catch (error) {
-            console.error('❌ Error loading companies:', error);
-            window.UI.showToast('❌ Error cargando empresas: ' + error.message, 'error');
-            this.showFallbackCompanies();
-        } finally {
-            window.UI.hideLoading();
-        }
-    }
-
-    /**
-     * Update company selector dropdown
-     */
-    updateCompanySelector() {
-        const select = document.getElementById('currentCompany');
-        if (!select) return;
-
-        // Clear existing options
-        select.innerHTML = '<option value="">Selecciona una empresa...</option>';
-
-        // Add company options
-        Object.entries(this.companies).forEach(([id, company]) => {
-            const option = document.createElement('option');
-            option.value = id;
-            option.textContent = `${company.company_name || id} (${company.services?.length || 0} servicios)`;
-            select.appendChild(option);
-        });
-
-        // Set current selection
-        if (this.currentCompanyId) {
-            select.value = this.currentCompanyId;
-        }
-    }
-
-    /**
-     * Select a company and update context
-     */
-    async selectCompany(companyId) {
-        if (!companyId || companyId === this.currentCompanyId) return;
-
-        if (!this.companies[companyId]) {
-            window.UI.showToast('❌ Empresa no encontrada', 'error');
-            return;
-        }
-
-        try {
-            const company = this.companies[companyId];
-            window.UI.showLoading(`Seleccionando empresa: ${company.company_name || companyId}...`);
-
-            // Update current context
-            this.currentCompanyId = companyId;
-            window.API.setCompanyId(companyId);
-
-            // Update UI
-            this.updateCompanyIndicators(company.company_name || companyId);
-            this.updateCompanySelector();
-
-            // Load company-specific data
-            await this.loadCompanyData(companyId);
-
-            // Notify other modules
-            this.notifyCompanyChange(companyId);
-
-            window.UI.showToast(`✅ Empresa seleccionada: ${company.company_name || companyId}`, 'success');
-            
-            if (window.APP_CONFIG.DEBUG.enabled) {
-                console.log('🏢 Company selected:', { id: companyId, company });
-            }
-
-        } catch (error) {
-            console.error('❌ Error selecting company:', error);
-            window.UI.showToast('❌ Error seleccionando empresa: ' + error.message, 'error');
-        } finally {
-            window.UI.hideLoading();
-        }
-    }
-
-    /**
-     * Load company-specific data
-     */
-    async loadCompanyData(companyId) {
-        try {
-            // Load company status
-            const status = await this.getCompanyStatus(companyId);
-            this.updateCompanyInfo(status);
-
-            // Cache the status
-            this.statusCache.set(companyId, {
-                data: status,
-                timestamp: Date.now()
-            });
-
-        } catch (error) {
-            console.warn('⚠️ Failed to load some company data:', error.message);
-            // Don't show error to user for partial failures
-        }
-    }
-
-    /**
-     * Get company status with caching
-     */
-    async getCompanyStatus(companyId) {
-        // Check cache first
-        const cached = this.statusCache.get(companyId);
-        const cacheAge = Date.now() - (cached?.timestamp || 0);
-        const cacheValid = cacheAge < (window.APP_CONFIG.PERFORMANCE.cache_duration || 300000); // 5 minutes
-
-        if (cached && cacheValid) {
-            return cached.data;
-        }
-
-        try {
-            const status = await window.API.getCompanyStatus(companyId);
-            
-            // Update cache
-            this.statusCache.set(companyId, {
-                data: status,
-                timestamp: Date.now()
-            });
-            
-            return status;
-        } catch (error) {
-            console.error('❌ Error getting company status:', error);
-            
-            // Return cached data if available, even if stale
-            if (cached) {
-                console.warn('⚠️ Using stale cached data for company status');
-                return cached.data;
-            }
-            
-            throw error;
-        }
-    }
-
-    /**
-     * Update company indicators across the UI
-     */
-    updateCompanyIndicators(companyName) {
-        const indicators = [
-            'docCompanyIndicator',
-            'bulkCompanyIndicator',
-            'searchCompanyIndicator',
-            'cameraCompany'
-        ];
-
-        indicators.forEach(id => {
-            const element = document.getElementById(id);
-            if (element) {
-                element.textContent = companyName;
-            }
-        });
-    }
-
-    /**
-     * Update company info display
-     */
-    updateCompanyInfo(statusData) {
-        const companyInfoEl = document.getElementById('companyInfo');
-        if (!companyInfoEl || !statusData) return;
-
-        const company = this.companies[this.currentCompanyId];
-        if (!company) return;
-
-        const isHealthy = statusData.data?.system_healthy;
-        const agentsCount = statusData.data?.agents_available?.length || 0;
-
-        const html = `
-            <div class="company-status">
-                <div class="status-item">
-                    <div class="status-label">Nombre</div>
-                    <div class="status-value">${company.company_name || this.currentCompanyId}</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">ID</div>
-                    <div class="status-value">${this.currentCompanyId}</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Servicios</div>
-                    <div class="status-value">${this.formatServices(company.services)}</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Estado</div>
-                    <div class="status-value" style="color: ${isHealthy ? 'var(--success-color)' : 'var(--danger-color)'}">
-                        ${isHealthy ? '🟢 Saludable' : '🔴 Con problemas'}
-                    </div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Vectorstore</div>
-                    <div class="status-value">${company.vectorstore_index || 'N/A'}</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Agentes</div>
-                    <div class="status-value">${agentsCount} disponibles</div>
-                </div>
-            </div>
-        `;
-
-        companyInfoEl.innerHTML = html;
-    }
-
-    /**
-     * Update system overview
-     */
-    updateSystemOverview() {
-        const overviewEl = document.getElementById('systemOverview');
-        if (!overviewEl) return;
-
-        const totalCompanies = Object.keys(this.companies).length;
-        const healthyCompanies = this.getHealthyCompaniesCount();
-        const isRailway = window.APP_CONFIG.ENV.is_railway;
-
-        const html = `
-            <div class="status-item">
-                <div class="status-label">Total de Empresas</div>
-                <div class="status-value">${totalCompanies}</div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Empresas Activas</div>
-                <div class="status-value" style="color: var(--success-color)">${healthyCompanies}</div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Entorno</div>
-                <div class="status-value">${isRailway ? '🚄 Railway' : '🖥️ Local'}</div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Última Actualización</div>
-                <div class="status-value">${window.UI.formatDate(new Date())}</div>
-            </div>
-        `;
-
-        overviewEl.innerHTML = html;
-    }
-
-    /**
-     * Get count of healthy companies
-     */
-    getHealthyCompaniesCount() {
-        let healthyCount = 0;
-        
-        this.statusCache.forEach((cache, companyId) => {
-            if (cache.data?.data?.system_healthy) {
-                healthyCount++;
-            }
-        });
-        
-        // If no status data cached, assume all are healthy
-        return healthyCount || Object.keys(this.companies).length;
-    }
-
-    /**
-     * Format services array for display
-     */
-    formatServices(services) {
-        if (!services || !Array.isArray(services)) return 'N/A';
-        if (services.length === 0) return 'Ninguno';
-        
-        return services.slice(0, 3).join(', ') + 
-               (services.length > 3 ? ` y ${services.length - 3} más` : '');
-    }
-
+    
     /**
      * Setup event listeners
      */
@@ -335,12 +47,13 @@ class CompanyManager {
         const companySelect = document.getElementById('currentCompany');
         if (companySelect) {
             companySelect.addEventListener('change', (e) => {
-                if (e.target.value) {
-                    this.selectCompany(e.target.value);
+                const newCompanyId = e.target.value;
+                if (newCompanyId !== this.currentCompanyId) {
+                    this.selectCompany(newCompanyId);
                 }
             });
         }
-
+        
         // Refresh companies button
         const refreshBtn = document.getElementById('refreshCompanies');
         if (refreshBtn) {
@@ -348,440 +61,663 @@ class CompanyManager {
                 this.loadCompanies();
             });
         }
-
-        // Health check button
-        const healthBtn = document.getElementById('checkHealthBtn');
-        if (healthBtn) {
-            healthBtn.addEventListener('click', () => {
-                this.performHealthCheck();
+        
+        // Company action buttons
+        const checkHealthBtn = document.getElementById('checkHealthBtn');
+        if (checkHealthBtn) {
+            checkHealthBtn.addEventListener('click', () => {
+                this.checkCompanyHealth();
             });
         }
-
-        // Statistics button
-        const statsBtn = document.getElementById('viewStatsBtn');
-        if (statsBtn) {
-            statsBtn.addEventListener('click', () => {
-                this.viewCompanyStatistics();
+        
+        const viewStatsBtn = document.getElementById('viewStatsBtn');
+        if (viewStatsBtn) {
+            viewStatsBtn.addEventListener('click', () => {
+                this.viewCompanyStats();
             });
         }
-
-        // Reset cache button
-        const resetBtn = document.getElementById('resetCacheBtn');
-        if (resetBtn) {
-            resetBtn.addEventListener('click', () => {
+        
+        const resetCacheBtn = document.getElementById('resetCacheBtn');
+        if (resetCacheBtn) {
+            resetCacheBtn.addEventListener('click', () => {
                 this.resetCompanyCache();
             });
         }
-    }
-
-    /**
-     * Start status monitoring
-     */
-    startStatusMonitoring() {
-        // Refresh status every 5 minutes
-        const interval = window.APP_CONFIG.PERFORMANCE.cache_duration || 300000;
         
-        this.statusRefreshInterval = setInterval(() => {
-            if (this.currentCompanyId) {
-                this.refreshCompanyStatus(this.currentCompanyId);
-            }
-        }, interval);
-    }
-
-    /**
-     * Stop status monitoring
-     */
-    stopStatusMonitoring() {
-        if (this.statusRefreshInterval) {
-            clearInterval(this.statusRefreshInterval);
-            this.statusRefreshInterval = null;
-        }
-    }
-
-    /**
-     * Refresh company status in background
-     */
-    async refreshCompanyStatus(companyId) {
-        try {
-            const status = await window.API.getCompanyStatus(companyId);
-            
-            // Update cache
-            this.statusCache.set(companyId, {
-                data: status,
-                timestamp: Date.now()
+        const viewAllBtn = document.getElementById('viewAllCompanies');
+        if (viewAllBtn) {
+            viewAllBtn.addEventListener('click', () => {
+                this.showAllCompanies();
             });
-
-            // Update UI if this is the current company
-            if (companyId === this.currentCompanyId) {
-                this.updateCompanyInfo(status);
-            }
-
-            if (window.APP_CONFIG.DEBUG.enabled) {
-                console.log(`🔄 Status refreshed for company: ${companyId}`);
-            }
-
-        } catch (error) {
-            console.warn(`⚠️ Failed to refresh status for ${companyId}:`, error.message);
         }
     }
-
+    
     /**
-     * Notify other modules of company change
+     * Load companies from API
      */
-    notifyCompanyChange(companyId) {
-        // Notify Documents Manager
-        if (window.DocumentsManager) {
-            window.DocumentsManager.onCompanyChange(companyId);
-        }
-
-        // Notify Chat Tester
-        if (window.ChatTester) {
-            window.ChatTester.onCompanyChange(companyId);
-        }
-
-        // Notify Multimedia Manager
-        if (window.MultimediaManager) {
-            window.MultimediaManager.onCompanyChange(companyId);
-        }
-
-        // Notify Admin Tools
-        if (window.AdminTools) {
-            window.AdminTools.onCompanyChange(companyId);
-        }
-
-        // Dispatch custom event
-        window.dispatchEvent(new CustomEvent('companyChange', {
-            detail: { companyId, company: this.companies[companyId] }
-        }));
-    }
-
-    /**
-     * Perform health check for current company
-     */
-    async performHealthCheck() {
-        if (!this.currentCompanyId) {
-            window.UI.showToast('⚠️ Selecciona una empresa primero', 'warning');
-            return;
-        }
-
+    async loadCompanies() {
         try {
-            window.UI.showLoading('Verificando salud del sistema...');
-
-            const health = await window.API.companyHealthCheck(this.currentCompanyId);
-            const company = this.companies[this.currentCompanyId];
+            window.UI.showLoading('Cargando empresas configuradas...');
             
-            this.showHealthCheckModal(health, company);
-
+            if (window.APP_CONFIG.DEBUG.enabled) {
+                console.log('🔄 Loading companies...');
+            }
+            
+            const response = await window.API.getCompanies();
+            
+            if (response.status === 'success' && response.companies) {
+                this.companies = response.companies;
+                
+                this.populateCompanySelector();
+                
+                // Set default company if none selected
+                if (!this.currentCompanyId || !this.companies[this.currentCompanyId]) {
+                    const defaultCompany = window.APP_CONFIG.COMPANIES.default_company;
+                    const firstCompany = Object.keys(this.companies)[0];
+                    
+                    this.currentCompanyId = this.companies[defaultCompany] ? 
+                        defaultCompany : firstCompany;
+                }
+                
+                if (this.currentCompanyId) {
+                    this.selectCompany(this.currentCompanyId, false);
+                }
+                
+                await this.loadSystemOverview();
+                
+                window.UI.showNotification(
+                    `✅ ${Object.keys(this.companies).length} empresas cargadas`,
+                    'success'
+                );
+                
+                if (window.APP_CONFIG.DEBUG.enabled) {
+                    console.log('🏢 Companies loaded:', Object.keys(this.companies));
+                }
+                
+            } else {
+                throw new Error(response.message || 'Error cargando empresas');
+            }
+            
         } catch (error) {
-            console.error('❌ Health check failed:', error);
-            window.UI.showToast('❌ Error verificando salud: ' + error.message, 'error');
+            console.error('Error loading companies:', error);
+            window.UI.showNotification(
+                'Error cargando empresas: ' + error.message,
+                'error'
+            );
         } finally {
             window.UI.hideLoading();
         }
     }
-
+    
     /**
-     * Show health check results in modal
+     * Populate company selector dropdown
      */
-    showHealthCheckModal(health, company) {
-        let healthHTML = '<div class="health-results">';
+    populateCompanySelector() {
+        const selector = document.getElementById('currentCompany');
+        if (!selector) return;
         
-        if (health.status === 'healthy' || health.status === 'partial') {
-            const statusColor = health.status === 'healthy' ? 'var(--success-color)' : 'var(--warning-color)';
-            const statusIcon = health.status === 'healthy' ? '✅' : '⚠️';
-            const statusText = health.status === 'healthy' ? 'Sistema Saludable' : 'Sistema Parcialmente Funcional';
-            
-            healthHTML += `
-                <h4 style="color: ${statusColor}">${statusIcon} ${statusText}</h4>
-                <div class="health-info">
-                    <p><strong>Empresa:</strong> ${company.company_name}</p>
-                    <p><strong>ID:</strong> ${this.currentCompanyId}</p>
-                    <p><strong>Timestamp:</strong> ${window.UI.formatDate(new Date())}</p>
-                </div>
-            `;
-
-            if (health.components) {
-                healthHTML += '<h5>Estado de Componentes:</h5><ul class="component-list">';
-                Object.entries(health.components).forEach(([component, status]) => {
-                    const icon = status === 'healthy' || status === 'connected' ? '✅' : '❌';
-                    const displayName = this.getComponentDisplayName(component);
-                    healthHTML += `<li>${icon} <strong>${displayName}:</strong> ${status}</li>`;
-                });
-                healthHTML += '</ul>';
+        // Clear existing options
+        selector.innerHTML = '';
+        
+        if (Object.keys(this.companies).length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'No hay empresas configuradas';
+            selector.appendChild(option);
+            return;
+        }
+        
+        // Add companies
+        Object.entries(this.companies).forEach(([companyId, company]) => {
+            const option = document.createElement('option');
+            option.value = companyId;
+            option.textContent = `${company.company_name} (${companyId})`;
+            selector.appendChild(option);
+        });
+        
+        // Set selected value
+        if (this.currentCompanyId) {
+            selector.value = this.currentCompanyId;
+        }
+    }
+    
+    /**
+     * Select a company
+     */
+    async selectCompany(companyId, showNotification = true) {
+        if (!companyId || !this.companies[companyId]) {
+            console.warn('Invalid company ID:', companyId);
+            return;
+        }
+        
+        const previousCompanyId = this.currentCompanyId;
+        this.currentCompanyId = companyId;
+        
+        // Update API context
+        window.API.setCompanyContext(companyId);
+        
+        // Update UI
+        const selector = document.getElementById('currentCompany');
+        if (selector) {
+            selector.value = companyId;
+        }
+        
+        // Update company indicators
+        this.updateCompanyIndicators();
+        
+        // Load company information
+        await this.loadCompanyInfo();
+        
+        // Notify other modules about company change
+        await this.notifyCompanyChange(companyId, previousCompanyId);
+        
+        if (showNotification) {
+            const company = this.companies[companyId];
+            window.UI.showNotification(
+                `Empresa cambiada a: ${company.company_name}`,
+                'info'
+            );
+        }
+        
+        if (window.APP_CONFIG.DEBUG.enabled) {
+            console.log('🏢 Company selected:', companyId);
+        }
+    }
+    
+    /**
+     * Update company indicators throughout the UI
+     */
+    updateCompanyIndicators() {
+        const company = this.companies[this.currentCompanyId];
+        if (!company) return;
+        
+        const indicators = [
+            'docCompanyIndicator',
+            'searchCompanyIndicator',
+            'chatCompanyName',
+            'cameraCompany'
+        ];
+        
+        indicators.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = company.company_name;
             }
-
-            // Show Railway-specific information
-            if (window.APP_CONFIG.ENV.is_railway) {
-                healthHTML += `
-                    <div class="railway-info">
-                        <h5>🚄 Información Railway:</h5>
-                        <p>• Entorno de producción detectado</p>
-                        <p>• Servicio de agendamiento en modo fallback (esperado)</p>
-                        <p>• Todas las funciones principales operativas</p>
+        });
+        
+        // Update chat services
+        const servicesElement = document.getElementById('chatCompanyServices');
+        if (servicesElement && company.services) {
+            servicesElement.textContent = `Servicios: ${company.services}`;
+        }
+    }
+    
+    /**
+     * Load company information and update display
+     */
+    async loadCompanyInfo() {
+        if (!this.currentCompanyId) return;
+        
+        try {
+            const response = await window.API.getCompanyStatus(this.currentCompanyId);
+            
+            const infoDiv = document.getElementById('companyInfo');
+            if (!infoDiv) return;
+            
+            if (response.status === 'success' && response.data) {
+                const info = response.data;
+                
+                infoDiv.innerHTML = `
+                    <div class="company-details">
+                        <h3>${info.company_name} <span class="company-id">(${info.company_id})</span></h3>
+                        <div class="company-stats">
+                            <div class="stat-item">
+                                <span class="stat-icon">📍</span>
+                                <span class="stat-text">Servicios: ${info.services}</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-icon">🤖</span>
+                                <span class="stat-text ${info.orchestrator_ready ? 'status-healthy' : 'status-error'}">
+                                    Orquestador: ${info.orchestrator_ready ? 'Listo' : 'No disponible'}
+                                </span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-icon">🩺</span>
+                                <span class="stat-text ${info.system_healthy ? 'status-healthy' : 'status-warning'}">
+                                    Estado: ${info.system_healthy ? 'Saludable' : 'Requiere atención'}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="technical-info">
+                            <small>📊 Índice: ${info.vectorstore_index}</small>
+                            <small>🔑 Prefijo: ${info.redis_prefix}</small>
+                        </div>
+                    </div>
+                `;
+                
+                // Update company status section
+                const statusContent = document.getElementById('companyStatusContent');
+                if (statusContent) {
+                    statusContent.innerHTML = `
+                        <div class="status-grid">
+                            <div class="status-card">
+                                <h4>Estado General</h4>
+                                <span class="status-badge ${info.system_healthy ? 'success' : 'warning'}">
+                                    ${info.system_healthy ? 'Saludable' : 'Requiere atención'}
+                                </span>
+                            </div>
+                            <div class="status-card">
+                                <h4>Orquestador</h4>
+                                <span class="status-badge ${info.orchestrator_ready ? 'success' : 'error'}">
+                                    ${info.orchestrator_ready ? 'Activo' : 'Inactivo'}
+                                </span>
+                            </div>
+                            <div class="status-card">
+                                <h4>Vectorstore</h4>
+                                <span class="status-badge ${info.vectorstore_connected ? 'success' : 'error'}">
+                                    ${info.vectorstore_connected ? 'Conectado' : 'Desconectado'}
+                                </span>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+            } else {
+                infoDiv.innerHTML = `
+                    <div class="error-info">
+                        <span class="error-icon">❌</span>
+                        <span>Error cargando información de ${this.currentCompanyId}</span>
                     </div>
                 `;
             }
-
-        } else {
-            healthHTML += `
-                <h4 style="color: var(--danger-color)">❌ Sistema con Problemas</h4>
-                <div class="error-info">
-                    <p><strong>Error:</strong> ${health.error || health.message}</p>
-                    <p><strong>Empresa:</strong> ${company.company_name}</p>
-                </div>
-            `;
+            
+        } catch (error) {
+            console.error('Error loading company info:', error);
+            const infoDiv = document.getElementById('companyInfo');
+            if (infoDiv) {
+                infoDiv.innerHTML = `
+                    <div class="error-info">
+                        <span class="error-icon">❌</span>
+                        <span>Error de conexión</span>
+                    </div>
+                `;
+            }
         }
-        
-        healthHTML += '</div>';
-        
-        window.UI.showModal('🩺 Health Check del Sistema', healthHTML, {
-            icon: '🩺',
-            maxWidth: '600px'
-        });
     }
-
+    
     /**
-     * Get display name for component
+     * Load system overview
      */
-    getComponentDisplayName(component) {
-        const componentNames = {
-            'redis': 'Redis Cache',
-            'openai': 'OpenAI API',
-            'vectorstore': 'Base de Datos Vectorial',
-            'schedule_service': 'Servicio de Agendamiento',
-            'companies': 'Gestor de Empresas'
-        };
-        
-        return componentNames[component] || component;
+    async loadSystemOverview() {
+        try {
+            const response = await window.API.getSystemHealth();
+            
+            const overviewDiv = document.getElementById('systemOverview');
+            if (!overviewDiv) return;
+            
+            if (response.companies) {
+                const healthData = response.companies.health || {};
+                const statsData = response.companies.stats || {};
+                
+                let overviewHTML = '';
+                
+                Object.entries(this.companies).forEach(([companyId, company]) => {
+                    const health = healthData[companyId] || {};
+                    const stats = statsData[companyId] || {};
+                    
+                    const isHealthy = health.system_healthy || false;
+                    const isActive = companyId === this.currentCompanyId;
+                    const conversations = stats.conversations || 0;
+                    const documents = stats.documents || 0;
+                    
+                    overviewHTML += `
+                        <div class="company-overview-card ${isActive ? 'active' : ''}" 
+                             data-company="${companyId}">
+                            <div class="card-header">
+                                <h4>${company.company_name}</h4>
+                                <span class="company-id">${companyId}</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="overview-stats">
+                                    <div class="stat-item">
+                                        <span class="stat-icon ${isHealthy ? 'success' : 'error'}">
+                                            ${isHealthy ? '✅' : '❌'}
+                                        </span>
+                                        <span class="stat-text">${isHealthy ? 'Saludable' : 'Error'}</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-icon">💬</span>
+                                        <span class="stat-text">${conversations} conversaciones</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-icon">📄</span>
+                                        <span class="stat-text">${documents} documentos</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-actions">
+                                <button onclick="window.CompaniesManager.selectCompany('${companyId}')" 
+                                        class="btn ${isActive ? 'btn-success' : 'btn-secondary'}">
+                                    ${isActive ? '✓ Activa' : 'Seleccionar'}
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                overviewDiv.innerHTML = overviewHTML;
+                
+            } else {
+                overviewDiv.innerHTML = `
+                    <div class="overview-placeholder">
+                        <span class="placeholder-icon">⚠️</span>
+                        <p>No se pudo cargar la vista general del sistema</p>
+                    </div>
+                `;
+            }
+            
+        } catch (error) {
+            console.error('Error loading system overview:', error);
+            const overviewDiv = document.getElementById('systemOverview');
+            if (overviewDiv) {
+                overviewDiv.innerHTML = `
+                    <div class="overview-placeholder error">
+                        <span class="placeholder-icon">❌</span>
+                        <p>Error cargando vista general</p>
+                    </div>
+                `;
+            }
+        }
     }
-
+    
     /**
-     * View company statistics
+     * Notify other modules about company change
      */
-    async viewCompanyStatistics() {
+    async notifyCompanyChange(newCompanyId, previousCompanyId) {
+        const modules = [
+            'DocumentsManager',
+            'ChatManager',
+            'MultimediaManager',
+            'ConfigurationManager'
+        ];
+        
+        for (const moduleName of modules) {
+            if (window[moduleName] && typeof window[moduleName].onCompanyChange === 'function') {
+                try {
+                    await window[moduleName].onCompanyChange(newCompanyId, previousCompanyId);
+                } catch (error) {
+                    console.warn(`Error notifying ${moduleName} about company change:`, error);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Check company health
+     */
+    async checkCompanyHealth() {
         if (!this.currentCompanyId) {
-            window.UI.showToast('⚠️ Selecciona una empresa primero', 'warning');
+            window.UI.showNotification('Selecciona una empresa primero', 'warning');
             return;
         }
-
+        
         try {
-            window.UI.showLoading('Cargando estadísticas...');
-
-            const stats = await window.API.getSystemStats();
             const company = this.companies[this.currentCompanyId];
+            window.UI.showLoading(`Verificando salud de ${company.company_name}...`);
             
-            this.showStatisticsModal(stats, company);
-
+            const response = await window.API.getCompanyHealth(this.currentCompanyId);
+            
+            const isHealthy = response.system_healthy;
+            const statusText = isHealthy ? '✅ Sistema saludable' : '❌ Sistema con problemas';
+            
+            let detailsHTML = `
+                <div class="health-check-result">
+                    <h3>${statusText}</h3>
+                    <div class="health-details">
+                        <p><strong>Empresa:</strong> ${response.company_name} (${response.company_id})</p>
+                        <p><strong>Vectorstore:</strong> ${response.vectorstore_connected ? '✅ Conectado' : '❌ Desconectado'}</p>
+            `;
+            
+            if (response.agents_status) {
+                detailsHTML += '<h4>Estado de Agentes:</h4><ul>';
+                Object.entries(response.agents_status).forEach(([agent, status]) => {
+                    const icon = status === 'healthy' ? '✅' : '❌';
+                    detailsHTML += `<li>${icon} ${agent}: ${status}</li>`;
+                });
+                detailsHTML += '</ul>';
+            }
+            
+            if (response.rag_status) {
+                detailsHTML += `
+                    <h4>Estado RAG:</h4>
+                    <p><strong>RAG Disponible:</strong> ${response.rag_status.rag_available ? '✅' : '❌'}</p>
+                    <p><strong>Agentes con RAG:</strong> ${response.rag_status.rag_enabled_agents.join(', ')}</p>
+                `;
+            }
+            
+            detailsHTML += '</div></div>';
+            
+            this.showModal(`🩺 Health Check - ${company.company_name}`, detailsHTML);
+            
         } catch (error) {
-            console.error('❌ Error loading statistics:', error);
-            window.UI.showToast('❌ Error cargando estadísticas: ' + error.message, 'error');
+            window.UI.showNotification('Error verificando salud: ' + error.message, 'error');
         } finally {
             window.UI.hideLoading();
         }
     }
-
+    
     /**
-     * Show statistics in modal
+     * View company statistics
      */
-    showStatisticsModal(stats, company) {
-        let statsHTML = '<div class="stats-results">';
-        statsHTML += `<h4>📊 Estadísticas de ${company.company_name}</h4>`;
-        
-        if (stats.status === 'success' && stats.data) {
-            const data = stats.data;
-            
-            statsHTML += '<div class="stats-grid">';
-            
-            // Main statistics
-            if (data.conversations_count !== undefined) {
-                statsHTML += `<div class="stat-item">
-                    <div class="stat-label">💬 Conversaciones</div>
-                    <div class="stat-value">${data.conversations_count.toLocaleString()}</div>
-                </div>`;
-            }
-            
-            if (data.documents_count !== undefined) {
-                statsHTML += `<div class="stat-item">
-                    <div class="stat-label">📄 Documentos</div>
-                    <div class="stat-value">${data.documents_count.toLocaleString()}</div>
-                </div>`;
-            }
-            
-            if (data.vectorstore_size !== undefined) {
-                statsHTML += `<div class="stat-item">
-                    <div class="stat-label">🗄️ Vectores</div>
-                    <div class="stat-value">${data.vectorstore_size.toLocaleString()}</div>
-                </div>`;
-            }
-            
-            if (data.cache_keys !== undefined) {
-                statsHTML += `<div class="stat-item">
-                    <div class="stat-label">🗂️ Cache Keys</div>
-                    <div class="stat-value">${data.cache_keys.toLocaleString()}</div>
-                </div>`;
-            }
-            
-            statsHTML += '</div>';
-            
-            // Additional information
-            if (data.last_activity) {
-                statsHTML += `<p><strong>Última Actividad:</strong> ${window.UI.formatDate(data.last_activity)}</p>`;
-            }
-            
-        } else {
-            statsHTML += '<p>No hay estadísticas disponibles en este momento.</p>';
+    async viewCompanyStats() {
+        if (!this.currentCompanyId) {
+            window.UI.showNotification('Selecciona una empresa primero', 'warning');
+            return;
         }
         
-        statsHTML += '</div>';
-        
-        window.UI.showModal('📊 Estadísticas del Sistema', statsHTML, {
-            icon: '📊',
-            maxWidth: '700px'
-        });
+        try {
+            window.UI.showLoading('Cargando estadísticas...');
+            
+            const response = await window.API.getAdminStatus();
+            
+            if (response.status === 'success') {
+                const stats = response.statistics || {};
+                const company = this.companies[this.currentCompanyId];
+                
+                let statsHTML = `
+                    <div class="company-stats-result">
+                        <h3>📊 Estadísticas de ${company.company_name}</h3>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-value">${stats.conversations || 0}</div>
+                                <div class="stat-label">Conversaciones</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value">${stats.documents || 0}</div>
+                                <div class="stat-label">Documentos</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value">${stats.bot_statuses || 0}</div>
+                                <div class="stat-label">Estados Bot</div>
+                            </div>
+                        </div>
+                `;
+                
+                if (response.configuration) {
+                    statsHTML += `
+                        <div class="config-section">
+                            <h4>⚙️ Configuración</h4>
+                            <p><strong>Servicios:</strong> ${response.configuration.services}</p>
+                            <p><strong>Índice Vectorstore:</strong> ${response.configuration.vectorstore_index}</p>
+                            <p><strong>URL Agendamiento:</strong> ${response.configuration.schedule_service_url}</p>
+                        </div>
+                    `;
+                }
+                
+                statsHTML += '</div>';
+                
+                this.showModal('📊 Estadísticas', statsHTML);
+                
+            } else {
+                throw new Error(response.message || 'Error cargando estadísticas');
+            }
+            
+        } catch (error) {
+            window.UI.showNotification('Error cargando estadísticas: ' + error.message, 'error');
+        } finally {
+            window.UI.hideLoading();
+        }
     }
-
+    
     /**
      * Reset company cache
      */
     async resetCompanyCache() {
         if (!this.currentCompanyId) {
-            window.UI.showToast('⚠️ Selecciona una empresa primero', 'warning');
+            window.UI.showNotification('Selecciona una empresa primero', 'warning');
             return;
         }
-
+        
         const company = this.companies[this.currentCompanyId];
-        const companyName = company.company_name || this.currentCompanyId;
         
-        const confirmed = await this.showConfirmDialog(
-            '🗑️ Limpiar Cache',
-            `¿Estás seguro de que quieres limpiar el cache de <strong>${companyName}</strong>?<br><br>
-            Esta acción eliminará datos temporales y puede afectar el rendimiento temporalmente.`
-        );
+        if (!confirm(`¿Estás seguro de que quieres limpiar el cache de ${company.company_name}?`)) {
+            return;
+        }
         
-        if (!confirmed) return;
-
         try {
             window.UI.showLoading('Limpiando cache...');
-
-            const result = await window.API.resetCompanyCache();
             
-            if (result.status === 'success') {
-                // Clear local cache
-                this.statusCache.delete(this.currentCompanyId);
-                
-                // Reload company data
-                await this.loadCompanyData(this.currentCompanyId);
-                
-                window.UI.showToast(`✅ Cache limpiado: ${result.keys_cleared || 0} claves eliminadas`, 'success');
+            const response = await window.API.resetSystemCache(false);
+            
+            if (response.status === 'success') {
+                window.UI.showNotification(
+                    `✅ Cache limpiado: ${response.keys_cleared} claves eliminadas`,
+                    'success'
+                );
             } else {
-                throw new Error(result.message || 'Error limpiando cache');
+                throw new Error(response.message || 'Error limpiando cache');
             }
-
+            
         } catch (error) {
-            console.error('❌ Error resetting cache:', error);
-            window.UI.showToast('❌ Error limpiando cache: ' + error.message, 'error');
+            window.UI.showNotification('Error limpiando cache: ' + error.message, 'error');
         } finally {
             window.UI.hideLoading();
         }
     }
-
+    
     /**
-     * Show confirmation dialog
+     * Show all companies in a modal
      */
-    showConfirmDialog(title, message) {
-        return new Promise((resolve) => {
-            const modal = window.UI.showConfirmModal(
-                title,
-                message,
-                () => resolve(true),
-                () => resolve(false)
-            );
-        });
-    }
-
-    /**
-     * Show fallback companies when API fails
-     */
-    showFallbackCompanies() {
-        const select = document.getElementById('currentCompany');
-        if (select) {
-            select.innerHTML = `
-                <option value="">Error cargando empresas</option>
-                <option value="fallback">Modo de emergencia</option>
-            `;
-        }
+    showAllCompanies() {
+        const companiesData = Object.entries(this.companies).map(([id, company]) => ({
+            id,
+            name: company.company_name,
+            services: company.services,
+            active: id === this.currentCompanyId
+        }));
         
-        // Show fallback system overview
-        const overviewEl = document.getElementById('systemOverview');
-        if (overviewEl) {
-            overviewEl.innerHTML = `
-                <div class="grid-placeholder">
-                    <span class="placeholder-icon">⚠️</span>
-                    <p>Error cargando información del sistema</p>
-                    <small>Intenta recargar las empresas</small>
+        let companiesHTML = `
+            <div class="all-companies-view">
+                <h3>🏢 Todas las Empresas (${companiesData.length})</h3>
+                <div class="companies-list">
+        `;
+        
+        companiesData.forEach(company => {
+            companiesHTML += `
+                <div class="company-item ${company.active ? 'active' : ''}">
+                    <div class="company-info">
+                        <h4>${company.name}</h4>
+                        <p>ID: ${company.id}</p>
+                        <p>Servicios: ${company.services}</p>
+                    </div>
+                    <div class="company-actions">
+                        ${company.active ? 
+                            '<span class="active-badge">✓ Activa</span>' : 
+                            `<button onclick="window.CompaniesManager.selectCompany('${company.id}'); document.querySelector('.modal').remove();" class="btn btn-primary">Seleccionar</button>`
+                        }
+                    </div>
                 </div>
             `;
-        }
+        });
         
-        window.UI.showToast('⚠️ Usando configuración de emergencia', 'warning');
+        companiesHTML += '</div></div>';
+        
+        this.showModal('🏢 Todas las Empresas', companiesHTML);
     }
-
+    
     /**
-     * Get current company
+     * Show modal dialog
+     */
+    showModal(title, content) {
+        const modal = document.createElement('div');
+        modal.className = 'modal modal-info';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>${title}</h3>
+                    <button class="btn-close" onclick="this.closest('.modal').remove()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    ${content}
+                </div>
+                <div class="modal-footer">
+                    <button onclick="this.closest('.modal').remove()" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.style.display = 'block';
+        
+        // Remove on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+        
+        // Focus trap
+        const closeBtn = modal.querySelector('.btn-close');
+        if (closeBtn) {
+            closeBtn.focus();
+        }
+    }
+    
+    /**
+     * Get current company ID
+     */
+    getCurrentCompanyId() {
+        return this.currentCompanyId;
+    }
+    
+    /**
+     * Get current company data
      */
     getCurrentCompany() {
-        return this.currentCompanyId ? this.companies[this.currentCompanyId] : null;
+        return this.companies[this.currentCompanyId];
     }
-
+    
     /**
      * Get all companies
      */
     getAllCompanies() {
         return this.companies;
     }
-
+    
     /**
-     * Check if company is selected
+     * Handle company change event from external source
      */
-    hasCompanySelected() {
-        return !!this.currentCompanyId;
-    }
-
-    /**
-     * Get company by ID
-     */
-    getCompany(companyId) {
-        return this.companies[companyId] || null;
-    }
-
-    /**
-     * Clear status cache
-     */
-    clearStatusCache() {
-        this.statusCache.clear();
-        if (window.APP_CONFIG.DEBUG.enabled) {
-            console.log('🗑️ Company status cache cleared');
-        }
-    }
-
-    /**
-     * Cleanup resources
-     */
-    cleanup() {
-        this.stopStatusMonitoring();
-        this.clearStatusCache();
-        this.isInitialized = false;
-        
-        if (window.APP_CONFIG.DEBUG.enabled) {
-            console.log('🧹 Company Manager cleaned up');
-        }
+    onCompanyChange(companyId) {
+        return this.selectCompany(companyId);
     }
 }
 
 // Create global instance
-window.CompanyManager = new CompanyManager();
+window.CompaniesManager = new CompaniesManager();
 
 // Export for modules
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = CompanyManager;
+    module.exports = CompaniesManager;
 }
+
+console.log('✅ Companies module loaded successfully');
