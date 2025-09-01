@@ -1,0 +1,15 @@
+[build]
+builder = "nixpacks"
+
+[build.buildCommand]
+value = "cd frontend && npm ci && npm run build && cd .. && pip install -r requirements.txt"
+
+[deploy]
+startCommand = "python app.py"
+restartPolicyType = "on-failure"
+
+[deploy.healthcheckPath]
+value = "/api/health"
+
+[deploy.healthcheckTimeout]
+value = 300
