@@ -2,456 +2,115 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Multi-Tenant Chatbot - Panel de Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Administración Multi-Tenant</title>
+    <meta name="description" content="Panel de administración para chatbot multi-tenant con IA">
+    <meta name="author" content="Multi-Tenant Chatbot System">
+    
+    <!-- Critical CSS - Load first -->
     <link rel="stylesheet" href="styles/main.css">
     <link rel="stylesheet" href="styles/components.css">
     <link rel="stylesheet" href="styles/responsive.css">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Panel de Control Multi-Tenant para gestión de chatbots y documentos">
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="scripts/config.js" as="script">
+    <link rel="preload" href="scripts/ui.js" as="script">
+    <link rel="preload" href="scripts/api.js" as="script">
 </head>
 <body>
-    <div class="container">
-        <!-- Header Component -->
-        <header class="main-header">
+    <!-- Main Header -->
+    <header class="main-header">
+        <div class="container">
             <div class="header-content">
-                <h1 class="main-title">
-                    <span class="title-icon">🏢</span>
-                    Panel de Control Multi-Tenant
-                </h1>
-                <div class="company-selector" id="companySelector">
-                    <label for="currentCompany">Empresa Activa:</label>
+                <div class="main-title">
+                    <span class="title-icon">🤖</span>
+                    <h1>Panel de Administración Multi-Tenant</h1>
+                </div>
+                
+                <div class="company-selector">
+                    <label for="currentCompany">Empresa Actual:</label>
                     <select id="currentCompany" class="company-select">
                         <option value="">Cargando empresas...</option>
                     </select>
-                    <button id="refreshCompanies" class="btn btn-secondary btn-icon">
-                        <span class="btn-text">Actualizar</span>
-                        <span class="btn-icon">🔄</span>
-                    </button>
-                </div>
-            </div>
-        </header>
-
-        <!-- Company Status Section -->
-        <section class="status-section" id="statusSection">
-            <div class="card status-card">
-                <div class="card-header">
-                    <h2 class="card-title">
-                        <span class="card-icon">📊</span>
-                        Estado de la Empresa
-                    </h2>
-                </div>
-                <div class="card-body">
                     <div id="companyInfo" class="company-info">
                         <div class="info-placeholder">
-                            <span class="placeholder-icon">🏢</span>
-                            <p>Selecciona una empresa para ver su estado</p>
-                        </div>
-                    </div>
-                    <div class="action-buttons">
-                        <button id="checkHealthBtn" class="btn btn-secondary">
-                            <span class="btn-icon">🩺</span>
-                            Health Check
-                        </button>
-                        <button id="viewStatsBtn" class="btn btn-secondary">
-                            <span class="btn-icon">📈</span>
-                            Estadísticas
-                        </button>
-                        <button id="resetCacheBtn" class="btn btn-danger">
-                            <span class="btn-icon">🗑️</span>
-                            Limpiar Cache
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- System Overview -->
-        <section class="overview-section" id="overviewSection">
-            <div class="card overview-card">
-                <div class="card-header">
-                    <h2 class="card-title">
-                        <span class="card-icon">🌐</span>
-                        Vista General del Sistema
-                    </h2>
-                </div>
-                <div class="card-body">
-                    <div id="systemOverview" class="system-grid">
-                        <div class="grid-placeholder">
                             <span class="placeholder-icon">⏳</span>
-                            <p>Cargando información del sistema...</p>
-                        </div>
-                    </div>
-                    <div class="action-buttons">
-                        <button id="viewAllCompanies" class="btn btn-primary">
-                            <span class="btn-icon">🏢</span>
-                            Ver Todas las Empresas
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Documents Management -->
-        <section class="documents-section" id="documentsSection">
-            <div class="section-header">
-                <h2 class="section-title">
-                    <span class="section-icon">📄</span>
-                    Gestión de Documentos
-                </h2>
-            </div>
-            
-            <!-- Add Document Card -->
-            <div class="card document-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <span class="card-icon">➕</span>
-                        Agregar Documento
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <form id="addDocumentForm" class="document-form">
-                        <div class="form-group">
-                            <label for="docContent" class="form-label">Contenido del Documento</label>
-                            <textarea 
-                                id="docContent" 
-                                class="form-control form-textarea"
-                                placeholder="Escribe o pega el contenido del documento aquí..." 
-                                required
-                            ></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="docMetadata" class="form-label">Metadata (JSON)</label>
-                            <input 
-                                type="text" 
-                                id="docMetadata" 
-                                class="form-control"
-                                placeholder='{"categoria": "informacion", "tipo": "manual"}'
-                            >
-                            <small class="form-help">Opcional: metadata en formato JSON para categorizar el documento</small>
-                        </div>
-                        <div class="form-actions">
-                            <button type="submit" class="btn btn-primary">
-                                <span class="btn-icon">📄</span>
-                                Agregar Documento
-                            </button>
-                            <span class="company-indicator">
-                                Para empresa: <strong id="docCompanyIndicator">-</strong>
-                            </span>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <!-- Bulk Upload Card -->
-            <div class="card document-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <span class="card-icon">📁</span>
-                        Subir Múltiples Documentos
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <form id="bulkUploadForm" class="document-form">
-                        <div class="form-group">
-                            <label for="bulkFiles" class="form-label">Seleccionar Archivos</label>
-                            <input 
-                                type="file" 
-                                id="bulkFiles" 
-                                class="form-control form-file"
-                                multiple 
-                                accept=".txt,.md,.docx,.pdf"
-                            >
-                            <small class="form-help">Formatos soportados: TXT, MD, DOCX, PDF</small>
-                        </div>
-                        <div class="form-actions">
-                            <button type="submit" class="btn btn-primary">
-                                <span class="btn-icon">📤</span>
-                                Subir Archivos
-                            </button>
-                            <span class="company-indicator">
-                                Para empresa: <strong id="bulkCompanyIndicator">-</strong>
-                            </span>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <!-- Search Documents Card -->
-            <div class="card document-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <span class="card-icon">🔍</span>
-                        Buscar Documentos
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <form id="searchDocumentsForm" class="document-form">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="searchQuery" class="form-label">Consulta de Búsqueda</label>
-                                <input 
-                                    type="text" 
-                                    id="searchQuery" 
-                                    class="form-control"
-                                    placeholder="Buscar en documentos..." 
-                                    required
-                                >
-                            </div>
-                            <div class="form-group form-group-small">
-                                <label for="searchK" class="form-label">Resultados</label>
-                                <input 
-                                    type="number" 
-                                    id="searchK" 
-                                    class="form-control"
-                                    value="3" 
-                                    min="1" 
-                                    max="20"
-                                >
-                            </div>
-                        </div>
-                        <div class="form-actions">
-                            <button type="submit" class="btn btn-primary">
-                                <span class="btn-icon">🔍</span>
-                                Buscar
-                            </button>
-                            <span class="company-indicator">
-                                En empresa: <strong id="searchCompanyIndicator">-</strong>
-                            </span>
-                        </div>
-                    </form>
-                    <div id="searchResults" class="search-results"></div>
-                </div>
-            </div>
-
-            <!-- Documents List Card -->
-            <div class="card document-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <span class="card-icon">📋</span>
-                        Documentos Almacenados
-                    </h3>
-                    <div class="card-actions">
-                        <button id="refreshDocsList" class="btn btn-secondary btn-sm">
-                            <span class="btn-icon">🔄</span>
-                            Actualizar
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div id="documentsList" class="documents-list">
-                        <div class="list-placeholder">
-                            <span class="placeholder-icon">📄</span>
-                            <p>Selecciona una empresa para ver sus documentos</p>
+                            <p>Cargando información...</p>
                         </div>
                     </div>
                 </div>
-            </div>
-        </section>
-
-        <!-- Chat Testing Section -->
-        <section class="chat-section" id="chatSection">
-            <div class="section-header">
-                <h2 class="section-title">
-                    <span class="section-icon">💬</span>
-                    Pruebas de Chat
-                </h2>
-            </div>
-
-            <div class="card chat-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <span class="card-icon">🤖</span>
-                        Probar Chatbot
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <div class="chat-config">
-                        <div class="form-group">
-                            <label for="testUserId" class="form-label">ID de Usuario de Prueba</label>
-                            <input 
-                                type="text" 
-                                id="testUserId" 
-                                class="form-control"
-                                placeholder="test_user_123" 
-                                value="test_user"
-                            >
-                        </div>
-                    </div>
-                    
-                    <div id="chatMessages" class="chat-messages"></div>
-                    
-                    <form id="chatTestForm" class="chat-input-form">
-                        <div class="input-group">
-                            <input 
-                                type="text" 
-                                id="testMessage" 
-                                class="form-control chat-input"
-                                placeholder="Escribe un mensaje de prueba..." 
-                                required
-                            >
-                            <button type="submit" class="btn btn-primary">
-                                <span class="btn-icon">📤</span>
-                                Enviar
-                            </button>
-                        </div>
-                    </form>
-
-                    <div class="multimedia-controls">
-                        <div class="control-group">
-                            <label class="form-label">Pruebas Multimedia</label>
-                            <div class="button-group">
-                                <button id="startVoiceBtn" class="btn btn-secondary btn-sm">
-                                    <span class="btn-icon">🎙️</span>
-                                    Grabar Audio
-                                </button>
-                                <button id="stopVoiceBtn" class="btn btn-danger btn-sm" style="display: none;">
-                                    <span class="btn-icon">⏹️</span>
-                                    Detener
-                                </button>
-                                <button id="captureImageBtn" class="btn btn-secondary btn-sm">
-                                    <span class="btn-icon">📸</span>
-                                    Capturar Imagen
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="file-inputs">
-                            <input type="file" id="voiceFileInput" accept="audio/*" style="display: none;">
-                            <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
-                            
-                            <button onclick="document.getElementById('voiceFileInput').click()" class="btn btn-outline btn-sm">
-                                <span class="btn-icon">🎵</span>
-                                Subir Audio
-                            </button>
-                            <button onclick="document.getElementById('imageFileInput').click()" class="btn btn-outline btn-sm">
-                                <span class="btn-icon">🖼️</span>
-                                Subir Imagen
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Admin Tools Section -->
-        <section class="admin-section" id="adminSection">
-            <div class="section-header">
-                <h2 class="section-title">
-                    <span class="section-icon">⚙️</span>
-                    Herramientas de Administración
-                </h2>
-            </div>
-
-            <div class="admin-grid">
-                <div class="card admin-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">🔧</span>
-                            Sistema
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="admin-buttons">
-                            <button id="reloadConfigBtn" class="btn btn-warning">
-                                <span class="btn-icon">🔄</span>
-                                Recargar Configuración
-                            </button>
-                            <button id="systemStatsBtn" class="btn btn-info">
-                                <span class="btn-icon">📊</span>
-                                Estadísticas del Sistema
-                            </button>
-                            <button id="runDiagnosticsBtn" class="btn btn-secondary">
-                                <span class="btn-icon">🔍</span>
-                                Ejecutar Diagnósticos
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card admin-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">🗄️</span>
-                            Base de Datos Vectorial
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="admin-buttons">
-                            <button id="cleanupVectorsBtn" class="btn btn-warning">
-                                <span class="btn-icon">🧹</span>
-                                Limpiar Vectores Huérfanos
-                            </button>
-                            <button id="vectorRecoveryBtn" class="btn btn-danger">
-                                <span class="btn-icon">🛠️</span>
-                                Forzar Recovery
-                            </button>
-                            <button id="protectionStatusBtn" class="btn btn-info">
-                                <span class="btn-icon">🛡️</span>
-                                Estado Protección
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card admin-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">📁</span>
-                            Configuración
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="admin-buttons">
-                            <button id="exportConfigBtn" class="btn btn-success">
-                                <span class="btn-icon">💾</span>
-                                Exportar Configuración
-                            </button>
-                            <button id="migrationToolBtn" class="btn btn-info">
-                                <span class="btn-icon">🔄</span>
-                                Herramienta de Migración
-                            </button>
-                            <button id="testMultimediaBtn" class="btn btn-secondary">
-                                <span class="btn-icon">🎬</span>
-                                Test Multimedia
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- Modals -->
-    <div id="cameraModal" class="modal" style="display: none;">
-        <div class="modal-content camera-modal">
-            <div class="modal-header">
-                <h3 class="modal-title">
-                    <span class="modal-icon">📸</span>
-                    Capturar Imagen
-                </h3>
-                <span class="company-context">
-                    Para empresa: <strong id="cameraCompany">-</strong>
-                </span>
-                <button id="closeCameraBtn" class="btn-close">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="camera-container">
-                    <video id="cameraVideo" autoplay muted></video>
-                    <canvas id="cameraCanvas" style="display: none;"></canvas>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="takePictureBtn" class="btn btn-primary">
-                    <span class="btn-icon">📸</span>
-                    Tomar Foto
-                </button>
-                <button id="cancelCameraBtn" class="btn btn-secondary">
-                    <span class="btn-icon">❌</span>
-                    Cancelar
-                </button>
             </div>
         </div>
-    </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            
+            <!-- System Overview -->
+            <section class="overview-section" id="overviewSection">
+                <div class="card overview-card">
+                    <div class="card-header">
+                        <h2 class="card-title">
+                            <span class="card-icon">🌐</span>
+                            Vista General del Sistema
+                        </h2>
+                    </div>
+                    <div class="card-body">
+                        <div id="systemOverview" class="system-grid">
+                            <div class="grid-placeholder">
+                                <span class="placeholder-icon">⏳</span>
+                                <p>Cargando información del sistema...</p>
+                            </div>
+                        </div>
+                        <div class="action-buttons">
+                            <button id="viewAllCompanies" class="btn btn-primary">
+                                <span class="btn-icon">🏢</span>
+                                Ver Todas las Empresas
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Admin Tools Section -->
+            <section class="admin-section" id="adminSection">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="section-icon">⚙️</span>
+                        Herramientas de Administración
+                    </h2>
+                </div>
+
+                <div class="admin-grid">
+                    <div class="card admin-card">
+                        <div class="card-header">
+                            <h3 class="card-title">
+                                <span class="card-icon">🔧</span>
+                                Sistema
+                            </h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="admin-buttons">
+                                <button id="reloadConfigBtn" class="btn btn-warning">
+                                    <span class="btn-icon">🔄</span>
+                                    Recargar Configuración
+                                </button>
+                                <button id="systemStatsBtn" class="btn btn-info">
+                                    <span class="btn-icon">📊</span>
+                                    Estadísticas del Sistema
+                                </button>
+                                <button id="runDiagnosticsBtn" class="btn btn-secondary">
+                                    <span class="btn-icon">🔍</span>
+                                    Ejecutar Diagnósticos
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
 
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="loading-overlay" style="display: none;">
@@ -472,23 +131,143 @@
     <!-- Toast Container -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <!-- Recording Status Indicator -->
-    <div id="recordingStatus" class="recording-status" style="display: none;">
-        <div class="recording-indicator">
-            <div class="recording-pulse"></div>
-            <span class="recording-text">🎙️ Grabando...</span>
-        </div>
-    </div>
-
-    <!-- Scripts - Modularized for better performance -->
-    <script src="scripts/config.js"></script>
-    <script src="scripts/api.js"></script>
-    <script src="scripts/ui.js"></script>
-    <script src="scripts/companies.js"></script>
-    <script src="scripts/documents.js"></script>
-    <script src="scripts/chat.js"></script>
-    <script src="scripts/multimedia.js"></script>
-    <script src="scripts/admin.js"></script>
-    <script src="scripts/main.js"></script>
+    <!-- Scripts - ORDEN CRÍTICO CORREGIDO -->
+    <script>
+    // Emergency fallback if scripts fail to load
+    window.onerror = function(message, source, lineno, colno, error) {
+        console.error('🚨 Script Error:', { message, source, lineno, error });
+        
+        // Show emergency message if main app fails
+        if (source && source.includes('main.js')) {
+            document.body.innerHTML = `
+                <div style="
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: white;
+                    padding: 2rem;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+                    text-align: center;
+                    max-width: 500px;
+                    z-index: 10000;
+                    font-family: Arial, sans-serif;
+                ">
+                    <h2 style="color: #e74c3c; margin-bottom: 1rem;">⚠️ Error Crítico de JavaScript</h2>
+                    <p><strong>Error:</strong> ${message}</p>
+                    <p><small>Archivo: ${source} (Línea: ${lineno})</small></p>
+                    <p style="margin-top: 1rem;">La aplicación no pudo inicializarse correctamente.</p>
+                    <button onclick="window.location.reload()" style="
+                        margin-top: 1rem;
+                        padding: 0.5rem 1rem;
+                        background: #3498db;
+                        color: white;
+                        border: none;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        font-size: 1rem;
+                    ">🔄 Recargar Página</button>
+                </div>
+            `;
+        }
+        return false;
+    };
+    </script>
+    
+    <!-- 1. Configuration FIRST - Must load before everything -->
+    <script src="scripts/config.js" async="false"></script>
+    
+    <!-- 2. Core utilities - Load synchronously in order -->
+    <script>
+    // Ensure config loaded before proceeding
+    function loadNextScript() {
+        if (typeof window.APP_CONFIG === 'undefined') {
+            setTimeout(loadNextScript, 50);
+            return;
+        }
+        
+        // Load remaining scripts in correct order
+        const scripts = [
+            'scripts/ui.js',
+            'scripts/api.js', 
+            'scripts/companies.js',
+            'scripts/documents.js',
+            'scripts/chat.js',
+            'scripts/multimedia.js',
+            'scripts/admin.js',
+            'scripts/main.js'  // MUST be last
+        ];
+        
+        let loadedCount = 0;
+        
+        function loadScript(src) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.async = false;  // Load synchronously
+                script.onload = () => {
+                    console.log(`✅ Loaded: ${src}`);
+                    resolve();
+                };
+                script.onerror = () => {
+                    console.error(`❌ Failed to load: ${src}`);
+                    reject(new Error(`Failed to load ${src}`));
+                };
+                document.head.appendChild(script);
+            });
+        }
+        
+        // Load scripts sequentially
+        async function loadAllScripts() {
+            try {
+                for (const scriptSrc of scripts) {
+                    await loadScript(scriptSrc);
+                    loadedCount++;
+                }
+                console.log('🎉 All scripts loaded successfully');
+            } catch (error) {
+                console.error('💥 Script loading failed:', error);
+                // Show error message but don't crash completely
+                document.body.innerHTML = `
+                    <div style="
+                        position: fixed;
+                        top: 50%;
+                        left: 50%;
+                        transform: translate(-50%, -50%);
+                        background: #fff3cd;
+                        border: 1px solid #ffeaa7;
+                        color: #856404;
+                        padding: 2rem;
+                        border-radius: 10px;
+                        text-align: center;
+                        max-width: 500px;
+                        z-index: 10000;
+                        font-family: Arial, sans-serif;
+                    ">
+                        <h2 style="color: #856404; margin-bottom: 1rem;">⚠️ Error de Carga</h2>
+                        <p>No se pudieron cargar todos los archivos JavaScript necesarios.</p>
+                        <p><strong>Scripts cargados:</strong> ${loadedCount}/${scripts.length}</p>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <button onclick="window.location.reload()" style="
+                            margin-top: 1rem;
+                            padding: 0.5rem 1rem;
+                            background: #6c757d;
+                            color: white;
+                            border: none;
+                            border-radius: 5px;
+                            cursor: pointer;
+                        ">🔄 Intentar de Nuevo</button>
+                    </div>
+                `;
+            }
+        }
+        
+        loadAllScripts();
+    }
+    
+    // Start loading process
+    loadNextScript();
+    </script>
 </body>
 </html>
