@@ -2,622 +2,224 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+    <title>Multi-Tenant Chatbot - Panel de Control</title>
+    <link rel="stylesheet" href="style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Panel de Administración Multi-Tenant</title>
-    <meta name="description" content="Panel de administración para chatbot multi-tenant con IA">
-    <meta name="author" content="Multi-Tenant Chatbot System">
-    
-    <!-- Critical CSS - Load first -->
-    <link rel="stylesheet" href="styles/main.css">
-    <link rel="stylesheet" href="styles/components.css">
-    <link rel="stylesheet" href="styles/responsive.css">
-    
-    <!-- Preload critical resources -->
-    <link rel="preload" href="scripts/config.js" as="script">
-    <link rel="preload" href="scripts/ui.js" as="script">
-    <link rel="preload" href="scripts/api.js" as="script">
 </head>
 <body>
-    <!-- Main Header -->
-    <header class="main-header">
-        <div class="container">
-            <div class="header-content">
-                <div class="main-title">
-                    <span class="title-icon">🤖</span>
-                    <h1>Panel de Administración Multi-Tenant</h1>
+    <div class="container">
+        <header>
+            <h1>🏢 Panel de Control Multi-Tenant</h1>
+            <div class="company-selector">
+                <label for="currentCompany">Empresa Activa:</label>
+                <select id="currentCompany">
+                    <option value="">Cargando empresas...</option>
+                </select>
+                <button id="refreshCompanies" class="btn-secondary">🔄</button>
+            </div>
+        </header>
+
+        <!-- Company Status Section -->
+        <section class="company-status-section">
+            <div class="card">
+                <h2>📊 Estado de la Empresa</h2>
+                <div id="companyInfo" class="company-info">
+                    <p>Selecciona una empresa para ver su estado</p>
                 </div>
-                
-                <div class="company-selector">
-                    <label for="currentCompany">Empresa Actual:</label>
-                    <select id="currentCompany" class="company-select">
-                        <option value="">Cargando empresas...</option>
-                    </select>
-                    <button id="refreshCompanies" class="btn btn-secondary">🔄</button>
-                    <div id="companyInfo" class="company-info">
-                        <div class="info-placeholder">
-                            <span class="placeholder-icon">⏳</span>
-                            <p>Selecciona una empresa para ver su estado</p>
-                        </div>
-                    </div>
+                <div class="company-actions">
+                    <button id="checkHealthBtn" class="btn-secondary">🩺 Health Check</button>
+                    <button id="viewStatsBtn" class="btn-secondary">📈 Estadísticas</button>
+                    <button id="resetCacheBtn" class="btn-danger">🗑️ Limpiar Cache</button>
                 </div>
             </div>
-        </div>
-    </header>
+        </section>
 
-    <!-- Main Content -->
-    <main class="main-content">
-        <div class="container">
+        <!-- Multi-Company Overview -->
+        <section class="overview-section">
+            <div class="card">
+                <h2>🌐 Vista General del Sistema</h2>
+                <div id="systemOverview" class="system-grid">
+                    <!-- Se llena dinámicamente -->
+                </div>
+                <button id="viewAllCompanies" class="btn-primary">Ver Todas las Empresas</button>
+            </div>
+        </section>
+
+        <!-- Documents Section -->
+        <section class="document-section">
+            <h2>📄 Gestión de Documentos</h2>
             
-            <!-- System Overview -->
-            <section class="overview-section" id="overviewSection">
-                <div class="card overview-card">
-                    <div class="card-header">
-                        <h2 class="card-title">
-                            <span class="card-icon">🌐</span>
-                            Vista General del Sistema
-                        </h2>
-                        <div class="card-actions">
-                            <button id="viewAllCompanies" class="btn btn-secondary">Ver Todas las Empresas</button>
-                        </div>
+            <!-- Add Document -->
+            <div class="card">
+                <h3>➕ Agregar Documento</h3>
+                <form id="addDocumentForm">
+                    <textarea id="docContent" placeholder="Contenido del documento..." required></textarea>
+                    <input type="text" id="docMetadata" placeholder='Metadata (JSON, ej: {"categoria": "informacion"})'>
+                    <div class="form-actions">
+                        <button type="submit">📄 Agregar Documento</button>
+                        <span class="company-indicator">Para empresa: <strong id="docCompanyIndicator">-</strong></span>
                     </div>
-                    <div class="card-body">
-                        <div id="systemOverview" class="system-grid">
-                            <div class="overview-placeholder">
-                                <span class="placeholder-icon">⏳</span>
-                                <p>Cargando vista general...</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Company Status Section -->
-            <section class="company-status-section" id="companyStatusSection">
-                <div class="card">
-                    <div class="card-header">
-                        <h2 class="card-title">
-                            <span class="card-icon">📊</span>
-                            Estado de la Empresa
-                        </h2>
-                        <div class="card-actions">
-                            <button id="checkHealthBtn" class="btn btn-secondary">🩺 Health Check</button>
-                            <button id="viewStatsBtn" class="btn btn-secondary">📈 Estadísticas</button>
-                            <button id="resetCacheBtn" class="btn btn-danger">🗑️ Limpiar Cache</button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="companyStatusContent" class="company-status">
-                            <p>Selecciona una empresa para ver su estado detallado</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Documents Section -->
-            <section class="document-section" id="documentsSection">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <span class="section-icon">📄</span>
-                        Gestión de Documentos
-                    </h2>
-                </div>
-                
-                <!-- File Upload -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">📁</span>
-                            Subir Documentos
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div id="fileUploadArea" class="upload-area">
-                            <div class="upload-content">
-                                <span class="upload-icon">📄</span>
-                                <p>Arrastra archivos aquí o haz clic para seleccionar</p>
-                                <small>Formatos: .txt, .pdf, .docx (máx. 10MB)</small>
-                            </div>
-                            <input type="file" id="documentFile" accept=".txt,.pdf,.docx" multiple hidden>
-                        </div>
-                        <div class="upload-actions">
-                            <button id="selectFileBtn" class="btn btn-primary">
-                                <span class="btn-icon">📁</span>
-                                Seleccionar Archivos
-                            </button>
-                            <button id="uploadDocumentBtn" class="btn btn-success" disabled>
-                                <span class="btn-icon">⬆️</span>
-                                <span class="btn-text">Procesar Documentos</span>
-                            </button>
-                        </div>
-                        <div id="uploadProgress" class="upload-progress" style="display: none;">
-                            <div class="progress-bar">
-                                <div class="progress-fill"></div>
-                            </div>
-                            <span class="progress-text">Procesando...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Add Document Manually -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">✍️</span>
-                            Agregar Documento Manual
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <form id="addDocumentForm">
-                            <div class="form-group">
-                                <label for="docContent" class="form-label">Contenido del Documento *</label>
-                                <textarea id="docContent" class="form-control" rows="6" 
-                                         placeholder="Pega aquí el contenido del documento..." required></textarea>
-                            </div>
-                            <div class="form-group">
-                                <label for="docMetadata" class="form-label">Metadata (JSON Opcional)</label>
-                                <input type="text" id="docMetadata" class="form-control" 
-                                       placeholder='{"categoria": "informacion", "tipo": "procedimiento"}'>
-                                <small class="form-help">Metadata en formato JSON para categorizar el documento</small>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">
-                                    <span class="btn-icon">📄</span>
-                                    Agregar Documento
-                                </button>
-                                <span class="company-indicator">
-                                    Para empresa: <strong id="docCompanyIndicator">-</strong>
-                                </span>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- Search Documents -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">🔍</span>
-                            Buscar en Documentos
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <form id="searchDocumentsForm">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="searchQuery" class="form-label">Consulta de Búsqueda *</label>
-                                    <input type="text" id="searchQuery" class="form-control" 
-                                           placeholder="¿Qué información necesitas?" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="searchK" class="form-label">Resultados</label>
-                                    <input type="number" id="searchK" class="form-control" 
-                                           value="3" min="1" max="20">
-                                </div>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">
-                                    <span class="btn-icon">🔍</span>
-                                    Buscar
-                                </button>
-                                <span class="company-indicator">
-                                    En empresa: <strong id="searchCompanyIndicator">-</strong>
-                                </span>
-                            </div>
-                        </form>
-                        <div id="searchResults" class="search-results"></div>
-                    </div>
-                </div>
-
-                <!-- Document Management -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">📋</span>
-                            Gestión de Documentos
-                        </h3>
-                        <div class="card-actions">
-                            <button id="listDocumentsBtn" class="btn btn-secondary">
-                                <span class="btn-icon">📄</span>
-                                Listar Documentos
-                            </button>
-                            <button id="listVectorsBtn" class="btn btn-secondary">
-                                <span class="btn-icon">🔢</span>
-                                Listar Vectores
-                            </button>
-                            <button id="cleanVectorsBtn" class="btn btn-danger">
-                                <span class="btn-icon">🧹</span>
-                                Limpiar Vectores Huérfanos
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="documentsList" class="documents-grid">
-                            <p class="no-data">No hay documentos cargados. Usa los botones de arriba para gestionar documentos.</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Chat Testing Section -->
-            <section class="chat-section" id="chatSection">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <span class="section-icon">🤖</span>
-                        Probar Chatbot
-                    </h2>
-                </div>
-                
-                <div class="card chat-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">💭</span>
-                            Chat de Prueba
-                        </h3>
-                        <div class="chat-info">
-                            <span class="chat-company">Empresa: <strong id="chatCompanyName">-</strong></span>
-                            <span class="chat-services" id="chatCompanyServices">-</span>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="chatContainer" class="chat-container">
-                            <div id="chatMessages" class="chat-messages">
-                                <div class="welcome-message">
-                                    <p>👋 ¡Hola! Soy el asistente de inteligencia artificial. ¿En qué puedo ayudarte?</p>
-                                </div>
-                            </div>
-                            <div class="chat-input-area">
-                                <form id="chatForm" class="chat-form">
-                                    <div class="chat-input-group">
-                                        <input type="text" id="chatMessageInput" class="chat-input" 
-                                               placeholder="Escribe tu mensaje aquí..." maxlength="500">
-                                        <input type="text" id="testUserId" class="user-id-input" 
-                                               placeholder="User ID" value="test_user">
-                                        <button type="submit" id="sendMessageBtn" class="btn btn-primary">
-                                            <span class="btn-icon">📤</span>
-                                            <span class="btn-text">Enviar</span>
-                                        </button>
-                                    </div>
-                                </form>
-                                <div class="typing-indicator" id="typingIndicator" style="display: none;">
-                                    <span>🤖 El asistente está escribiendo...</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Multimedia Controls -->
-                        <div class="multimedia-controls">
-                            <div class="multimedia-section">
-                                <h4 class="multimedia-title">
-                                    <span class="multimedia-icon">🎤</span>
-                                    Control de Audio
-                                </h4>
-                                <div class="multimedia-actions">
-                                    <button id="recordAudioBtn" class="btn btn-multimedia">
-                                        <span class="btn-icon">🎙️</span>
-                                        Grabar Audio
-                                    </button>
-                                    <button id="stopRecordingBtn" class="btn btn-stop" style="display: none;">
-                                        <span class="btn-icon">⏹️</span>
-                                        Detener
-                                    </button>
-                                    <input type="file" id="uploadAudioBtn" accept="audio/*" hidden>
-                                    <label for="uploadAudioBtn" class="btn btn-secondary">
-                                        <span class="btn-icon">📁</span>
-                                        Subir Audio
-                                    </label>
-                                </div>
-                                <div id="recordingIndicator" class="recording-status" style="display: none;">
-                                    <span class="recording-dot">🔴</span>
-                                    <span>Grabando...</span>
-                                </div>
-                            </div>
-                            
-                            <div class="multimedia-section">
-                                <h4 class="multimedia-title">
-                                    <span class="multimedia-icon">📸</span>
-                                    Control de Imagen
-                                </h4>
-                                <div class="multimedia-actions">
-                                    <button id="captureImageBtn" class="btn btn-multimedia">
-                                        <span class="btn-icon">📸</span>
-                                        Capturar Imagen
-                                    </button>
-                                    <button id="toggleCameraBtn" class="btn btn-secondary">
-                                        <span class="btn-icon">📷</span>
-                                        Abrir Cámara
-                                    </button>
-                                    <input type="file" id="uploadImageBtn" accept="image/*" hidden>
-                                    <label for="uploadImageBtn" class="btn btn-secondary">
-                                        <span class="btn-icon">🖼️</span>
-                                        Subir Imagen
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Multimedia Results -->
-                        <div id="multimediaResults" class="multimedia-results">
-                            <div id="transcriptionResult" class="result-section" style="display: none;"></div>
-                            <div id="imageAnalysisResult" class="result-section" style="display: none;"></div>
-                            <div id="imagePreview" class="result-section" style="display: none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Configuration Section -->
-            <section class="configuration-section" id="configurationSection">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <span class="section-icon">⚙️</span>
-                        Configuración Avanzada
-                    </h2>
-                </div>
-                
-                <div class="card config-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">📅</span>
-                            Google Calendar Integration
-                        </h3>
-                        <div class="config-toggle">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="gcalEnabled">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span class="toggle-label">Habilitado</span>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <form id="googleCalendarForm">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="gcalWebhookUrl" class="form-label">
-                                        <span class="label-icon">🔗</span>
-                                        Webhook URL *
-                                    </label>
-                                    <input type="url" id="gcalWebhookUrl" class="form-control" 
-                                           placeholder="https://calendar.google.com/..." required>
-                                    <small class="form-help">URL del webhook de Google Calendar</small>
-                                </div>
-                                <div class="form-group">
-                                    <label for="gcalCalendarId" class="form-label">
-                                        <span class="label-icon">📋</span>
-                                        Calendar ID *
-                                    </label>
-                                    <input type="text" id="gcalCalendarId" class="form-control" 
-                                           placeholder="ejemplo@group.calendar.google.com" required>
-                                </div>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-success">
-                                    <span class="btn-icon">💾</span>
-                                    Guardar Configuración
-                                </button>
-                                <button type="button" id="testGcalConnection" class="btn btn-secondary">
-                                    <span class="btn-icon">🔍</span>
-                                    Probar Conexión
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <div class="card config-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">🤖</span>
-                            ScheduleAgent Configuration
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <form id="scheduleAgentForm">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="scheduleEndpoint" class="form-label">Endpoint URL</label>
-                                    <input type="url" id="scheduleEndpoint" class="form-control" 
-                                           placeholder="https://api.calendario.com/webhook">
-                                </div>
-                                <div class="form-group">
-                                    <label for="scheduleApiKey" class="form-label">API Key</label>
-                                    <input type="password" id="scheduleApiKey" class="form-control" 
-                                           placeholder="sk-...">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Configuraciones Adicionales</label>
-                                <div class="checkbox-group">
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" id="autoConfirm">
-                                        <span class="checkbox-text">Auto-confirmar citas</span>
-                                    </label>
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" id="sendReminders" checked>
-                                        <span class="checkbox-text">Enviar recordatorios</span>
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-success">
-                                    <span class="btn-icon">💾</span>
-                                    Guardar ScheduleAgent
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </section>
-
-            <!-- System Administration -->
-            <section class="admin-section" id="adminSection">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <span class="section-icon">⚙️</span>
-                        Administración del Sistema
-                    </h2>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <span class="card-icon">🛠️</span>
-                            Herramientas del Sistema
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="admin-grid">
-                            <button id="systemHealthBtn" class="admin-btn">
-                                <span class="btn-icon">🩺</span>
-                                Health Check Global
-                            </button>
-                            <button id="reloadConfigBtn" class="admin-btn">
-                                <span class="btn-icon">🔄</span>
-                                Recargar Configuración
-                            </button>
-                            <button id="systemStatsBtn" class="admin-btn">
-                                <span class="btn-icon">📊</span>
-                                Estadísticas
-                            </button>
-                            <button id="exportConfigBtn" class="admin-btn">
-                                <span class="btn-icon">💾</span>
-                                Exportar Config
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        </div>
-    </main>
-
-    <!-- Camera Modal -->
-    <div id="cameraModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>📸 Capturar Imagen</h3>
-                <span class="company-context">Para: <strong id="cameraCompany">-</strong></span>
-                <button id="closeCameraBtn" class="btn-close">&times;</button>
+                </form>
             </div>
-            <div class="modal-body">
+
+            <!-- Bulk Upload -->
+            <div class="card">
+                <h3>📁 Subir Múltiples Documentos</h3>
+                <form id="bulkUploadForm">
+                    <input type="file" id="bulkFiles" multiple accept=".txt,.md,.docx">
+                    <div class="form-actions">
+                        <button type="submit">📤 Subir Archivos</button>
+                        <span class="company-indicator">Para empresa: <strong id="bulkCompanyIndicator">-</strong></span>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Search Documents -->
+            <div class="card">
+                <h3>🔍 Buscar Documentos</h3>
+                <form id="searchDocumentsForm">
+                    <input type="text" id="searchQuery" placeholder="Buscar en documentos..." required>
+                    <input type="number" id="searchK" value="3" min="1" max="20" placeholder="Cantidad de resultados">
+                    <div class="form-actions">
+                        <button type="submit">🔍 Buscar</button>
+                        <span class="company-indicator">En empresa: <strong id="searchCompanyIndicator">-</strong></span>
+                    </div>
+                </form>
+                <div id="searchResults" class="search-results"></div>
+            </div>
+
+            <!-- Documents List -->
+            <div class="card">
+                <h3>📋 Documentos Almacenados</h3>
+                <div class="list-actions">
+                    <button id="listDocumentsBtn" class="btn-secondary">📄 Listar Documentos</button>
+                    <button id="cleanupVectorsBtn" class="btn-danger">🧹 Limpiar Vectores Huérfanos</button>
+                    <button id="diagnosticsBtn" class="btn-secondary">🔧 Diagnósticos</button>
+                </div>
+                <div id="documentsList" class="documents-grid"></div>
+            </div>
+        </section>
+
+        <!-- Conversations Section -->
+        <section class="conversations-section">
+            <h2>💬 Gestión de Conversaciones</h2>
+            
+            <div class="card">
+                <h3>📞 Conversaciones Activas</h3>
+                <div class="list-actions">
+                    <button id="listConversationsBtn" class="btn-secondary">💬 Listar Conversaciones</button>
+                    <button id="conversationStatsBtn" class="btn-secondary">📊 Estadísticas</button>
+                </div>
+                <div id="conversationsList" class="conversations-grid"></div>
+            </div>
+        </section>
+
+        <!-- Chat Testing Section -->
+        <section class="chat-section">
+            <h2>🤖 Probar Chatbot</h2>
+            
+            <div class="card">
+                <div class="chat-header">
+                    <h3>💭 Chat de Prueba</h3>
+                    <div class="chat-company-info">
+                        <span>Probando con: <strong id="chatCompanyName">-</strong></span>
+                        <span class="chat-services" id="chatCompanyServices">-</span>
+                    </div>
+                </div>
+                
+                <div id="chatHistory" class="chat-container"></div>
+                
+                <!-- Chat Form -->
+                <form id="chatForm">
+                    <div class="chat-input-container">
+                        <input type="text" id="userMessage" placeholder="Escribe tu mensaje...">
+                        <input type="text" id="testUserId" placeholder="User ID (opcional)" value="test_user">
+                        <button type="submit">📤 Enviar</button>
+                    </div>
+                </form>
+                
+                <!-- Multimedia Controls -->
+                <div class="multimedia-controls">
+                    <div class="multimedia-group">
+                        <h4>🎤 Audio</h4>
+                        <button id="recordVoiceBtn" class="btn-multimedia">🎙️ Grabar Voz</button>
+                        <input type="file" id="voiceFile" accept="audio/*" hidden>
+                        <label for="voiceFile" class="btn-secondary">📁 Subir Audio</label>
+                    </div>
+                    
+                    <div class="multimedia-group">
+                        <h4>📸 Imagen</h4>
+                        <button id="captureImageBtn" class="btn-multimedia">📸 Tomar Foto</button>
+                        <input type="file" id="imageFile" accept="image/*" hidden>
+                        <label for="imageFile" class="btn-secondary">🖼️ Subir Imagen</label>
+                    </div>
+                </div>
+                
+                <!-- Recording Status -->
+                <div id="recordingStatus" class="recording-status" style="display: none;">
+                    <span class="recording-indicator">🔴</span>
+                    <span>Grabando audio para <strong id="recordingCompany">-</strong>...</span>
+                    <button id="stopRecordingBtn" class="btn-stop">⏹️ Parar</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- System Administration -->
+        <section class="admin-section">
+            <h2>⚙️ Administración del Sistema</h2>
+            
+            <div class="card">
+                <h3>🛠️ Herramientas de Sistema</h3>
+                <div class="admin-grid">
+                    <button id="systemHealthBtn" class="admin-btn">🩺 Health Check Global</button>
+                    <button id="reloadConfigBtn" class="admin-btn">🔄 Recargar Configuración</button>
+                    <button id="systemStatsBtn" class="admin-btn">📊 Estadísticas del Sistema</button>
+                    <button id="multimediaTestBtn" class="admin-btn">🎬 Test Multimedia</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>🔧 Herramientas Avanzadas</h3>
+                <div class="admin-grid">
+                    <button id="vectorRecoveryBtn" class="admin-btn danger">🛠️ Forzar Recovery Vectorstore</button>
+                    <button id="protectionStatusBtn" class="admin-btn">🛡️ Estado Protección</button>
+                    <button id="exportConfigBtn" class="admin-btn">💾 Exportar Configuración</button>
+                    <button id="migrationToolBtn" class="admin-btn">🔄 Herramienta de Migración</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Camera Modal -->
+        <div id="cameraModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>📸 Capturar Imagen</h3>
+                    <span class="company-context">Para empresa: <strong id="cameraCompany">-</strong></span>
+                    <button id="closeCameraBtn" class="btn-close">&times;</button>
+                </div>
                 <div class="camera-container">
-                    <video id="cameraPreview" autoplay muted style="display: none;"></video>
-                    <canvas id="captureCanvas" style="display: none;"></canvas>
+                    <video id="cameraVideo" autoplay></video>
+                    <canvas id="cameraCanvas" style="display: none;"></canvas>
                 </div>
                 <div class="camera-controls">
-                    <button id="takePictureBtn" class="btn btn-primary" disabled>
-                        <span class="btn-icon">📸</span>
-                        Tomar Foto
-                    </button>
-                    <button id="cancelCameraBtn" class="btn btn-secondary">
-                        <span class="btn-icon">❌</span>
-                        Cancelar
-                    </button>
+                    <button id="takePictureBtn" class="btn-primary">📸 Tomar Foto</button>
+                    <button id="cancelCameraBtn" class="btn-secondary">❌ Cancelar</button>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
-        <div class="loading-content">
-            <div class="spinner"></div>
-            <p id="loadingMessage">Cargando...</p>
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p id="loadingMessage">Cargando...</p>
+            </div>
         </div>
+
+        <!-- Toast Notifications -->
+        <div id="toastContainer" class="toast-container"></div>
     </div>
 
-    <!-- Toast Container -->
-    <div id="toastContainer" class="toast-container"></div>
-
-    <!-- Scripts - Load in specific order -->
-    <!-- Configuration FIRST - Must load before everything -->
-    <script src="scripts/config.js"></script>
-    
-    <!-- Core utilities - Load synchronously in order -->
-    <script>
-    // Ensure config loaded before proceeding
-    function loadNextScript() {
-        if (typeof window.APP_CONFIG === 'undefined') {
-            setTimeout(loadNextScript, 50);
-            return;
-        }
-        
-        // Load remaining scripts in correct order
-        const scripts = [
-            'scripts/ui.js',
-            'scripts/api.js', 
-            'scripts/companies.js',
-            'scripts/documents.js',
-            'scripts/chat.js',
-            'scripts/multimedia.js',
-            'scripts/configuration.js',
-            'scripts/admin.js',
-            'scripts/main.js'  // MUST be last
-        ];
-        
-        async function loadAllScripts() {
-            try {
-                for (const scriptSrc of scripts) {
-                    await loadScript(scriptSrc);
-                }
-                console.log('🎉 All scripts loaded successfully');
-            } catch (error) {
-                console.error('💥 Script loading failed:', error);
-                showFallbackError();
-            }
-        }
-        
-        function loadScript(src) {
-            return new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = src;
-                script.async = false;
-                script.onload = () => {
-                    console.log(`✅ Loaded: ${src}`);
-                    resolve();
-                };
-                script.onerror = () => {
-                    console.error(`❌ Failed to load: ${src}`);
-                    reject(new Error(`Failed to load ${src}`));
-                };
-                document.head.appendChild(script);
-            });
-        }
-        
-        function showFallbackError() {
-            document.body.innerHTML = `
-                <div style="
-                    position: fixed;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    background: #fff3cd;
-                    border: 1px solid #ffeaa7;
-                    color: #856404;
-                    padding: 2rem;
-                    border-radius: 10px;
-                    text-align: center;
-                    max-width: 500px;
-                    z-index: 10000;
-                ">
-                    <h2>⚠️ Error de Carga</h2>
-                    <p>No se pudieron cargar todos los recursos necesarios.</p>
-                    <button onclick="window.location.reload()" style="
-                        background: #007bff;
-                        color: white;
-                        border: none;
-                        padding: 10px 20px;
-                        border-radius: 5px;
-                        cursor: pointer;
-                        margin-top: 1rem;
-                    ">🔄 Recargar Página</button>
-                </div>
-            `;
-        }
-        
-        loadAllScripts();
-    }
-    
-    // Start loading process
-    loadNextScript();
-    </script>
+    <script src="script.js"></script>
 </body>
 </html>
