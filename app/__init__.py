@@ -1,476 +1,391 @@
-# app/__init__.py - Fixed Railway deployment issues
-"""
-Fixed Flask app factory for Railway deployment
-Handles the schedule service connection issue (port 4040) gracefully
-"""
-
-import os
+from flask import Flask, request, send_from_directory, send_file, jsonify
+from app.config import Config
+from app.utils.error_handlers import register_error_handlers
+from app.services.redis_service import init_redis
+from app.services.vectorstore_service import init_vectorstore
+from app.services.openai_service import init_openai
+from app.config.company_config import get_company_manager
+from app.services.multi_agent_factory import get_multi_agent_factory
+from app.routes import webhook, documents, conversations, health, multimedia, admin
 import logging
-from flask import Flask, jsonify, send_file, request
-from flask_cors import CORS
 import sys
-import requests
+import threading
 import time
+import os
 
-# Configure logging for Railway
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
-logger = logging.getLogger(__name__)
-
-def create_app(config=None):
-    """Create and configure Flask app for Railway deployment"""
-    
+def create_app(config_class=Config):
+    """Factory pattern para crear la aplicación Flask multi-tenant"""
     app = Flask(__name__)
+    app.config.from_object(config_class)
     
-    # Railway-specific configuration
-    configure_railway_settings(app)
+    # Configurar logging con contexto multi-tenant
+    logging.basicConfig(
+        level=app.config.get('LOG_LEVEL', 'INFO'),
+        format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
     
-    # Configure CORS for Railway
-    CORS(app, origins="*")
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 Initializing Multi-Tenant Chatbot System")
     
-    # Load configuration
-    if config:
-        app.config.from_object(config)
-    else:
-        try:
-            from app.config.settings import config as default_config
-            env = os.getenv('FLASK_ENV', 'production')
-            app.config.from_object(default_config.get(env, default_config['default']))
-        except ImportError:
-            # Fallback configuration
-            app.config.update({
-                'DEBUG': False,
-                'TESTING': False,
-                'SECRET_KEY': os.getenv('SECRET_KEY', 'railway-production-key'),
-                'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
-                'REDIS_URL': os.getenv('REDIS_URL', 'redis://localhost:6379'),
-                'MODEL_NAME': os.getenv('MODEL_NAME', 'gpt-4o-mini'),
-                'EMBEDDING_MODEL': os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small'),
-                'PORT': int(os.getenv('PORT', 8080))
-            })
+    # Inicializar servicios básicos
+    with app.app_context():
+        init_redis(app)
+        init_openai(app)
+        # init_vectorstore se maneja por empresa ahora
     
-    # Initialize extensions and services with Railway error handling
-    initialize_services_with_railway_support(app)
-    
-    # Register routes with Railway optimizations
-    register_routes_with_railway_support(app)
-    
-    # Setup Railway error handlers
-    setup_railway_error_handlers(app)
-    
-    # Railway health check endpoints
-    setup_railway_health_checks(app)
-    
-    logger.info("🚄 Flask app created for Railway deployment")
-    return app
-
-def configure_railway_settings(app):
-    """Configure Railway-specific settings"""
-    
-    # Railway environment detection
-    is_railway = bool(os.getenv('RAILWAY_ENVIRONMENT_NAME'))
-    app.config['IS_RAILWAY'] = is_railway
-    
-    # Dynamic port handling for Railway
-    port = int(os.getenv('PORT', 8080))
-    app.config['PORT'] = port
-    
-    # Railway-specific logging
-    if is_railway:
-        app.config['LOG_LEVEL'] = 'INFO'
-        logger.info(f"🚄 Railway environment detected, using port {port}")
-    
-    # Schedule service configuration with Railway fallback
-    schedule_service_url = os.getenv('SCHEDULE_SERVICE_URL', 'https://4bff0db548fa.ngrok-free.app')
-    app.config['SCHEDULE_SERVICE_URL'] = schedule_service_url
-    app.config['SCHEDULE_SERVICE_FALLBACK'] = True  # Enable fallback mode
-    
-    logger.info(f"📅 Schedule service URL: {schedule_service_url} (fallback enabled)")
-
-def initialize_services_with_railway_support(app):
-    """Initialize services with Railway error handling"""
-    
-    try:
-        # Initialize Redis with Railway support
-        from app.services.redis_service import get_redis_client
-        with app.app_context():
-            redis_client = get_redis_client()
-            redis_client.ping()
-            app.config['REDIS_AVAILABLE'] = True
-            logger.info("✅ Redis connection established")
+    # ENHANCED: Middleware multi-tenant
+    @app.before_request
+    def ensure_multitenant_health():
+        """Middleware que verifica salud multi-tenant"""
+        multitenant_endpoints = ['/webhook/chatwoot', '/documents', '/conversations']
         
-    except Exception as e:
-        app.config['REDIS_AVAILABLE'] = False
-        logger.warning(f"⚠️ Redis connection failed: {e}")
+        if any(endpoint in request.path for endpoint in multitenant_endpoints):
+            try:
+                # Verificar que el gestor de empresas esté inicializado
+                company_manager = get_company_manager()
+                
+                # Log de actividad multi-tenant
+                company_id = _extract_company_from_request()
+                if company_id:
+                    logger.debug(f"Processing request for company: {company_id}")
+                
+                # Verificación no-bloqueante del factory
+                factory = get_multi_agent_factory()
+                
+                # Si es un webhook, asegurar que el orquestador esté listo
+                if '/webhook/chatwoot' in request.path and company_id:
+                    def background_orchestrator_prep():
+                        try:
+                            factory.get_orchestrator(company_id)
+                        except:
+                            pass
+                    
+                    threading.Thread(target=background_orchestrator_prep, daemon=True).start()
+                            
+            except Exception as e:
+                logger.error(f"Error in multi-tenant middleware: {e}")
+                # NUNCA bloquear requests
     
-    try:
-        # Initialize OpenAI service
-        from app.services.openai_service import OpenAIService
-        with app.app_context():
-            openai_service = OpenAIService()
-            openai_service.test_connection()
-            app.config['OPENAI_AVAILABLE'] = True
-            logger.info("✅ OpenAI service available")
-        
-    except Exception as e:
-        app.config['OPENAI_AVAILABLE'] = False
-        logger.warning(f"⚠️ OpenAI service unavailable: {e}")
-    
-    try:
-        # Initialize company manager with Railway support - use fallback if not available
+    def _extract_company_from_request() -> str:
+        """Extraer company_id del request actual"""
         try:
-            from app.services.company_manager import get_company_manager
+            # Método 1: Header
+            company_id = request.headers.get('X-Company-ID')
+            if company_id:
+                return company_id
+            
+            # Método 2: Query param
+            company_id = request.args.get('company_id')
+            if company_id:
+                return company_id
+            
+            # Método 3: JSON body (solo para POST/PUT)
+            if request.method in ['POST', 'PUT'] and request.is_json:
+                data = request.get_json()
+                if data and 'company_id' in data:
+                    return data['company_id']
+                
+                # Para webhooks, extraer de la estructura de datos
+                if data and 'conversation' in data:
+                    from app.config.company_config import extract_company_id_from_webhook
+                    return extract_company_id_from_webhook(data)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not extract company_id from request: {e}")
+            return None
+    
+    # Registrar blueprints
+    app.register_blueprint(webhook.bp, url_prefix='/webhook')
+    app.register_blueprint(documents.bp, url_prefix='/documents')
+    app.register_blueprint(conversations.bp, url_prefix='/conversations')
+    app.register_blueprint(health.bp, url_prefix='/health')
+    app.register_blueprint(multimedia.bp, url_prefix='/multimedia')
+    app.register_blueprint(admin.bp, url_prefix='/admin')
+    
+    # Rutas adicionales multi-tenant
+    @app.route('/companies')
+    def list_companies():
+        """Listar todas las empresas configuradas"""
+        try:
             company_manager = get_company_manager()
             companies = company_manager.get_all_companies()
-            app.config['COMPANIES_COUNT'] = len(companies)
-            logger.info(f"✅ Company manager initialized with {len(companies)} companies")
-        except ImportError:
-            # Fallback: load from JSON file directly
-            companies = load_companies_from_json()
-            app.config['COMPANIES_COUNT'] = len(companies)
-            logger.info(f"✅ Companies loaded from JSON: {len(companies)} companies")
-        
-    except Exception as e:
-        app.config['COMPANIES_COUNT'] = 0
-        logger.error(f"❌ Company manager initialization failed: {e}")
-    
-    # Schedule service availability check (Railway fix for port 4040)
-    check_schedule_service_with_railway_fallback(app)
-
-def load_companies_from_json():
-    """Fallback method to load companies from JSON files"""
-    companies = {}
-    
-    try:
-        # Try to load companies_config.json
-        import json
-        if os.path.exists('companies_config.json'):
-            with open('companies_config.json', 'r') as f:
-                companies = json.load(f)
-                logger.info("Loaded companies from companies_config.json")
-        elif os.path.exists('extended_companies_config.json'):
-            with open('extended_companies_config.json', 'r') as f:
-                companies = json.load(f)
-                logger.info("Loaded companies from extended_companies_config.json")
-        else:
-            # Create a default company for Railway
-            companies = {
-                "default_company": {
-                    "company_name": "Default Company",
-                    "services": ["chat", "documents"],
-                    "vectorstore_index": "default-index",
-                    "redis_prefix": "default:",
-                    "schedule_service_url": os.getenv('SCHEDULE_SERVICE_URL', 'http://localhost:4040')
+            
+            companies_info = {}
+            for company_id, config in companies.items():
+                companies_info[company_id] = {
+                    "company_name": config.company_name,
+                    "services": config.services,
+                    "vectorstore_index": config.vectorstore_index,
+                    "status": "configured"
                 }
-            }
-            logger.info("Created default company configuration")
-    
-    except Exception as e:
-        logger.error(f"Error loading companies from JSON: {e}")
-        companies = {}
-    
-    return companies
-
-def check_schedule_service_with_railway_fallback(app):
-    """Check schedule service availability with Railway fallback handling"""
-    
-    try:
-        schedule_url = app.config.get('SCHEDULE_SERVICE_URL', 'http://127.0.0.1:4040')
-        
-        # Try to connect to schedule service with short timeout
-        response = requests.get(f"{schedule_url}/health", timeout=2)
-        
-        if response.status_code == 200:
-            app.config['SCHEDULE_SERVICE_AVAILABLE'] = True
-            logger.info("✅ Schedule service available")
-        else:
-            raise Exception(f"Schedule service returned {response.status_code}")
             
-    except Exception as e:
-        app.config['SCHEDULE_SERVICE_AVAILABLE'] = False
-        logger.warning(f"⚠️ Schedule service unavailable (using fallback): {e}")
-        
-        # This is expected in Railway - the schedule service might be on a different container
-        if app.config.get('IS_RAILWAY'):
-            logger.info("🚄 Railway deployment - schedule service fallback mode enabled")
-
-def register_routes_with_railway_support(app):
-    """Register routes with Railway-specific optimizations"""
-    
-    # Import route blueprints with error handling
-    try:
-        from app.routes.health import bp as health_bp
-        app.register_blueprint(health_bp, url_prefix='/api/health')
-        logger.info("✅ Health routes registered")
-    except ImportError as e:
-        logger.warning(f"⚠️ Health routes not available: {e}")
-    
-    try:
-        from app.routes.companies import bp as companies_bp
-        app.register_blueprint(companies_bp, url_prefix='/api/companies')
-        logger.info("✅ Companies routes registered")
-    except ImportError as e:
-        logger.warning(f"⚠️ Companies routes not available: {e}")
-    
-    try:
-        from app.routes.documents import bp as documents_bp
-        app.register_blueprint(documents_bp, url_prefix='/api/documents')
-        logger.info("✅ Documents routes registered")
-    except ImportError as e:
-        logger.warning(f"⚠️ Documents routes not available: {e}")
-    
-    try:
-        from app.routes.chat import bp as chat_bp
-        app.register_blueprint(chat_bp, url_prefix='/api/chat')
-        logger.info("✅ Chat routes registered")
-    except ImportError as e:
-        logger.warning(f"⚠️ Chat routes not available: {e}")
-    
-    try:
-        from app.routes.admin import bp as admin_bp
-        app.register_blueprint(admin_bp, url_prefix='/api/admin')
-        logger.info("✅ Admin routes registered")
-    except ImportError as e:
-        logger.warning(f"⚠️ Admin routes not available: {e}")
-    
-    try:
-        from app.routes.status import bp as status_bp
-        app.register_blueprint(status_bp, url_prefix='/api/status')
-        logger.info("✅ Status routes registered")
-    except ImportError as e:
-        logger.warning(f"⚠️ Status routes not available: {e}")
-    
-    # Try to register multimedia routes if available
-    try:
-        from app.routes.multimedia import bp as multimedia_bp
-        app.register_blueprint(multimedia_bp, url_prefix='/api/multimedia')
-        logger.info("✅ Multimedia routes registered")
-    except ImportError:
-        logger.warning("⚠️ Multimedia routes not available")
-    
-    # Try to register schedule routes with Railway fallback
-    try:
-        from app.routes.schedule import bp as schedule_bp
-        app.register_blueprint(schedule_bp, url_prefix='/api/schedule')
-        logger.info("✅ Schedule routes registered")
-    except ImportError:
-        logger.warning("⚠️ Schedule routes not available (fallback mode)")
-
-def setup_railway_health_checks(app):
-    """Setup Railway-specific health check endpoints"""
-    
-    @app.route('/health')
-    def railway_health_check():
-        """Railway health check endpoint"""
-        try:
-            health_status = {
-                "status": "healthy",
-                "timestamp": time.time(),
-                "environment": "railway" if app.config.get('IS_RAILWAY') else "local",
-                "port": app.config.get('PORT', 8080),
-                "services": {
-                    "redis": app.config.get('REDIS_AVAILABLE', False),
-                    "openai": app.config.get('OPENAI_AVAILABLE', False),
-                    "schedule_service": app.config.get('SCHEDULE_SERVICE_AVAILABLE', False),
-                    "companies": app.config.get('COMPANIES_COUNT', 0) > 0
-                }
-            }
-            
-            # Determine overall health
-            critical_services = ['redis', 'openai', 'companies']
-            all_critical_healthy = all(health_status['services'][service] for service in critical_services)
-            
-            if not all_critical_healthy:
-                health_status['status'] = 'partial'
-                health_status['message'] = 'Some critical services unavailable'
-            
-            # Schedule service is non-critical for Railway
-            if not health_status['services']['schedule_service'] and app.config.get('IS_RAILWAY'):
-                health_status['schedule_service_note'] = 'Running in fallback mode (expected in Railway)'
-            
-            status_code = 200 if health_status['status'] == 'healthy' else 206
-            return jsonify(health_status), status_code
+            return jsonify({
+                "status": "success",
+                "total_companies": len(companies),
+                "companies": companies_info,
+                "system_type": "multi-tenant"
+            })
             
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return jsonify({
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": time.time(),
-                "environment": "railway" if app.config.get('IS_RAILWAY') else "local"
-            }), 503
-    
-    @app.route('/health/schedule-service')
-    def schedule_service_health_check():
-        """Specific health check for schedule service (handles port 4040 issue)"""
-        try:
-            if app.config.get('SCHEDULE_SERVICE_AVAILABLE'):
-                return jsonify({
-                    "status": "available",
-                    "service": "schedule",
-                    "url": app.config.get('SCHEDULE_SERVICE_URL')
-                })
-            else:
-                # Return fallback status instead of error
-                return jsonify({
-                    "status": "fallback",
-                    "service": "schedule",
-                    "message": "Schedule service in fallback mode",
-                    "fallback_enabled": True
-                }), 200  # Return 200 instead of error code
-                
-        except Exception as e:
-            logger.warning(f"Schedule service health check failed: {e}")
-            return jsonify({
-                "status": "fallback",
-                "service": "schedule",
-                "message": "Schedule service unavailable, using fallback",
-                "error": str(e)
-            }), 200  # Return 200 to not fail health checks
-
-def setup_railway_error_handlers(app):
-    """Setup Railway-specific error handlers - FIXED"""
-    
-    @app.errorhandler(404)
-    def not_found(error):
-        """Handle 404 errors for Railway - FIXED"""
-        if request.path.startswith('/api/'):
+            logger.error(f"Error listing companies: {e}")
             return jsonify({
                 "status": "error",
-                "message": "API endpoint not found",
-                "path": request.path
-            }), 404
-        
-        # Try to serve frontend for non-API routes
-        return serve_frontend_fallback()
+                "message": "Failed to list companies",
+                "system_type": "multi-tenant"
+            }), 500
     
-    @app.errorhandler(500)
-    def internal_server_error(error):
-        """Handle 500 errors for Railway"""
-        logger.error(f"Internal server error: {error}")
-        
-        return jsonify({
-            "status": "error",
-            "message": "Internal server error",
-            "timestamp": time.time(),
-            "railway_mode": app.config.get('IS_RAILWAY', False)
-        }), 500
-    
-    def serve_frontend_fallback():
-        """Serve frontend with Railway fallback handling - FIXED"""
+    @app.route('/company/<company_id>/status')
+    def company_status(company_id):
+        """Estado específico de una empresa - CORREGIDO"""
         try:
-            # Try to serve the main HTML file
+            company_manager = get_company_manager()
+            
+            if not company_manager.validate_company_id(company_id):
+                return jsonify({
+                    "status": "error",
+                    "message": f"Company not found: {company_id}"
+                }), 404
+            
+            config = company_manager.get_company_config(company_id)
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            
+            status_info = {
+                "company_id": company_id,
+                "company_name": config.company_name,
+                "services": config.services,
+                "orchestrator_ready": orchestrator is not None,
+                "vectorstore_index": config.vectorstore_index,
+                "redis_prefix": config.redis_prefix
+            }
+            
+            if orchestrator:
+                health = orchestrator.health_check()
+                status_info.update({
+                    "system_healthy": health.get("system_healthy", False),
+                    # CORREGIDO: Convertir dict_keys a lista
+                    "agents_available": list(health.get("agents_status", {}).keys())
+                })
+            
+            return jsonify({
+                "status": "success",
+                "data": status_info
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting status for company {company_id}: {e}")
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to get status for company: {company_id}"
+            }), 500
+    
+    @app.route('/')
+    def serve_frontend():
+        """Servir el frontend o respuesta API multi-tenant"""
+        try:
             html_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'index.html')
             
             if os.path.exists(html_path):
                 return send_file(html_path)
             else:
-                # Fallback to API response for Railway
-                companies = load_companies_from_json()
+                # Información del sistema multi-tenant
+                company_manager = get_company_manager()
+                companies = company_manager.get_all_companies()
                 
                 return jsonify({
                     "status": "healthy",
                     "message": "Multi-Tenant Chatbot Backend API is running",
                     "system_type": "multi-tenant-multi-agent",
-                    "environment": "railway" if app.config.get('IS_RAILWAY') else "local",
                     "companies_configured": len(companies),
-                    "available_companies": list(companies.keys()),
-                    "services": {
-                        "redis": app.config.get('REDIS_AVAILABLE', False),
-                        "openai": app.config.get('OPENAI_AVAILABLE', False),
-                        "schedule_service": app.config.get('SCHEDULE_SERVICE_AVAILABLE', False)
-                    }
+                    "available_companies": list(companies.keys())
                 })
-                    
         except Exception as e:
             logger.error(f"Error serving frontend: {e}")
             return jsonify({
-                "status": "healthy",
+                "status": "healthy", 
                 "message": "Multi-Tenant Backend API is running",
-                "system_type": "multi-tenant-multi-agent",
-                "environment": "railway" if app.config.get('IS_RAILWAY') else "local",
-                "error": str(e)
+                "system_type": "multi-tenant-multi-agent"
             })
-    
-    @app.route('/')
-    def serve_frontend():
-        """Serve the frontend - FIXED"""
-        return serve_frontend_fallback()
     
     @app.route('/<path:filename>')
     def serve_static(filename):
-        """Serve static files for Railway deployment - FIXED"""
-        allowed_files = [
-            'index.html', 'style.css', 'script.js', 'favicon.ico', 
-            'companies_config.json',
-            # New modular files
-            'styles/main.css', 'styles/components.css', 'styles/responsive.css',
-            'scripts/config.js', 'scripts/api.js', 'scripts/ui.js',
-            'scripts/companies.js', 'scripts/documents.js', 'scripts/chat.js',
-            'scripts/multimedia.js', 'scripts/admin.js', 'scripts/main.js'
-        ]
+        """Servir archivos estáticos del frontend"""
+        allowed_files = ['style.css', 'script.js', 'index.html', 'favicon.ico', 'companies_config.json']
         
         if filename in allowed_files:
             try:
-                # Check if it's a modular file path
                 file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), filename)
                 
                 if os.path.exists(file_path):
                     return send_file(file_path)
                 else:
-                    logger.warning(f"Static file not found: {filename}")
-                    return jsonify({
-                        "status": "error",
-                        "message": f"File not found: {filename}"
-                    }), 404
-                    
+                    return jsonify({"status": "error", "message": "File not found"}), 404
             except Exception as e:
                 logger.error(f"Error serving static file {filename}: {e}")
-                return jsonify({
-                    "status": "error",
-                    "message": f"Error serving file: {filename}",
-                    "error": str(e)
-                }), 500
+                return jsonify({"status": "error", "message": "Error serving file"}), 500
         else:
-            return jsonify({
-                "status": "error",
-                "message": f"File not allowed: {filename}"
-            }), 403
-
-# Basic API endpoints for Railway
-def setup_basic_api_endpoints(app):
-    """Setup basic API endpoints when full routes are not available"""
+            return jsonify({"status": "error", "message": "File not allowed"}), 403
     
-    @app.route('/api/companies')
-    def api_companies():
-        """Basic companies endpoint"""
-        try:
-            companies = load_companies_from_json()
-            return jsonify({
-                "total_companies": len(companies),
-                "companies": companies
-            })
-        except Exception as e:
-            return jsonify({
-                "status": "error",
-                "message": str(e)
-            }), 500
-
-# Call this function to setup basic endpoints
-def create_app_with_railway_support(config=None):
-    """Create Flask app with full Railway support"""
-    app = create_app(config)
+    # Registrar error handlers
+    register_error_handlers(app)
     
-    # Setup basic API endpoints if full routes failed
-    setup_basic_api_endpoints(app)
+    # ENHANCED: Inicializar sistemas multi-tenant después de crear la app
+    with app.app_context():
+        initialize_multitenant_system(app)
     
     return app
 
-# Export both factory functions for compatibility
-__all__ = ['create_app', 'create_app_with_railway_support']
+def initialize_multitenant_system(app):
+    """Inicializar sistema multi-tenant después de crear la app"""
+    try:
+        logger = app.logger
+        
+        # Inicializar gestor de empresas
+        company_manager = get_company_manager()
+        companies = company_manager.get_all_companies()
+        
+        logger.info(f"📊 Multi-tenant system initialized with {len(companies)} companies:")
+        for company_id, config in companies.items():
+            logger.info(f"   • {company_id}: {config.company_name} ({config.services})")
+        
+        # Inicializar factory de multi-agente
+        factory = get_multi_agent_factory()
+        logger.info("🏭 Multi-agent factory initialized")
+        
+        # Pre-cargar orquestadores para empresas principales (opcional)
+        primary_companies = ['benova']  # Empresas que se cargan al inicio
+        
+        for company_id in primary_companies:
+            if company_id in companies:
+                try:
+                    orchestrator = factory.get_orchestrator(company_id)
+                    if orchestrator:
+                        logger.info(f"✅ Pre-loaded orchestrator for: {company_id}")
+                    else:
+                        logger.warning(f"⚠️ Could not pre-load orchestrator for: {company_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error pre-loading orchestrator for {company_id}: {e}")
+        
+        # Inicializar sistema de auto-recovery multi-tenant (si está habilitado)
+        if app.config.get('VECTORSTORE_AUTO_RECOVERY', True):
+            try:
+                from app.services.vector_auto_recovery import (
+                    initialize_auto_recovery_system
+                )
+                
+                if initialize_auto_recovery_system():
+                    logger.info("🛡️ Multi-tenant auto-recovery system initialized")
+                else:
+                    logger.warning("⚠️ Could not initialize auto-recovery system")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Auto-recovery system initialization failed: {e}")
+        
+        logger.info("🎯 Multi-tenant system fully initialized")
+            
+    except Exception as e:
+        app.logger.warning(f"⚠️ Could not fully initialize multi-tenant system: {e}")
+
+def startup_checks(app):
+    """Verificaciones completas de inicio multi-tenant"""
+    try:
+        with app.app_context():
+            from app.services.redis_service import get_redis_client
+            from app.services.openai_service import OpenAIService
+            
+            # Validar servicios básicos
+            redis_client = get_redis_client()
+            redis_client.ping()
+            
+            openai_service = OpenAIService()
+            openai_service.test_connection()
+            
+            # Validar configuración multi-tenant
+            company_manager = get_company_manager()
+            companies = company_manager.get_all_companies()
+            
+            if not companies:
+                raise ValueError("No companies configured")
+            
+            # Validar al menos una empresa
+            factory = get_multi_agent_factory()
+            test_company = list(companies.keys())[0]
+            
+            orchestrator = factory.get_orchestrator(test_company)
+            if not orchestrator:
+                raise ValueError(f"Could not create orchestrator for test company: {test_company}")
+            
+            app.logger.info(f"✅ All startup checks passed for {len(companies)} companies")
+            return True
+            
+    except Exception as e:
+        app.logger.error(f"❌ Startup check failed: {e}")
+        raise
+
+def delayed_multitenant_initialization(app):
+    """Inicialización inteligente multi-tenant en background"""
+    max_attempts = 10
+    attempt = 0
+    
+    with app.app_context():
+        logger = app.logger
+        
+        while attempt < max_attempts:
+            try:
+                attempt += 1
+                
+                company_manager = get_company_manager()
+                companies = company_manager.get_all_companies()
+                
+                if not companies:
+                    logger.warning(f"No companies found on attempt {attempt}")
+                    time.sleep(2)
+                    continue
+                
+                factory = get_multi_agent_factory()
+                
+                # Verificar que al menos una empresa funcione
+                working_companies = 0
+                
+                for company_id in companies.keys():
+                    try:
+                        orchestrator = factory.get_orchestrator(company_id)
+                        if orchestrator:
+                            # Test básico
+                            health = orchestrator.health_check()
+                            if health.get("system_healthy", False):
+                                working_companies += 1
+                    except Exception as e:
+                        logger.debug(f"Company {company_id} not ready: {e}")
+                        continue
+                
+                if working_companies > 0:
+                    logger.info(f"✅ Multi-tenant system operational with {working_companies}/{len(companies)} companies ready")
+                    break
+                else:
+                    logger.info(f"⏳ Waiting for companies to be ready... attempt {attempt}")
+                
+                time.sleep(2)
+                
+            except Exception as e:
+                logger.error(f"Error in delayed multi-tenant initialization attempt {attempt}: {e}")
+                time.sleep(2)
+        
+        if attempt >= max_attempts:
+            logger.error("❌ Failed to initialize multi-tenant system after maximum attempts")
+
+def start_background_initialization(app):
+    """Iniciar proceso de inicialización multi-tenant en background"""
+    try:
+        init_thread = threading.Thread(
+            target=delayed_multitenant_initialization, 
+            args=(app,),
+            daemon=True
+        )
+        init_thread.start()
+        app.logger.info("🚀 Background multi-tenant initialization started")
+    except Exception as e:
+        app.logger.error(f"Error starting background multi-tenant initialization: {e}")
