@@ -1,4 +1,4 @@
-// scripts/ui.js - UI Utilities Module
+// scripts/ui.js - UI Utilities Module - FIXED STRUCTURE
 'use strict';
 
 /**
@@ -8,248 +8,15 @@
 class UIManager {
     constructor() {
         this.toastCount = 0;
-        this.maxToasts = window.APP_CONFIG.UI.max_toast_count || 5;
-        this.toastDuration = window.APP_CONFIG.UI.toast_duration || 5000;
+        this.maxToasts = window.APP_CONFIG?.UI?.max_toast_count || 5;
+        this.toastDuration = window.APP_CONFIG?.UI?.toast_duration || 5000;
         this.isInitialized = false;
         
         this.init();
     }
 
     /**
-     * Update UI for responsive design
-     */
-    updateResponsiveUI() {
-        const body = document.body;
-        
-        if (this.isMobile()) {
-            body.classList.add('mobile-view');
-            body.classList.remove('tablet-view', 'desktop-view');
-        } else if (this.isTablet()) {
-            body.classList.add('tablet-view');
-            body.classList.remove('mobile-view', 'desktop-view');
-        } else {
-            body.classList.add('desktop-view');
-            body.classList.remove('mobile-view', 'tablet-view');
-        }
-    }
-}
-
-// ==================== ADDITIONAL UI UTILITIES ====================
-
-/**
- * Create loading button state
- */
-function setButtonLoading(buttonId, isLoading, loadingText = 'Cargando...') {
-    const button = document.getElementById(buttonId);
-    if (!button) return;
-
-    if (isLoading) {
-        button.dataset.originalText = button.textContent;
-        button.textContent = loadingText;
-        button.disabled = true;
-        button.classList.add('loading');
-    } else {
-        button.textContent = button.dataset.originalText || button.textContent;
-        button.disabled = false;
-        button.classList.remove('loading');
-        delete button.dataset.originalText;
-    }
-}
-
-/**
- * Create status badge
- */
-function createStatusBadge(status, text = null) {
-    const badge = document.createElement('span');
-    badge.className = `status-badge status-${status}`;
-    badge.textContent = text || status;
-    
-    const statusIcons = {
-        'success': '✅',
-        'error': '❌',
-        'warning': '⚠️',
-        'info': 'ℹ️',
-        'loading': '⏳'
-    };
-    
-    if (statusIcons[status]) {
-        badge.textContent = `${statusIcons[status]} ${badge.textContent}`;
-    }
-    
-    return badge;
-}
-
-/**
- * Create progress indicator
- */
-function createProgressIndicator(progress, showPercentage = true) {
-    const container = document.createElement('div');
-    container.className = 'progress-indicator';
-    
-    const progressBar = document.createElement('div');
-    progressBar.className = 'progress-bar';
-    
-    const progressFill = document.createElement('div');
-    progressFill.className = 'progress-fill';
-    progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
-    
-    progressBar.appendChild(progressFill);
-    container.appendChild(progressBar);
-    
-    if (showPercentage) {
-        const percentage = document.createElement('span');
-        percentage.className = 'progress-percentage';
-        percentage.textContent = `${Math.round(progress)}%`;
-        container.appendChild(percentage);
-    }
-    
-    return container;
-}
-
-/**
- * Create collapsible section
- */
-function createCollapsibleSection(title, content, isOpen = false) {
-    const section = document.createElement('div');
-    section.className = 'collapsible-section';
-    
-    const header = document.createElement('div');
-    header.className = 'collapsible-header';
-    header.innerHTML = `
-        <span class="collapsible-title">${title}</span>
-        <span class="collapsible-toggle">${isOpen ? '▼' : '▶'}</span>
-    `;
-    
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'collapsible-content';
-    contentDiv.style.display = isOpen ? 'block' : 'none';
-    contentDiv.innerHTML = content;
-    
-    header.addEventListener('click', () => {
-        const isCurrentlyOpen = contentDiv.style.display === 'block';
-        contentDiv.style.display = isCurrentlyOpen ? 'none' : 'block';
-        header.querySelector('.collapsible-toggle').textContent = isCurrentlyOpen ? '▶' : '▼';
-    });
-    
-    section.appendChild(header);
-    section.appendChild(contentDiv);
-    
-    return section;
-}
-
-/**
- * Create data table
- */
-function createDataTable(data, columns, options = {}) {
-    const table = document.createElement('table');
-    table.className = 'data-table';
-    
-    // Create header
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    
-    columns.forEach(column => {
-        const th = document.createElement('th');
-        th.textContent = column.title || column.key;
-        if (column.sortable) {
-            th.classList.add('sortable');
-            th.addEventListener('click', () => {
-                // Implement sorting if needed
-                console.log(`Sort by ${column.key}`);
-            });
-        }
-        headerRow.appendChild(th);
-    });
-    
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
-    
-    // Create body
-    const tbody = document.createElement('tbody');
-    
-    data.forEach((row, index) => {
-        const tr = document.createElement('tr');
-        
-        columns.forEach(column => {
-            const td = document.createElement('td');
-            
-            if (column.render) {
-                td.innerHTML = column.render(row[column.key], row, index);
-            } else {
-                td.textContent = row[column.key] || '-';
-            }
-            
-            tr.appendChild(td);
-        });
-        
-        tbody.appendChild(tr);
-    });
-    
-    table.appendChild(tbody);
-    
-    // Wrap in container for responsive scrolling
-    const container = document.createElement('div');
-    container.className = 'table-container';
-    container.appendChild(table);
-    
-    return container;
-}
-
-/**
- * Create search filter input
- */
-function createSearchFilter(placeholder = 'Buscar...', onSearch = null) {
-    const container = document.createElement('div');
-    container.className = 'search-filter';
-    
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = placeholder;
-    input.className = 'form-control';
-    
-    const icon = document.createElement('span');
-    icon.className = 'search-icon';
-    icon.textContent = '🔍';
-    
-    container.appendChild(icon);
-    container.appendChild(input);
-    
-    if (onSearch) {
-        const debouncedSearch = window.UI.debounce(onSearch, 300);
-        input.addEventListener('input', (e) => {
-            debouncedSearch(e.target.value);
-        });
-    }
-    
-    return container;
-}
-
-// Global UI manager instance
-window.UI = new UIManager();
-
-// Window resize handler for responsive updates
-window.addEventListener('resize', window.UI.throttle(() => {
-    window.UI.updateResponsiveUI();
-}, 250));
-
-// Initial responsive setup
-document.addEventListener('DOMContentLoaded', () => {
-    window.UI.updateResponsiveUI();
-});
-
-// Export utilities for modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        UIManager,
-        setButtonLoading,
-        createStatusBadge,
-        createProgressIndicator,
-        createCollapsibleSection,
-        createDataTable,
-        createSearchFilter
-    };
-}
-     * Initialize UI Manager
+     * Initialize UI Manager - MOVED INSIDE CLASS
      */
     init() {
         if (this.isInitialized) return;
@@ -261,7 +28,7 @@ if (typeof module !== 'undefined' && module.exports) {
         
         this.isInitialized = true;
         
-        if (window.APP_CONFIG.DEBUG.enabled) {
+        if (window.APP_CONFIG?.DEBUG?.enabled) {
             console.log('🎨 UI Manager initialized');
         }
     }
@@ -384,7 +151,7 @@ if (typeof module !== 'undefined' && module.exports) {
                 console.warn('⚠️ Loading timeout - auto-hiding loading overlay');
                 this.hideLoading();
             }
-        }, window.APP_CONFIG.UI.loading_timeout || 60000);
+        }, window.APP_CONFIG?.UI?.loading_timeout || 60000);
     }
 
     /**
@@ -409,8 +176,6 @@ if (typeof module !== 'undefined' && module.exports) {
         this.showLoading(message);
         
         const loadingProgress = document.getElementById('loadingProgress');
-        const progressFill = document.getElementById('progressFill');
-        const progressText = document.getElementById('progressText');
         
         if (loadingProgress) {
             loadingProgress.style.display = 'block';
@@ -472,22 +237,6 @@ if (typeof module !== 'undefined' && module.exports) {
             // Remove on click
             toast.addEventListener('click', () => {
                 this.removeToast(toast);
-            });
-
-            // Add hover to pause auto-removal
-            let timeoutId;
-            const scheduleRemoval = () => {
-                timeoutId = setTimeout(() => {
-                    this.removeToast(toast);
-                }, toastDuration);
-            };
-
-            toast.addEventListener('mouseenter', () => {
-                clearTimeout(timeoutId);
-            });
-
-            toast.addEventListener('mouseleave', () => {
-                scheduleRemoval();
             });
         }
     }
@@ -648,118 +397,48 @@ if (typeof module !== 'undefined' && module.exports) {
         }
     }
 
-    // ==================== FORM UTILITIES ====================
+    // ==================== RESPONSIVE UTILITIES ====================
 
     /**
-     * Disable form
+     * Check if mobile device
      */
-    disableForm(formId) {
-        const form = document.getElementById(formId);
-        if (form) {
-            const inputs = form.querySelectorAll('input, textarea, select, button');
-            inputs.forEach(input => {
-                input.disabled = true;
-            });
-        }
+    isMobile() {
+        return window.innerWidth <= 768;
     }
 
     /**
-     * Enable form
+     * Check if tablet device
      */
-    enableForm(formId) {
-        const form = document.getElementById(formId);
-        if (form) {
-            const inputs = form.querySelectorAll('input, textarea, select, button');
-            inputs.forEach(input => {
-                input.disabled = false;
-            });
-        }
+    isTablet() {
+        return window.innerWidth > 768 && window.innerWidth <= 1024;
     }
 
     /**
-     * Clear form
+     * Check if desktop device
      */
-    clearForm(formId) {
-        const form = document.getElementById(formId);
-        if (form) {
-            const inputs = form.querySelectorAll('input, textarea');
-            inputs.forEach(input => {
-                if (input.type !== 'file') {
-                    input.value = '';
-                }
-            });
-
-            const selects = form.querySelectorAll('select');
-            selects.forEach(select => {
-                select.selectedIndex = 0;
-            });
-        }
+    isDesktop() {
+        return window.innerWidth > 1024;
     }
 
     /**
-     * Validate form
+     * Update UI for responsive design
      */
-    validateForm(formId) {
-        const form = document.getElementById(formId);
-        if (!form) return false;
-
-        const requiredFields = form.querySelectorAll('[required]');
-        let isValid = true;
-        let firstInvalidField = null;
-
-        requiredFields.forEach(field => {
-            if (!field.value.trim()) {
-                field.classList.add('is-invalid');
-                isValid = false;
-                if (!firstInvalidField) {
-                    firstInvalidField = field;
-                }
-            } else {
-                field.classList.remove('is-invalid');
-            }
-        });
-
-        if (!isValid && firstInvalidField) {
-            firstInvalidField.focus();
+    updateResponsiveUI() {
+        const body = document.body;
+        
+        if (this.isMobile()) {
+            body.classList.add('mobile-view');
+            body.classList.remove('tablet-view', 'desktop-view');
+        } else if (this.isTablet()) {
+            body.classList.add('tablet-view');
+            body.classList.remove('mobile-view', 'desktop-view');
+        } else {
+            body.classList.add('desktop-view');
+            body.classList.remove('mobile-view', 'tablet-view');
         }
-
-        return isValid;
     }
 
     // ==================== UTILITY FUNCTIONS ====================
-
-    /**
-     * Format date for display
-     */
-    formatDate(dateString) {
-        if (!dateString) return 'N/A';
-        
-        try {
-            const date = new Date(dateString);
-            return date.toLocaleDateString('es-ES', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        } catch {
-            return dateString;
-        }
-    }
-
-    /**
-     * Format file size
-     */
-    formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
 
     /**
      * Debounce function
@@ -789,88 +468,74 @@ if (typeof module !== 'undefined' && module.exports) {
             }
         };
     }
+}
 
-    /**
-     * Copy text to clipboard
-     */
-    async copyToClipboard(text) {
-        try {
-            await navigator.clipboard.writeText(text);
-            this.showToast('✅ Copiado al portapapeles', 'success');
-            return true;
-        } catch {
-            // Fallback for older browsers
-            const textArea = document.createElement('textarea');
-            textArea.value = text;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            textArea.style.top = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            
-            try {
-                document.execCommand('copy');
-                textArea.remove();
-                this.showToast('✅ Copiado al portapapeles', 'success');
-                return true;
-            } catch {
-                textArea.remove();
-                this.showToast('❌ No se pudo copiar al portapapeles', 'error');
-                return false;
-            }
-        }
+// ==================== ADDITIONAL UI UTILITIES ====================
+
+/**
+ * Create loading button state
+ */
+function setButtonLoading(buttonId, isLoading, loadingText = 'Cargando...') {
+    const button = document.getElementById(buttonId);
+    if (!button) return;
+
+    if (isLoading) {
+        button.dataset.originalText = button.textContent;
+        button.textContent = loadingText;
+        button.disabled = true;
+        button.classList.add('loading');
+    } else {
+        button.textContent = button.dataset.originalText || button.textContent;
+        button.disabled = false;
+        button.classList.remove('loading');
+        delete button.dataset.originalText;
     }
+}
 
-    /**
-     * Animate element
-     */
-    animateElement(element, animation, duration = 300) {
-        return new Promise((resolve) => {
-            element.style.animation = `${animation} ${duration}ms ease`;
-            
-            setTimeout(() => {
-                element.style.animation = '';
-                resolve();
-            }, duration);
-        });
+/**
+ * Create status badge
+ */
+function createStatusBadge(status, text = null) {
+    const badge = document.createElement('span');
+    badge.className = `status-badge status-${status}`;
+    badge.textContent = text || status;
+    
+    const statusIcons = {
+        'success': '✅',
+        'error': '❌',
+        'warning': '⚠️',
+        'info': 'ℹ️',
+        'loading': '⏳'
+    };
+    
+    if (statusIcons[status]) {
+        badge.textContent = `${statusIcons[status]} ${badge.textContent}`;
     }
+    
+    return badge;
+}
 
-    /**
-     * Smooth scroll to element
-     */
-    scrollToElement(elementId, offset = 0) {
-        const element = document.getElementById(elementId);
-        if (element) {
-            const elementPosition = element.offsetTop - offset;
-            window.scrollTo({
-                top: elementPosition,
-                behavior: 'smooth'
-            });
-        }
-    }
+// Create global UI manager instance
+console.log('🎨 Creating UI Manager...');
+window.UI = new UIManager();
 
-    // ==================== RESPONSIVE UTILITIES ====================
+// Window resize handler for responsive updates
+window.addEventListener('resize', window.UI.throttle(() => {
+    window.UI.updateResponsiveUI();
+}, 250));
 
-    /**
-     * Check if mobile device
-     */
-    isMobile() {
-        return window.innerWidth <= 768;
-    }
+// Initial responsive setup
+document.addEventListener('DOMContentLoaded', () => {
+    window.UI.updateResponsiveUI();
+});
 
-    /**
-     * Check if tablet device
-     */
-    isTablet() {
-        return window.innerWidth > 768 && window.innerWidth <= 1024;
-    }
+console.log('✅ UI module loaded successfully');
 
-    /**
-     * Check if desktop device
-     */
-    isDesktop() {
-        return window.innerWidth > 1024;
-    }
-
-    /**
+// Export utilities for modules
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        UIManager,
+        setButtonLoading,
+        createStatusBadge
+    };
+}
