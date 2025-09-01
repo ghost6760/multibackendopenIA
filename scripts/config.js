@@ -1,444 +1,378 @@
-// scripts/config.js - FINAL COMPLETE Configuration Module
+// scripts/config.js - Configuration and Environment Setup
 'use strict';
 
 /**
- * Global Configuration for Multi-Tenant Admin Panel  
- * FINAL VERSION - ALL PROPERTIES INCLUDING UPLOAD SECTION
+ * Global Configuration for Multi-Tenant Chatbot Admin Panel
+ * This file must be loaded FIRST before any other scripts
  */
 
-(function initializeGlobalConfig() {
-    console.log('🔧 Initializing FINAL COMPLETE global configuration...');
+// Detect environment
+const isProduction = window.location.hostname !== 'localhost' && !window.location.hostname.startsWith('127.0.0.1');
+const API_BASE = window.location.origin + '/';
+
+// Global application configuration
+window.APP_CONFIG = {
+    // API Configuration
+    API: {
+        base_url: API_BASE,
+        endpoints: {
+            // Companies
+            companies: 'companies',
+            company_status: 'company/{id}/status',
+            company_health: 'health/company/{id}',
+            
+            // Documents
+            documents: 'documents',
+            documents_search: 'documents/search',
+            documents_bulk: 'documents/bulk',
+            documents_cleanup: 'documents/cleanup',
+            upload_document: 'upload-document',
+            documents_vectors: 'documents/vectors',
+            documents_vectors_orphaned: 'documents/vectors/orphaned',
+            
+            // Chat
+            chat_message: 'chat/message',
+            chat_history: 'chat/history/{userId}',
+            conversations: 'conversations',
+            conversation_test: 'conversations/{userId}/test',
+            
+            // Multimedia
+            audio_transcribe: 'multimedia/audio/transcribe',
+            image_analyze: 'multimedia/image/analyze',
+            image_capture: 'multimedia/image/capture',
+            process_voice: 'multimedia/process-voice',
+            process_image: 'multimedia/process-image',
+            
+            // Configuration
+            configuration: 'configuration',
+            google_calendar_config: 'configuration/google-calendar',
+            schedule_agent_config: 'configuration/schedule-agent',
+            
+            // Admin
+            health: 'health',
+            admin_status: 'admin/status',
+            admin_reset: 'admin/system/reset',
+            admin_reload_config: 'admin/companies/reload-config'
+        },
+        default_headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        timeout: 30000 // 30 seconds
+    },
     
-    // Define COMPLETE APP_CONFIG with ALL required properties
-    window.APP_CONFIG = {
-        // Environment Configuration
-        ENV: {
-            is_development: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1',
-            is_railway: window.location.hostname.includes('railway') || window.location.hostname.includes('.app') || window.location.hostname.includes('up.railway'),
-            is_production: window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+    // Upload Configuration
+    UPLOAD: {
+        max_file_size: 10 * 1024 * 1024, // 10MB
+        allowed_types: {
+            documents: ['.txt', '.pdf', '.docx', '.md'],
+            audio: ['.mp3', '.wav', '.ogg', '.m4a', '.aac'],
+            images: ['.jpg', '.jpeg', '.png', '.gif', '.webp']
         },
-        
-        // API Configuration
-        API: {
-            BASE_URL: window.location.origin,
-            TIMEOUTS: {
-                default: 10000,
-                upload: 30000,
-                health_check: 5000
-            }
-        },
-        
-        // Debug Configuration
-        DEBUG: {
-            enabled: window.location.hostname === 'localhost' || window.location.search.includes('debug=true'),
-            verbose_errors: window.location.search.includes('verbose=true'),
-            log_api_calls: window.location.search.includes('debug=true'),
-            railway_debug: {
-                log_health_checks: true,
-                log_service_failures: true
-            }
-        },
-        
-        // UI Configuration - COMPLETE
-        UI: {
-            max_toast_count: 5,
-            toast_duration: 5000,
-            loading_timeout: 30000
-        },
-        
-        // Multi-tenant Configuration
-        TENANT: {
-            company_context_header: 'X-Company-ID',
-            auto_select_first_company: true
-        },
-        
-        // Railway Optimizations
-        RAILWAY_OPTIMIZATIONS: {
-            graceful_degradation: {
-                schedule_service: true,
-                redis: true,
-                openai: false
-            }
-        },
-        
-        // Railway Config
-        RAILWAY: {
-            retry_delay: 1000,
-            max_retries: 3
-        },
-        
-        // Performance Config
-        PERFORMANCE: {
-            cache_duration: 300000, // 5 minutes
-            debounce_delay: 300
-        },
-        
-        // CRITICAL: UPLOAD Configuration (MISSING - CAUSES documents.js and multimedia.js ERRORS)
-        UPLOAD: {
-            max_file_size: 10485760, // 10MB in bytes
-            allowed_types: {
-                documents: ['txt', 'md', 'docx', 'pdf'],
-                audio: ['mp3', 'wav', 'ogg', 'm4a'],
-                images: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-                video: ['mp4', 'webm', 'ogg']
-            },
-            max_files_per_upload: 10,
-            supported_formats: {
-                'text/plain': 'txt',
-                'text/markdown': 'md',
-                'application/pdf': 'pdf',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-                'audio/mpeg': 'mp3',
-                'audio/wav': 'wav',
-                'audio/ogg': 'ogg',
-                'image/jpeg': 'jpg',
-                'image/png': 'png',
-                'image/gif': 'gif',
-                'image/webp': 'webp'
-            }
-        },
-        
-        // Documents Configuration (DUPLICATE paths for compatibility)
-        DOCUMENTS: {
-            max_file_size: 10485760, // 10MB in bytes
-            allowed_file_types: ['txt', 'md', 'docx', 'pdf'],
-            max_files_per_upload: 10,
-            supported_formats: {
-                'text/plain': 'txt',
-                'text/markdown': 'md',
-                'application/pdf': 'pdf',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
-            }
-        },
-        
-        // Multimedia Configuration (DUPLICATE paths for compatibility)
-        MULTIMEDIA: {
-            allowed_types: {
-                audio: ['mp3', 'wav', 'ogg', 'm4a'],
-                images: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-                video: ['mp4', 'webm', 'ogg']
-            },
-            max_file_size: {
-                audio: 5242880, // 5MB
-                image: 2097152, // 2MB
-                video: 20971520 // 20MB
-            },
-            audio: {
-                max_duration: 300, // 5 minutes
-                sample_rate: 16000,
-                supported_formats: ['audio/mpeg', 'audio/wav', 'audio/ogg']
-            },
-            image: {
-                max_width: 2048,
-                max_height: 2048,
-                quality: 0.8
-            }
-        },
-        
-        // Chat Configuration
-        CHAT: {
-            max_message_length: 2000,
-            max_history_length: 50,
-            typing_delay: 1000,
-            auto_scroll: true
-        },
-        
-        // Admin Configuration
-        ADMIN: {
-            enable_debug_mode: true,
-            enable_diagnostics: true,
-            enable_system_reset: true,
-            enable_export: true
-        },
-        
-        // Company Configuration
-        COMPANY: {
-            max_companies: 50,
-            default_services: ['chat', 'documents'],
-            required_fields: ['company_name']
-        }
-    };
-
-    console.log('✅ FINAL APP_CONFIG initialized with ALL UPLOAD properties');
-
-    // UI Manager with ALL methods
-    window.UI = {
-        showLoading: function(message = 'Cargando...') {
-            console.log('🔄 Loading:', message);
-            const overlay = document.getElementById('loadingOverlay');
-            const messageEl = document.getElementById('loadingMessage');
-            
-            if (overlay) {
-                overlay.style.display = 'flex';
-                if (messageEl) messageEl.textContent = message;
-            }
-        },
-        
-        hideLoading: function() {
-            console.log('✅ Loading complete');
-            const overlay = document.getElementById('loadingOverlay');
-            if (overlay) {
-                overlay.style.display = 'none';
-            }
-        },
-        
-        showToast: function(message, type = 'info') {
-            console.log(`📢 Toast (${type}):`, message);
-            
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.textContent = message;
-            toast.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                padding: 12px 20px;
-                background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#007bff'};
-                color: ${type === 'warning' ? '#000' : '#fff'};
-                border-radius: 4px;
-                z-index: 10000;
-                max-width: 300px;
-                word-wrap: break-word;
-                font-size: 14px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                font-family: Arial, sans-serif;
-            `;
-            
-            const container = document.getElementById('toastContainer') || document.body;
-            container.appendChild(toast);
-            
-            setTimeout(() => {
-                if (toast && toast.parentNode) {
-                    toast.parentNode.removeChild(toast);
-                }
-            }, window.APP_CONFIG.UI.toast_duration || 5000);
-        },
-        
-        showConfirmModal: function(title, message, onConfirm, onCancel) {
-            const result = confirm(`${title}\n\n${message}`);
-            if (result && onConfirm) onConfirm();
-            if (!result && onCancel) onCancel();
-            return result;
-        },
-        
-        isMobile: function() {
-            return window.innerWidth <= 768;
-        },
-        
-        isTablet: function() {
-            return window.innerWidth > 768 && window.innerWidth <= 1024;
-        },
-        
-        // Additional UI methods that modules expect
-        updateResponsiveUI: function() {
-            // Stub for responsive updates
-        },
-        
-        setButtonLoading: function(buttonId, isLoading, loadingText = 'Cargando...') {
-            const button = document.getElementById(buttonId);
-            if (!button) return;
-
-            if (isLoading) {
-                button.dataset.originalText = button.textContent;
-                button.textContent = loadingText;
-                button.disabled = true;
-                button.classList.add('loading');
-            } else {
-                button.textContent = button.dataset.originalText || button.textContent;
-                button.disabled = false;
-                button.classList.remove('loading');
-                delete button.dataset.originalText;
-            }
-        },
-        
-        // Additional methods that documents.js and multimedia.js might expect
-        clearForm: function(formId) {
-            const form = document.getElementById(formId);
-            if (form) {
-                const inputs = form.querySelectorAll('input, textarea');
-                inputs.forEach(input => {
-                    if (input.type !== 'file') {
-                        input.value = '';
-                    }
-                });
-                const selects = form.querySelectorAll('select');
-                selects.forEach(select => {
-                    select.selectedIndex = 0;
-                });
-            }
-        },
-        
-        formatDate: function(dateString) {
-            if (!dateString) return 'N/A';
-            try {
-                const date = new Date(dateString);
-                return date.toLocaleDateString('es-ES', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            } catch {
-                return dateString;
-            }
-        },
-        
-        formatFileSize: function(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-        }
-    };
-
-    // API Manager with corrected makeRequest
-    window.API = {
-        baseURL: window.location.origin,
-        currentCompanyId: null,
-        scheduleServiceAvailable: false,
-        timeouts: window.APP_CONFIG.API.TIMEOUTS,
-        
-        setCompanyId: function(companyId) {
-            this.currentCompanyId = companyId;
-            console.log('🏢 Company context set to:', companyId);
-        },
-        
-        makeRequest: async function(endpoint, options = {}) {
-            // FIXED URL Construction
-            let url;
-            if (endpoint.startsWith('http')) {
-                url = endpoint;
-            } else if (endpoint.startsWith('/')) {
-                url = `${this.baseURL}${endpoint}`;
-            } else {
-                url = `${this.baseURL}/api/${endpoint}`;
-            }
-            
-            console.log(`🌐 Making API request to: ${url}`);
-            
-            try {
-                const response = await fetch(url, {
-                    timeout: this.timeouts.default,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Company-ID': this.currentCompanyId || '',
-                        ...options.headers
-                    },
-                    ...options
-                });
-                
-                console.log(`✅ API Response: ${response.status} for ${url}`);
-                
-                if (!response.ok) {
-                    throw new Error(`API Error: ${response.status} ${response.statusText}`);
-                }
-                
-                const data = await response.json();
-                
-                if (window.APP_CONFIG.DEBUG.log_api_calls) {
-                    console.log('📋 API Response data:', data);
-                }
-                
-                return data;
-            } catch (error) {
-                console.error(`❌ API Error for ${url}:`, error);
-                throw error;
-            }
-        },
-        
-        // Core API methods
-        getCompanies: async function() {
-            console.log('🏢 Fetching companies...');
-            try {
-                return await this.makeRequest('companies');
-            } catch (error) {
-                console.warn('Companies API failed, using fallback');
-                return {
-                    status: 'success',
-                    companies: {
-                        'benova': {
-                            company_name: 'Benova Estética',
-                            services: ['Tratamientos faciales', 'Depilación láser'],
-                            status: 'active'
-                        },
-                        'fallback': {
-                            company_name: 'Modo de Emergencia',
-                            services: ['Sistema en modo fallback'],
-                            status: 'warning'
-                        }
-                    },
-                    total_companies: 2
-                };
-            }
-        },
-        
-        getCompanyStatus: async function(companyId) {
-            console.log('📊 Getting company status for:', companyId);
-            try {
-                return await this.makeRequest(`status/${companyId}`);
-            } catch (error) {
-                console.warn('Company status failed, using fallback');
-                return {
-                    status: 'success',
-                    data: {
-                        company_id: companyId,
-                        status: 'active',
-                        services: { api: true, redis: true, openai: true }
-                    }
-                };
-            }
-        },
-        
-        systemHealthCheck: async function() {
-            console.log('🏥 Running system health check...');
-            try {
-                return await this.makeRequest('/health');
-            } catch (error) {
-                console.warn('Health check failed, using fallback');
-                return {
-                    status: 'healthy',
-                    services: {
-                        api: true,
-                        redis: true,
-                        openai: true,
-                        schedule_service: false
-                    }
-                };
-            }
-        }
-    };
-
-    console.log('✅ Complete API manager initialized');
-    console.log('✅ FINAL config initialization COMPLETE');
-    console.log('🔧 Environment detected:', {
-        isDev: window.APP_CONFIG.ENV.is_development,
-        isRailway: window.APP_CONFIG.ENV.is_railway,
-        hostname: window.location.hostname
-    });
+        chunk_size: 1000, // For document chunking
+        overlap: 200
+    },
     
-    // Mark as ready
-    window.CONFIG_READY = true;
-    console.log('🎉 CONFIG_READY = true - ALL UPLOAD PROPERTIES DEFINED');
+    // UI Configuration
+    UI: {
+        loading_delay: 300, // ms
+        toast_duration: 5000, // ms
+        animation_speed: 300, // ms
+        debounce_delay: 500, // ms for search inputs
+        pagination: {
+            default_page_size: 20,
+            max_page_size: 100
+        }
+    },
     
-})();
+    // Chat Configuration
+    CHAT: {
+        max_message_length: 500,
+        typing_indicator_delay: 1000,
+        auto_scroll: true,
+        save_history: true,
+        default_user_id: 'test_user'
+    },
+    
+    // Multimedia Configuration
+    MULTIMEDIA: {
+        audio: {
+            max_duration: 300, // 5 minutes
+            sample_rate: 44100,
+            echo_cancellation: true,
+            noise_suppression: true,
+            formats: ['audio/wav', 'audio/mp3', 'audio/ogg', 'audio/m4a']
+        },
+        video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facing_mode: 'environment', // Use back camera if available
+            formats: ['image/jpeg', 'image/png', 'image/webp']
+        }
+    },
+    
+    // Company Management
+    COMPANIES: {
+        default_company: 'benova',
+        max_companies: 50,
+        validation_pattern: /^[a-zA-Z0-9_-]+$/
+    },
+    
+    // Debug and Development
+    DEBUG: {
+        enabled: !isProduction,
+        log_level: isProduction ? 'warn' : 'debug',
+        show_network_logs: !isProduction,
+        show_timing_logs: !isProduction
+    },
+    
+    // Feature Flags
+    FEATURES: {
+        file_upload: true,
+        voice_recording: true,
+        image_capture: true,
+        google_calendar: true,
+        schedule_agent: true,
+        vector_management: true,
+        admin_tools: true,
+        export_import: true
+    },
+    
+    // Error Messages
+    MESSAGES: {
+        errors: {
+            network: 'Error de conexión. Verifica tu conexión a internet.',
+            timeout: 'La operación tardó demasiado. Intenta nuevamente.',
+            server: 'Error del servidor. Contacta al administrador.',
+            validation: 'Datos inválidos. Verifica la información ingresada.',
+            permission: 'No tienes permisos para realizar esta acción.',
+            not_found: 'Recurso no encontrado.',
+            file_size: 'El archivo es demasiado grande.',
+            file_type: 'Tipo de archivo no soportado.'
+        },
+        success: {
+            saved: 'Información guardada correctamente.',
+            uploaded: 'Archivo subido exitosamente.',
+            deleted: 'Elemento eliminado correctamente.',
+            updated: 'Actualización completada.',
+            processed: 'Procesamiento completado.'
+        },
+        info: {
+            loading: 'Cargando...',
+            processing: 'Procesando...',
+            uploading: 'Subiendo archivo...',
+            saving: 'Guardando...',
+            searching: 'Buscando...'
+        }
+    }
+};
 
-// Export for modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = window.APP_CONFIG;
+// Utility functions available globally
+window.APP_UTILS = {
+    /**
+     * Format URL with parameters
+     */
+    formatUrl(template, params = {}) {
+        let url = template;
+        Object.keys(params).forEach(key => {
+            url = url.replace(`{${key}}`, encodeURIComponent(params[key]));
+        });
+        return url;
+    },
+    
+    /**
+     * Validate file size and type
+     */
+    validateFile(file, type = 'documents') {
+        const config = window.APP_CONFIG.UPLOAD;
+        
+        // Check size
+        if (file.size > config.max_file_size) {
+            throw new Error(`Archivo demasiado grande. Máximo ${Math.round(config.max_file_size / 1024 / 1024)}MB`);
+        }
+        
+        // Check type
+        const extension = '.' + file.name.split('.').pop().toLowerCase();
+        const allowedTypes = config.allowed_types[type] || [];
+        
+        if (!allowedTypes.includes(extension)) {
+            throw new Error(`Tipo de archivo no soportado. Permitidos: ${allowedTypes.join(', ')}`);
+        }
+        
+        return true;
+    },
+    
+    /**
+     * Debounce function
+     */
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    },
+    
+    /**
+     * Throttle function
+     */
+    throttle(func, limit) {
+        let inThrottle;
+        return function() {
+            const args = arguments;
+            const context = this;
+            if (!inThrottle) {
+                func.apply(context, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        };
+    },
+    
+    /**
+     * Format date for display
+     */
+    formatDate(dateString, locale = 'es-ES') {
+        if (!dateString) return 'N/A';
+        try {
+            return new Date(dateString).toLocaleDateString(locale);
+        } catch {
+            return dateString;
+        }
+    },
+    
+    /**
+     * Format file size
+     */
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
+    
+    /**
+     * Generate unique ID
+     */
+    generateId() {
+        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+    },
+    
+    /**
+     * Safe JSON parse
+     */
+    parseJSON(str, fallback = null) {
+        try {
+            return JSON.parse(str);
+        } catch {
+            return fallback;
+        }
+    },
+    
+    /**
+     * Deep clone object
+     */
+    deepClone(obj) {
+        if (obj === null || typeof obj !== 'object') return obj;
+        if (obj instanceof Date) return new Date(obj.getTime());
+        if (obj instanceof Array) return obj.map(item => this.deepClone(item));
+        if (typeof obj === 'object') {
+            const clonedObj = {};
+            Object.keys(obj).forEach(key => {
+                clonedObj[key] = this.deepClone(obj[key]);
+            });
+            return clonedObj;
+        }
+    }
+};
+
+// Basic UI utilities available immediately
+window.UI = {
+    /**
+     * Show loading overlay
+     */
+    showLoading(message = 'Cargando...') {
+        const overlay = document.getElementById('loadingOverlay');
+        const messageEl = document.getElementById('loadingMessage');
+        
+        if (overlay && messageEl) {
+            messageEl.textContent = message;
+            overlay.style.display = 'flex';
+        }
+    },
+    
+    /**
+     * Hide loading overlay
+     */
+    hideLoading() {
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) {
+            overlay.style.display = 'none';
+        }
+    },
+    
+    /**
+     * Show toast notification
+     */
+    showNotification(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `
+            <div class="toast-content">
+                <span class="toast-message">${message}</span>
+                <button class="toast-close" onclick="this.parentElement.parentElement.remove()">&times;</button>
+            </div>
+        `;
+        
+        container.appendChild(toast);
+        
+        // Auto remove
+        setTimeout(() => {
+            if (container.contains(toast)) {
+                toast.remove();
+            }
+        }, window.APP_CONFIG.UI.toast_duration);
+        
+        // Animation
+        requestAnimationFrame(() => {
+            toast.classList.add('toast-show');
+        });
+    }
+};
+
+// Environment setup
+if (window.APP_CONFIG.DEBUG.enabled) {
+    console.log('🔧 App configuration loaded:', window.APP_CONFIG);
+    console.log('🌐 API Base URL:', API_BASE);
+    console.log('🏭 Environment:', isProduction ? 'Production' : 'Development');
 }
 
-console.log('🎯 FINAL COMPLETE Config module loaded successfully');
-
-// Enhanced global error handler
-window.addEventListener('error', function(event) {
-    console.error('🚨 Global Error Caught:', {
-        message: event.error?.message || event.message,
-        filename: event.filename,
-        lineno: event.lineno,
-        stack: event.error?.stack
-    });
+// Global error handler
+window.addEventListener('error', (event) => {
+    if (window.APP_CONFIG.DEBUG.enabled) {
+        console.error('🚨 Global Error:', {
+            message: event.error?.message,
+            filename: event.filename,
+            lineno: event.lineno,
+            colno: event.colno,
+            timestamp: new Date().toISOString()
+        });
+    }
 });
 
-console.log('🛡️ Enhanced global error handler installed');
+// Unhandled promise rejection handler
+window.addEventListener('unhandledrejection', (event) => {
+    if (window.APP_CONFIG.DEBUG.enabled) {
+        console.error('🚨 Unhandled Promise Rejection:', event.reason);
+    }
+});
+
+console.log('✅ Config.js loaded successfully');
