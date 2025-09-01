@@ -80,8 +80,22 @@ class APIManager {
     /**
      * Make API request with Railway optimizations and error handling
      */
+    // CAMBIO MÍNIMO REQUERIDO EN scripts/api.js
+    // Reemplaza SOLO la línea 79 por estas líneas:
+    
     async makeRequest(endpoint, options = {}) {
-        const url = endpoint.startsWith('http') ? endpoint : `${this.baseURL}${endpoint}`;
+        // FIX: Construir URL correctamente
+        let url;
+        if (endpoint.startsWith('http')) {
+            url = endpoint;
+        } else if (endpoint.startsWith('/')) {
+            // Para rutas absolutas como '/health'
+            url = `${this.baseURL}${endpoint}`;
+        } else {
+            // Para rutas relativas como 'companies' -> '/api/companies'
+            url = `${this.baseURL}/api/${endpoint}`;
+        }
+        
         const timeout = options.timeout || this.timeouts.default;
         
         const requestOptions = {
@@ -89,30 +103,30 @@ class APIManager {
             headers: this.getHeaders(options.headers),
             ...options
         };
-
+    
         // Create timeout controller
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeout);
-
+    
         try {
             const response = await fetch(url, {
                 ...requestOptions,
                 signal: controller.signal
             });
-
+    
             clearTimeout(timeoutId);
-
+    
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-
+    
             const data = await response.json();
             
             // Log API calls in development
             if (window.APP_CONFIG.DEBUG.log_api_calls) {
                 console.log(`API Call: ${requestOptions.method} ${url}`, { options: requestOptions, response: data });
             }
-
+    
             return data;
             
         } catch (error) {
