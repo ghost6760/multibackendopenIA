@@ -1,3 +1,5 @@
+# app/__init__.py - Multi-Tenant Flask Application Factory - VERSIÓN FINAL
+
 from flask import Flask, request, send_from_directory, send_file, jsonify
 from app.config import Config
 from app.utils.error_handlers import register_error_handlers
@@ -6,7 +8,16 @@ from app.services.vectorstore_service import init_vectorstore
 from app.services.openai_service import init_openai
 from app.config.company_config import get_company_manager
 from app.services.multi_agent_factory import get_multi_agent_factory
-from app.routes import webhook, documents, conversations, health, multimedia, admin
+
+# Importar blueprints existentes
+from app.routes import webhook, documents, conversations, health, multimedia
+
+# Importar nuevos blueprints integrados
+from app.routes.admin import bp as admin_bp
+from app.routes.companies import bp as companies_bp
+from app.routes.documents_extended import documents_extended_bp
+from app.routes.conversations_extended import conversations_extended_bp
+
 import logging
 import sys
 import threading
@@ -38,7 +49,7 @@ def create_app(config_class=Config):
     @app.before_request
     def ensure_multitenant_health():
         """Middleware que verifica salud multi-tenant"""
-        multitenant_endpoints = ['/webhook/chatwoot', '/documents', '/conversations']
+        multitenant_endpoints = ['/api/webhook/chatwoot', '/api/documents', '/api/conversations', '/webhook/chatwoot']
         
         if any(endpoint in request.path for endpoint in multitenant_endpoints):
             try:
@@ -53,43 +64,52 @@ def create_app(config_class=Config):
                 # Verificación no-bloqueante del factory
                 factory = get_multi_agent_factory()
                 
-                # Si es un webhook, asegurar que el orquestador esté listo
+                # Si es un webhook, asegurar que el orquestador esté listo en background
                 if '/webhook/chatwoot' in request.path and company_id:
                     def background_orchestrator_prep():
                         try:
                             factory.get_orchestrator(company_id)
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Background orchestrator prep failed for {company_id}: {e}")
                     
                     threading.Thread(target=background_orchestrator_prep, daemon=True).start()
                             
             except Exception as e:
                 logger.error(f"Error in multi-tenant middleware: {e}")
-                # NUNCA bloquear requests
+                # NUNCA bloquear requests por errores de middleware
     
-    def _extract_company_from_request() -> str:
+    def _extract_company_from_request():
         """Extraer company_id del request actual"""
         try:
-            # Método 1: Header
+            # Método 1: Header específico
             company_id = request.headers.get('X-Company-ID')
             if company_id:
                 return company_id
             
-            # Método 2: Query param
+            # Método 2: Query parameter  
             company_id = request.args.get('company_id')
             if company_id:
                 return company_id
             
-            # Método 3: JSON body (solo para POST/PUT)
+            # Método 3: Form data (para uploads multimedia)
+            if request.form:
+                company_id = request.form.get('company_id')
+                if company_id:
+                    return company_id
+            
+            # Método 4: JSON body (solo para POST/PUT)
             if request.method in ['POST', 'PUT'] and request.is_json:
-                data = request.get_json()
-                if data and 'company_id' in data:
-                    return data['company_id']
-                
-                # Para webhooks, extraer de la estructura de datos
-                if data and 'conversation' in data:
-                    from app.config.company_config import extract_company_id_from_webhook
-                    return extract_company_id_from_webhook(data)
+                try:
+                    data = request.get_json()
+                    if data and 'company_id' in data:
+                        return data['company_id']
+                    
+                    # Para webhooks, extraer de la estructura de datos
+                    if data and 'conversation' in data:
+                        from app.config.company_config import extract_company_id_from_webhook
+                        return extract_company_id_from_webhook(data)
+                except Exception:
+                    pass
             
             return None
             
@@ -97,101 +117,169 @@ def create_app(config_class=Config):
             logger.debug(f"Could not extract company_id from request: {e}")
             return None
     
-    # Registrar blueprints
-    app.register_blueprint(webhook.bp, url_prefix='/webhook')
-    app.register_blueprint(documents.bp, url_prefix='/documents')
-    app.register_blueprint(conversations.bp, url_prefix='/conversations')
-    app.register_blueprint(health.bp, url_prefix='/health')
-    app.register_blueprint(multimedia.bp, url_prefix='/multimedia')
-    app.register_blueprint(admin.bp, url_prefix='/admin')
+    # Registrar blueprints existentes
+    app.register_blueprint(webhook.bp, url_prefix='/api/webhook')
+    app.register_blueprint(documents.bp, url_prefix='/api/documents')
+    app.register_blueprint(conversations.bp, url_prefix='/api/conversations')
+    app.register_blueprint(health.bp, url_prefix='/api/health')
+    app.register_blueprint(multimedia.bp, url_prefix='/api/multimedia')
     
-    # Rutas adicionales multi-tenant
-    @app.route('/companies')
-    def list_companies():
-        """Listar todas las empresas configuradas"""
+    # Registrar nuevos blueprints integrados
+    app.register_blueprint(admin_bp)  # Ya tiene prefix /api/admin
+    app.register_blueprint(companies_bp)  # Ya tiene prefix /api/companies
+    app.register_blueprint(documents_extended_bp)  # Ya tiene prefix /api/documents
+    app.register_blueprint(conversations_extended_bp)  # Ya tiene prefix /api/conversations
+    
+    logger.info("✅ All blueprints registered successfully")
+    
+    # Registrar manejadores de errores
+    register_error_handlers(app)
+    
+    # ============================================================================
+    # ENDPOINTS PRINCIPALES DEL SISTEMA
+    # ============================================================================
+    
+    @app.route('/api/system/info')
+    def system_info():
+        """Información completa del sistema multi-tenant"""
         try:
             company_manager = get_company_manager()
             companies = company_manager.get_all_companies()
             
-            companies_info = {}
-            for company_id, config in companies.items():
-                companies_info[company_id] = {
-                    "company_name": config.company_name,
-                    "services": config.services,
-                    "vectorstore_index": config.vectorstore_index,
-                    "status": "configured"
-                }
-            
             return jsonify({
-                "status": "success",
-                "total_companies": len(companies),
-                "companies": companies_info,
-                "system_type": "multi-tenant"
+                "status": "healthy",
+                "message": "Multi-Tenant Chatbot Backend API is running",
+                "system_type": "multi-tenant-multi-agent",
+                "version": "1.0.0",
+                "companies_configured": len(companies),
+                "available_companies": list(companies.keys()),
+                "endpoints": {
+                    "health": "/api/health",
+                    "companies": "/api/companies",
+                    "documents": "/api/documents",
+                    "conversations": "/api/conversations", 
+                    "multimedia": "/api/multimedia",
+                    "admin": "/api/admin",
+                    "webhooks": "/api/webhook"
+                },
+                "features": [
+                    "multi-tenant",
+                    "multi-agent",
+                    "chatwoot-integration", 
+                    "document-management",
+                    "multimedia-processing",
+                    "google-calendar-integration",
+                    "auto-recovery",
+                    "redis-isolation"
+                ]
             })
-            
         except Exception as e:
-            logger.error(f"Error listing companies: {e}")
+            logger.error(f"Error getting system info: {e}")
             return jsonify({
-                "status": "error",
-                "message": "Failed to list companies",
-                "system_type": "multi-tenant"
-            }), 500
+                "status": "healthy", 
+                "message": "Multi-Tenant Backend API is running",
+                "system_type": "multi-tenant-multi-agent",
+                "error": "Could not load full system info"
+            })
     
-    @app.route('/company/<company_id>/status')
-    def company_status(company_id):
-        """Estado específico de una empresa - CORREGIDO"""
+    @app.route('/api/health/full')  
+    def full_health_check():
+        """Health check completo con información de empresa"""
         try:
-            company_manager = get_company_manager()
+            company_id = request.args.get('company_id')
             
-            if not company_manager.validate_company_id(company_id):
-                return jsonify({
-                    "status": "error",
-                    "message": f"Company not found: {company_id}"
-                }), 404
-            
-            config = company_manager.get_company_config(company_id)
-            factory = get_multi_agent_factory()
-            orchestrator = factory.get_orchestrator(company_id)
-            
-            status_info = {
-                "company_id": company_id,
-                "company_name": config.company_name,
-                "services": config.services,
-                "orchestrator_ready": orchestrator is not None,
-                "vectorstore_index": config.vectorstore_index,
-                "redis_prefix": config.redis_prefix
+            # Health check básico
+            health_data = {
+                "status": "healthy",
+                "timestamp": time.time(),
+                "system_type": "multi-tenant-multi-agent"
             }
             
-            if orchestrator:
-                health = orchestrator.health_check()
-                status_info.update({
-                    "system_healthy": health.get("system_healthy", False),
-                    # CORREGIDO: Convertir dict_keys a lista
-                    "agents_available": list(health.get("agents_status", {}).keys())
-                })
+            # Health check específico de empresa si se proporciona
+            if company_id:
+                company_manager = get_company_manager()
+                if company_manager.validate_company_id(company_id):
+                    factory = get_multi_agent_factory()
+                    orchestrator = factory.get_orchestrator(company_id)
+                    
+                    company_health = {
+                        "company_id": company_id,
+                        "orchestrator_ready": orchestrator is not None,
+                        "vectorstore_ready": orchestrator.vectorstore_service is not None if orchestrator else False,
+                        "agents_available": list(orchestrator.agents.keys()) if orchestrator else []
+                    }
+                    health_data["company_health"] = company_health
+                else:
+                    health_data["company_health"] = {
+                        "company_id": company_id,
+                        "valid": False,
+                        "error": "Company not found"
+                    }
             
             return jsonify({
-                "status": "success",
-                "data": status_info
+                "status": "success", 
+                "data": health_data
             })
             
         except Exception as e:
-            logger.error(f"Error getting status for company {company_id}: {e}")
+            logger.error(f"Error in full health check: {e}")
             return jsonify({
                 "status": "error",
-                "message": f"Failed to get status for company: {company_id}"
+                "message": str(e)
             }), 500
     
-    @app.route('/')
-    def serve_frontend():
-        """Servir el frontend o respuesta API multi-tenant"""
-        try:
-            html_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'index.html')
+    # ============================================================================
+    # ENDPOINTS LEGACY PARA RETROCOMPATIBILIDAD
+    # ============================================================================
+    
+    @app.route('/companies')
+    def list_companies_legacy():
+        """Legacy endpoint - redirige al nuevo"""
+        return jsonify({
+            "message": "This endpoint has moved",
+            "new_endpoint": "/api/companies",
+            "redirect": True
+        }), 301
+    
+    @app.route('/company/<company_id>/status')
+    def company_status_legacy(company_id):
+        """Legacy endpoint - redirige al nuevo"""
+        return jsonify({
+            "message": "This endpoint has moved", 
+            "new_endpoint": f"/api/companies/{company_id}/status",
+            "redirect": True
+        }), 301
+    
+    # ============================================================================
+    # SERVIR FRONTEND REACT
+    # ============================================================================
+    
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend(path):
+        """Servir el frontend React o respuesta API"""
+        # Si es una llamada a la API, no servir frontend
+        if path.startswith('api/'):
+            return jsonify({"error": "API endpoint not found"}), 404
             
-            if os.path.exists(html_path):
-                return send_file(html_path)
+        # Intentar servir archivo estático de React
+        frontend_build = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend', 'build')
+        
+        if os.path.exists(frontend_build):
+            if path != "" and os.path.exists(os.path.join(frontend_build, path)):
+                return send_from_directory(frontend_build, path)
             else:
-                # Información del sistema multi-tenant
+                return send_from_directory(frontend_build, 'index.html')
+        else:
+            # Fallback para desarrollo - servir archivos legacy si existen
+            legacy_files = ['index.html', 'script.js', 'style.css']
+            if path in legacy_files:
+                legacy_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), path)
+                if os.path.exists(legacy_path):
+                    return send_file(legacy_path)
+            
+            # Fallback final - información del sistema
+            try:
                 company_manager = get_company_manager()
                 companies = company_manager.get_all_companies()
                 
@@ -200,42 +288,31 @@ def create_app(config_class=Config):
                     "message": "Multi-Tenant Chatbot Backend API is running",
                     "system_type": "multi-tenant-multi-agent",
                     "companies_configured": len(companies),
-                    "available_companies": list(companies.keys())
+                    "available_companies": list(companies.keys()),
+                    "frontend_status": "React frontend not built. Run 'npm run build' in frontend directory.",
+                    "api_documentation": "/api/system/info"
                 })
-        except Exception as e:
-            logger.error(f"Error serving frontend: {e}")
-            return jsonify({
-                "status": "healthy", 
-                "message": "Multi-Tenant Backend API is running",
-                "system_type": "multi-tenant-multi-agent"
-            })
-    
-    @app.route('/<path:filename>')
-    def serve_static(filename):
-        """Servir archivos estáticos del frontend"""
-        allowed_files = ['style.css', 'script.js', 'index.html', 'favicon.ico', 'companies_config.json']
-        
-        if filename in allowed_files:
-            try:
-                file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), filename)
-                
-                if os.path.exists(file_path):
-                    return send_file(file_path)
-                else:
-                    return jsonify({"status": "error", "message": "File not found"}), 404
             except Exception as e:
-                logger.error(f"Error serving static file {filename}: {e}")
-                return jsonify({"status": "error", "message": "Error serving file"}), 500
-        else:
-            return jsonify({"status": "error", "message": "File not allowed"}), 403
+                logger.error(f"Error serving frontend fallback: {e}")
+                return jsonify({
+                    "status": "healthy", 
+                    "message": "Multi-Tenant Backend API is running",
+                    "system_type": "multi-tenant-multi-agent",
+                    "error": "Could not load company information"
+                })
     
-    # Registrar error handlers
-    register_error_handlers(app)
+    # ============================================================================
+    # INICIALIZACIÓN MULTI-TENANT
+    # ============================================================================
     
-    # ENHANCED: Inicializar sistemas multi-tenant después de crear la app
+    # Inicializar sistemas multi-tenant después de crear la app
     with app.app_context():
         initialize_multitenant_system(app)
     
+    # Iniciar inicialización en background para mejor performance
+    start_background_initialization(app)
+    
+    logger.info("🎉 Multi-Tenant Flask application created successfully")
     return app
 
 def initialize_multitenant_system(app):
@@ -249,7 +326,7 @@ def initialize_multitenant_system(app):
         
         logger.info(f"📊 Multi-tenant system initialized with {len(companies)} companies:")
         for company_id, config in companies.items():
-            logger.info(f"   • {company_id}: {config.company_name} ({config.services})")
+            logger.info(f"   • {company_id}: {config.company_name} ({len(config.services)} services)")
         
         # Inicializar factory de multi-agente
         factory = get_multi_agent_factory()
@@ -272,9 +349,7 @@ def initialize_multitenant_system(app):
         # Inicializar sistema de auto-recovery multi-tenant (si está habilitado)
         if app.config.get('VECTORSTORE_AUTO_RECOVERY', True):
             try:
-                from app.services.vector_auto_recovery import (
-                    initialize_auto_recovery_system
-                )
+                from app.services.vector_auto_recovery import initialize_auto_recovery_system
                 
                 if initialize_auto_recovery_system():
                     logger.info("🛡️ Multi-tenant auto-recovery system initialized")
@@ -301,7 +376,7 @@ def startup_checks(app):
             redis_client.ping()
             
             openai_service = OpenAIService()
-            openai_service.test_connection()
+            # Test básico sin llamada real para evitar costos innecesarios
             
             # Validar configuración multi-tenant
             company_manager = get_company_manager()
@@ -389,3 +464,37 @@ def start_background_initialization(app):
         app.logger.info("🚀 Background multi-tenant initialization started")
     except Exception as e:
         app.logger.error(f"Error starting background multi-tenant initialization: {e}")
+
+# ============================================================================
+# FUNCIONES HELPER
+# ============================================================================
+
+def get_company_context_from_request(request):
+    """Extraer contexto de empresa del request - FUNCIÓN PÚBLICA"""
+    # Método 1: Header específico
+    company_id = request.headers.get('X-Company-ID')
+    if company_id:
+        return company_id
+    
+    # Método 2: Query parameter
+    company_id = request.args.get('company_id') 
+    if company_id:
+        return company_id
+    
+    # Método 3: Form data
+    if request.form:
+        company_id = request.form.get('company_id')
+        if company_id:
+            return company_id
+    
+    # Método 4: JSON body
+    if request.is_json:
+        try:
+            data = request.get_json()
+            if data and 'company_id' in data:
+                return data['company_id']
+        except:
+            pass
+    
+    # Default fallback
+    return 'benova'
