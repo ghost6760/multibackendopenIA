@@ -24,15 +24,53 @@
     "schedule_keywords": [
       "agendar", "reservar", "programar", "cita", "appointment",
       "agenda", "disponibilidad", "horario", "fecha", "hora",
-      "procede", "proceder", "confirmar cita"
+      "procede", "proceder", "confirmar cita", "appointment"
     ],
     "emergency_keywords": [
-      "dolor intenso", "sangrado", "emergencia",
-      "infección", "hinchazón", "urgencia", "reacción alérgica"
+      "dolor de muela", "dolor intenso", "sangrado", "emergencia",
+      "infección", "hinchazón", "urgencia dental", "trauma dental"
     ],
     "sales_keywords": [
       "precio", "costo", "valor", "promoción", "paquete",
-      "tratamiento", "procedimiento", "beneficio", "servicio"
+      "tratamiento", "procedimiento", "blanqueamiento", "ortodoncia",
+      "implante", "corona", "limpieza", "consulta"
+    ]
+  },
+  "spa_wellness": {
+    "company_name": "Wellness Spa & Relax",
+    "redis_prefix": "wellness:",
+    "vectorstore_index": "wellness_documents",
+    "schedule_service_url": "http://127.0.0.1:4043",
+    "sales_agent_name": "Ana, terapeuta especialista de Wellness Spa",
+    "services": "relajación, bienestar y terapias holísticas",
+    "model_name": "gpt-4o-mini",
+    "max_tokens": 1500,
+    "temperature": 0.8,
+    "treatment_durations": {
+      "masaje relajante": 60,
+      "masaje terapéutico": 90,
+      "facial hidratante": 75,
+      "aromaterapia": 90,
+      "reflexología": 60,
+      "yoga privado": 60,
+      "meditación guiada": 45,
+      "terapia de piedras": 90,
+      "tratamiento corporal": 120,
+      "sesión de relajación": 60
+    },
+    "schedule_keywords": [
+      "agendar", "reservar", "programar", "cita", "sesión",
+      "agenda", "disponibilidad", "horario", "fecha", "hora",
+      "procede", "proceder", "confirmar", "appointment"
+    ],
+    "emergency_keywords": [
+      "malestar", "mareo", "reacción", "alergia",
+      "dolor", "molestia", "urgencia"
+    ],
+    "sales_keywords": [
+      "precio", "costo", "inversión", "paquete", "promoción",
+      "masaje", "facial", "relajación", "terapia", "bienestar",
+      "aromaterapia", "reflexología", "yoga", "meditación"
     ]
   },
   "medispa": {
@@ -105,43 +143,6 @@
       "precio", "costo", "inversión", "promoción", "oferta",
       "tratamiento", "procedimiento", "beneficio", "servicio",
       "limpieza", "blanqueamiento", "ortodoncia", "implante"
-    ]
-  },
-  "spa_wellness": {
-    "company_name": "Wellness Spa & Relax",
-    "redis_prefix": "wellness:",
-    "vectorstore_index": "wellness_documents",
-    "schedule_service_url": "http://127.0.0.1:4043",
-    "sales_agent_name": "Ana, terapeuta especialista de Wellness Spa",
-    "services": "relajación, bienestar y terapias holísticas",
-    "model_name": "gpt-4o-mini",
-    "max_tokens": 1500,
-    "temperature": 0.8,
-    "treatment_durations": {
-      "masaje relajante": 60,
-      "masaje terapéutico": 90,
-      "facial hidratante": 75,
-      "aromaterapia": 90,
-      "reflexología": 60,
-      "yoga privado": 60,
-      "meditación guiada": 45,
-      "terapia de piedras": 90,
-      "tratamiento corporal": 120,
-      "sesión de relajación": 60
-    },
-    "schedule_keywords": [
-      "agendar", "reservar", "programar", "cita", "sesión",
-      "agenda", "disponibilidad", "horario", "fecha", "hora",
-      "procede", "proceder", "confirmar", "appointment"
-    ],
-    "emergency_keywords": [
-      "malestar", "mareo", "reacción", "alergia",
-      "dolor", "molestia", "urgencia"
-    ],
-    "sales_keywords": [
-      "precio", "costo", "inversión", "paquete", "promoción",
-      "masaje", "facial", "relajación", "terapia", "bienestar",
-      "aromaterapia", "reflexología", "yoga", "meditación"
     ]
   }
 }
