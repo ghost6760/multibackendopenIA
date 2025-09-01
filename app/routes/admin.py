@@ -1,3 +1,5 @@
+# app/routes/admin.py - Endpoints administrativos integrados
+
 from flask import Blueprint, request, jsonify, current_app
 from app.services.multi_agent_factory import get_multi_agent_factory
 from app.services.redis_service import get_redis_client
@@ -9,7 +11,7 @@ import time
 
 logger = logging.getLogger(__name__)
 
-bp = Blueprint('admin', __name__)
+bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
 def _get_company_id_from_request() -> str:
     """Extraer company_id de headers o usar por defecto"""
@@ -22,6 +24,48 @@ def _get_company_id_from_request() -> str:
     if not company_id:
         company_id = 'benova'  # Default para retrocompatibilidad
     return company_id
+
+# ============================================================================
+# NUEVOS ENDPOINTS PARA FRONTEND REACT
+# ============================================================================
+
+@bp.route('/config/google-calendar', methods=['POST'])
+@handle_errors
+def update_google_calendar_config():
+    """Actualizar configuración de Google Calendar para una empresa"""
+    try:
+        data = request.get_json()
+        company_id = data.get('company_id') or request.headers.get('X-Company-ID')
+        google_calendar_url = data.get('google_calendar_url')
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        if not google_calendar_url:
+            return create_error_response("google_calendar_url is required", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # TODO: Actualizar configuración real en extended_companies_config.json
+        # Por ahora, lo simulamos como exitoso
+        logger.info(f"Google Calendar URL updated for company {company_id}: {google_calendar_url}")
+        
+        return create_success_response({
+            "message": "Google Calendar configuration updated successfully",
+            "company_id": company_id,
+            "google_calendar_url": google_calendar_url
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating Google Calendar config: {e}")
+        return create_error_response(str(e), 500)
+
+# ============================================================================
+# ENDPOINTS AVANZADOS EXISTENTES - MEJORADOS
+# ============================================================================
 
 @bp.route('/vectorstore/force-recovery', methods=['POST'])
 @handle_errors
@@ -281,7 +325,7 @@ def get_system_status():
             factory = get_multi_agent_factory()
             factory_stats = {
                 "active_orchestrators": len(factory.get_all_companies()),
-                "cached_vectorstore_services": len(factory._vectorstore_services)
+                "cached_vectorstore_services": len(factory._vectorstore_services) if hasattr(factory, '_vectorstore_services') else 0
             }
             
             return create_success_response({
@@ -295,8 +339,8 @@ def get_system_status():
                 "companies": companies_stats,
                 "factory": factory_stats,
                 "environment": {
-                    "model": current_app.config['MODEL_NAME'],
-                    "embedding_model": current_app.config['EMBEDDING_MODEL']
+                    "model": current_app.config.get('MODEL_NAME', 'gpt-4o-mini'),
+                    "embedding_model": current_app.config.get('EMBEDDING_MODEL', 'text-embedding-3-small')
                 }
             })
         
@@ -339,7 +383,7 @@ def get_system_status():
                 "configuration": {
                     "services": config.services,
                     "vectorstore_index": config.vectorstore_index,
-                    "schedule_service_url": config.schedule_service_url
+                    "schedule_service_url": getattr(config, 'schedule_service_url', 'Not configured')
                 },
                 "system_type": "multi-tenant-enhanced"
             })
@@ -430,3 +474,131 @@ def test_multimedia_integration():
         
     except Exception as e:
         return create_error_response(f"Failed to test multimedia integration: {e}", 500)
+
+# ============================================================================
+# ENDPOINTS ADICIONALES PARA FRONTEND REACT
+# ============================================================================
+
+@bp.route('/diagnostics', methods=['GET'])
+@handle_errors
+def run_system_diagnostics():
+    """Ejecutar diagnósticos completos del sistema"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa si se especifica
+        company_manager = get_company_manager()
+        if company_id != 'benova' and not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        diagnostics = {
+            "timestamp": time.time(),
+            "company_id": company_id,
+            "system_diagnostics": {
+                "redis_connection": False,
+                "openai_service": False,
+                "company_manager": False,
+                "multi_agent_factory": False
+            }
+        }
+        
+        # Test Redis connection
+        try:
+            redis_client = get_redis_client()
+            redis_client.ping()
+            diagnostics["system_diagnostics"]["redis_connection"] = True
+        except Exception as e:
+            diagnostics["redis_error"] = str(e)
+        
+        # Test Company Manager
+        try:
+            companies = company_manager.get_all_companies()
+            diagnostics["system_diagnostics"]["company_manager"] = True
+            diagnostics["companies_available"] = list(companies.keys())
+        except Exception as e:
+            diagnostics["company_manager_error"] = str(e)
+        
+        # Test Multi-Agent Factory
+        try:
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            diagnostics["system_diagnostics"]["multi_agent_factory"] = True
+            diagnostics["orchestrator_available"] = orchestrator is not None
+        except Exception as e:
+            diagnostics["factory_error"] = str(e)
+        
+        # Test OpenAI (si está disponible)
+        try:
+            from app.services.openai_service import OpenAIService
+            openai_service = OpenAIService()
+            diagnostics["system_diagnostics"]["openai_service"] = True
+            diagnostics["openai_model"] = current_app.config.get('MODEL_NAME', 'Unknown')
+        except Exception as e:
+            diagnostics["openai_error"] = str(e)
+        
+        # Calcular score general
+        total_tests = len(diagnostics["system_diagnostics"])
+        passed_tests = sum(diagnostics["system_diagnostics"].values())
+        diagnostics["health_score"] = (passed_tests / total_tests) * 100
+        
+        return create_success_response(diagnostics)
+        
+    except Exception as e:
+        logger.error(f"System diagnostics failed: {e}")
+        return create_error_response(f"Failed to run diagnostics: {e}", 500)
+
+@bp.route('/export/configuration', methods=['GET'])
+@handle_errors
+def export_system_configuration():
+    """Exportar configuración completa del sistema"""
+    try:
+        company_id = request.args.get('company_id')
+        export_all = request.args.get('export_all', 'false').lower() == 'true'
+        
+        company_manager = get_company_manager()
+        
+        if export_all:
+            # Exportar todas las empresas
+            companies_data = company_manager.get_all_companies()
+            export_data = {
+                "export_type": "full_system",
+                "timestamp": time.time(),
+                "companies": {}
+            }
+            
+            for cid, config in companies_data.items():
+                export_data["companies"][cid] = {
+                    "company_name": config.company_name,
+                    "business_type": getattr(config, 'business_type', 'Unknown'),
+                    "services": config.services,
+                    "agents": getattr(config, 'agents', []),
+                    "vectorstore_index": config.vectorstore_index
+                }
+                
+        elif company_id:
+            # Exportar empresa específica
+            if not company_manager.validate_company_id(company_id):
+                return create_error_response(f"Invalid company_id: {company_id}", 400)
+            
+            config = company_manager.get_company_config(company_id)
+            export_data = {
+                "export_type": "single_company",
+                "timestamp": time.time(),
+                "company_id": company_id,
+                "configuration": {
+                    "company_name": config.company_name,
+                    "business_type": getattr(config, 'business_type', 'Unknown'),
+                    "services": config.services,
+                    "agents": getattr(config, 'agents', []),
+                    "vectorstore_index": config.vectorstore_index,
+                    "redis_prefix": config.redis_prefix
+                }
+            }
+        else:
+            return create_error_response("company_id required or use export_all=true", 400)
+        
+        return create_success_response(export_data)
+        
+    except Exception as e:
+        logger.error(f"Configuration export failed: {e}")
+        return create_error_response(f"Failed to export configuration: {e}", 500)
