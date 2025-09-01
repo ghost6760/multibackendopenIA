@@ -1,27 +1,55 @@
+# Core Flask Dependencies
 Flask==3.1.1
-openai==1.78.1
-requests==2.31.0
-python-dotenv==1.1.0
+flask-cors==4.0.0
 gunicorn==21.2.0
-numpy==1.26.4
+
+# Environment and Configuration
+python-dotenv==1.1.0
+
+# HTTP and API
+requests==2.31.0
+
+# AI and Language Processing
+openai==1.78.1
 tiktoken==0.7.0
+
+# LangChain Stack
 langchain>=0.3.0
 langchain-community>=0.3.0
 langchain-openai>=0.2.0
 langchain-redis>=0.1.0
 langchain-core>=0.3.0
-redis>=5.0.0
 langgraph>=0.2.0
 langgraph-checkpoint-redis>=0.0.8
+
+# Database and Caching
+redis>=5.0.0
+
+# Data Processing
+numpy==1.26.4
 markdown==3.7
-########websocket#########
+
+# WebSocket Support
 flask-sock==0.6.0
-openai>=1.12.0
+
+# Image and File Processing
 Pillow>=10.0.0
 python-multipart>=0.0.6
 
+# Google Calendar Integration
 google-auth==2.23.4
 google-auth-oauthlib==1.1.0
 google-auth-httplib2==0.1.1
 google-api-python-client==2.108.0
 pytz==2023.3
+
+# Additional Dependencies for Railway Deployment
+werkzeug>=2.3.0
+click>=8.0.0
+itsdangerous>=2.0.0
+jinja2>=3.0.0
+markupsafe>=2.0.0
+
+# Production Dependencies
+psutil>=5.9.0
+uwsgi>=2.0.20
