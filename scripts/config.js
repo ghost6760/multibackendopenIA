@@ -2,12 +2,12 @@
 'use strict';
 
 /**
- * Global Configuration for Multi-Tenant Admin Panel
- * FINAL VERSION - ALL PROPERTIES DEFINED TO PREVENT ERRORS
+ * Global Configuration for Multi-Tenant Admin Panel  
+ * FINAL VERSION - ALL PROPERTIES INCLUDING UPLOAD SECTION
  */
 
 (function initializeGlobalConfig() {
-    console.log('🔧 Initializing COMPLETE global configuration...');
+    console.log('🔧 Initializing FINAL COMPLETE global configuration...');
     
     // Define COMPLETE APP_CONFIG with ALL required properties
     window.APP_CONFIG = {
@@ -73,9 +73,32 @@
             debounce_delay: 300
         },
         
-        // MISSING PROPERTIES THAT CAUSE ERRORS:
+        // CRITICAL: UPLOAD Configuration (MISSING - CAUSES documents.js and multimedia.js ERRORS)
+        UPLOAD: {
+            max_file_size: 10485760, // 10MB in bytes
+            allowed_types: {
+                documents: ['txt', 'md', 'docx', 'pdf'],
+                audio: ['mp3', 'wav', 'ogg', 'm4a'],
+                images: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+                video: ['mp4', 'webm', 'ogg']
+            },
+            max_files_per_upload: 10,
+            supported_formats: {
+                'text/plain': 'txt',
+                'text/markdown': 'md',
+                'application/pdf': 'pdf',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+                'audio/mpeg': 'mp3',
+                'audio/wav': 'wav',
+                'audio/ogg': 'ogg',
+                'image/jpeg': 'jpg',
+                'image/png': 'png',
+                'image/gif': 'gif',
+                'image/webp': 'webp'
+            }
+        },
         
-        // Documents Configuration (MISSING - CAUSES documents.js ERROR)
+        // Documents Configuration (DUPLICATE paths for compatibility)
         DOCUMENTS: {
             max_file_size: 10485760, // 10MB in bytes
             allowed_file_types: ['txt', 'md', 'docx', 'pdf'],
@@ -88,11 +111,11 @@
             }
         },
         
-        // Multimedia Configuration (MISSING - CAUSES multimedia.js ERROR)
+        // Multimedia Configuration (DUPLICATE paths for compatibility)
         MULTIMEDIA: {
             allowed_types: {
                 audio: ['mp3', 'wav', 'ogg', 'm4a'],
-                image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+                images: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
                 video: ['mp4', 'webm', 'ogg']
             },
             max_file_size: {
@@ -112,7 +135,7 @@
             }
         },
         
-        // Chat Configuration (MISSING)
+        // Chat Configuration
         CHAT: {
             max_message_length: 2000,
             max_history_length: 50,
@@ -120,7 +143,7 @@
             auto_scroll: true
         },
         
-        // Admin Configuration (MISSING)  
+        // Admin Configuration
         ADMIN: {
             enable_debug_mode: true,
             enable_diagnostics: true,
@@ -128,7 +151,7 @@
             enable_export: true
         },
         
-        // Company Configuration (MISSING)
+        // Company Configuration
         COMPANY: {
             max_companies: 50,
             default_services: ['chat', 'documents'],
@@ -136,7 +159,7 @@
         }
     };
 
-    console.log('✅ COMPLETE APP_CONFIG initialized with ALL properties');
+    console.log('✅ FINAL APP_CONFIG initialized with ALL UPLOAD properties');
 
     // UI Manager with ALL methods
     window.UI = {
@@ -226,6 +249,47 @@
                 button.classList.remove('loading');
                 delete button.dataset.originalText;
             }
+        },
+        
+        // Additional methods that documents.js and multimedia.js might expect
+        clearForm: function(formId) {
+            const form = document.getElementById(formId);
+            if (form) {
+                const inputs = form.querySelectorAll('input, textarea');
+                inputs.forEach(input => {
+                    if (input.type !== 'file') {
+                        input.value = '';
+                    }
+                });
+                const selects = form.querySelectorAll('select');
+                selects.forEach(select => {
+                    select.selectedIndex = 0;
+                });
+            }
+        },
+        
+        formatDate: function(dateString) {
+            if (!dateString) return 'N/A';
+            try {
+                const date = new Date(dateString);
+                return date.toLocaleDateString('es-ES', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch {
+                return dateString;
+            }
+        },
+        
+        formatFileSize: function(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
     };
 
@@ -347,7 +411,7 @@
     };
 
     console.log('✅ Complete API manager initialized');
-    console.log('✅ Emergency config initialization COMPLETE');
+    console.log('✅ FINAL config initialization COMPLETE');
     console.log('🔧 Environment detected:', {
         isDev: window.APP_CONFIG.ENV.is_development,
         isRailway: window.APP_CONFIG.ENV.is_railway,
@@ -356,7 +420,7 @@
     
     // Mark as ready
     window.CONFIG_READY = true;
-    console.log('🎉 CONFIG_READY = true - ALL PROPERTIES DEFINED');
+    console.log('🎉 CONFIG_READY = true - ALL UPLOAD PROPERTIES DEFINED');
     
 })();
 
@@ -365,7 +429,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = window.APP_CONFIG;
 }
 
-console.log('🎯 COMPLETE Config module loaded successfully');
+console.log('🎯 FINAL COMPLETE Config module loaded successfully');
 
 // Enhanced global error handler
 window.addEventListener('error', function(event) {
