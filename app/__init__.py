@@ -253,7 +253,34 @@ def create_app(config_class=Config):
     # ============================================================================
     # SERVIR FRONTEND REACT
     # ============================================================================
+
+    @app.route('/static/css/<filename>')
+    def serve_css_files(filename):
+        """Servir archivos CSS específicamente"""
+        css_path = os.path.join('/app', 'src', 'build', 'static', 'css')
+        logger.info(f"CSS request: {filename}")
+        logger.info(f"CSS path: {css_path}")
+        logger.info(f"CSS file exists: {os.path.exists(os.path.join(css_path, filename))}")
+        
+        if os.path.exists(os.path.join(css_path, filename)):
+            return send_from_directory(css_path, filename)
+        else:
+            return jsonify({"error": "CSS file not found", "requested": filename}), 404
     
+    # Forzar captura específica de archivos JS
+    @app.route('/static/js/<filename>')
+    def serve_js_files(filename):
+        """Servir archivos JS específicamente"""
+        js_path = os.path.join('/app', 'src', 'build', 'static', 'js')
+        logger.info(f"JS request: {filename}")
+        logger.info(f"JS path: {js_path}")
+        logger.info(f"JS file exists: {os.path.exists(os.path.join(js_path, filename))}")
+        
+        if os.path.exists(os.path.join(js_path, filename)):
+            return send_from_directory(js_path, filename)
+        else:
+            return jsonify({"error": "JS file not found", "requested": filename}), 404
+        
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve_frontend(path):
@@ -269,7 +296,7 @@ def create_app(config_class=Config):
             if path != "" and os.path.exists(os.path.join(frontend_build, path)):
                 return send_from_directory(frontend_build, path)
             else:
-                return send_from_directory(frontend_build, 'index.js')
+                return send_from_directory(frontend_build, 'index.html')
         else:
             # Fallback para desarrollo - servir archivos legacy si existen
             legacy_files = ['index.html', 'script.js', 'style.css']
