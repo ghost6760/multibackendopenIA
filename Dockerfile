@@ -2,7 +2,7 @@
 FROM node:18-alpine AS frontend-builder
 
 # Construir frontend React desde src/
-WORKDIR /src
+WORKDIR /frontend
 COPY src/package.json ./
 # Copiar package-lock.json si existe
 COPY src/package-lock.json* ./
