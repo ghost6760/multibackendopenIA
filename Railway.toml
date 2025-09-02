@@ -1,23 +1,22 @@
 [build]
-builder = "nixpacks"
+builder = "dockerfile"
 
-[build.nixpacks.phases.setup]
-aptPkgs = ["curl", "gcc", "g++"]
-
-[build.nixpacks.phases.install]
-cmds = [
-  "cd src && npm ci",
-  "pip install -r requirements.txt"
-]
-
-[build.nixpacks.phases.build]
-cmds = [
-  "cd src && npm run build"
-]
+[build.buildCommand]
+value = "echo 'Building with Docker multi-stage...'"
 
 [deploy]
-startCommand = "python run.py"
+startCommand = "gunicorn --bind 0.0.0.0:8080 --workers 2 --threads 4 --timeout 120 wsgi:app"
 restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 3
 
 [deploy.healthcheckPath]
 value = "/api/health"
+
+[deploy.healthcheckTimeout]
+value = 30
+
+[environments.production]
+variables = {}
+
+[environments.development]
+variables = {}
