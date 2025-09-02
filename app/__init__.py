@@ -263,7 +263,7 @@ def create_app(config_class=Config):
             return jsonify({"error": "API endpoint not found"}), 404
             
         # Intentar servir archivo estático de React
-        frontend_build = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend', 'build')
+        frontend_build = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src', 'build')
         
         if os.path.exists(frontend_build):
             if path != "" and os.path.exists(os.path.join(frontend_build, path)):
