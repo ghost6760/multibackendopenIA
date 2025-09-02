@@ -1,3 +1,0 @@
-[deploy]
-startCommand = "python run.py"
-restartPolicyType = "on-failure"
