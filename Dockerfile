@@ -14,11 +14,21 @@ COPY src/package.json ./
 # Instalar dependencias (usar npm install ya que no hay lock file)
 RUN npm install --no-audit --prefer-offline
 
-# Copiar código fuente del frontend
-COPY src/ .
+# Crear estructura de carpetas que React Scripts espera
+RUN mkdir -p src
 
-# Verificar que exista la carpeta public con index.html
-RUN ls -la public/ && test -f public/index.html
+# Copiar archivos del frontend a la estructura correcta
+COPY src/index.js ./src/
+COPY src/App.js ./src/
+COPY src/components/ ./src/components/
+COPY src/services/ ./src/services/
+COPY src/hooks/ ./src/hooks/
+COPY src/styles/ ./src/styles/
+COPY src/public/ ./public/
+
+# Verificar estructura y archivos críticos
+RUN ls -la && ls -la src/ && ls -la public/
+RUN test -f src/index.js && test -f public/index.html
 
 # Build de producción de React
 RUN npm run build
