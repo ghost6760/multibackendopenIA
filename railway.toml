@@ -2,7 +2,17 @@
 builder = "nixpacks"
 
 [build.buildCommand]
-value = "cd src && npm ci && npm run build && cd .. && pip install -r requirements.txt"
+value = """
+echo "Installing frontend dependencies..." &&
+cd src && 
+npm ci --production=false &&
+echo "Building React frontend..." &&
+npm run build &&
+cd .. &&
+echo "Installing Python dependencies..." &&
+pip install -r requirements.txt &&
+echo "Build completed successfully"
+"""
 
 [deploy]
 startCommand = "python run.py"
@@ -10,3 +20,7 @@ restartPolicyType = "on-failure"
 
 [deploy.healthcheckPath]
 value = "/api/health"
+
+[deploy.variables]
+NODE_ENV = "production"
+FLASK_ENV = "production"
