@@ -1,5 +1,3 @@
-
-
 # app/__init__.py - Multi-Tenant Flask Application Factory - VERSIÓN FINAL
 
 from flask import Flask, request, send_from_directory, send_file, jsonify
@@ -271,7 +269,7 @@ def create_app(config_class=Config):
             if path != "" and os.path.exists(os.path.join(frontend_build, path)):
                 return send_from_directory(frontend_build, path)
             else:
-                return send_from_directory(frontend_build, 'index.html')
+                return send_from_directory(frontend_build, 'index.js')
         else:
             # Fallback para desarrollo - servir archivos legacy si existen
             legacy_files = ['index.html', 'script.js', 'style.css']
