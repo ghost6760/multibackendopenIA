@@ -1,4 +1,4 @@
-# Dockerfile multi-stage para Railway - src/ es el frontend React
+# Dockerfile multi-stage - Estructura real
 FROM node:18-alpine AS frontend-builder
 
 # Construir frontend React desde src/
@@ -28,12 +28,12 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código backend
+# Copiar código backend y archivos de configuración
 COPY app/ ./app/
-COPY app.py wsgi.py ./
+COPY wsgi.py run.py ./
 COPY companies_config.json extended_companies_config.json ./
 
-# Copiar el build del frontend desde src/
+# Copiar el build del frontend
 COPY --from=frontend-builder /frontend/build ./src/build
 
 # Usuario no-root
