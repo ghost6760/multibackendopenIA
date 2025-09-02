@@ -1,20 +1,16 @@
-# app.py - Servir React build en producción
-from flask import Flask, send_from_directory, send_file
+# app.py - Punto de entrada principal para Railway
 import os
+import sys
+from app import create_app
 
-app = Flask(__name__, static_folder='../frontend/build')
+# Configurar path para importar desde app/
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Servir archivos estáticos de React
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_react_app(path):
-    """Servir la aplicación React en producción"""
-    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
-    else:
-        return send_from_directory(app.static_folder, 'index.html')
+app = create_app()
 
-# APIs mantienen su prefijo /api/
-@app.route('/api/health')
-def health():
-    return {"status": "healthy"}
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 8080))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    
+    app.logger.info(f"🚀 Starting Multi-Tenant Chatbot on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=debug)
