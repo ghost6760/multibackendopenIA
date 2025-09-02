@@ -1,14 +1,21 @@
-# Dockerfile optimizado para Railway - Estructura Modular
-FROM python:3.11-slim
+# Dockerfile multi-stage para Railway
+FROM node:18-alpine AS frontend-builder
 
-# Configurar variables de entorno
+# Construir frontend React
+WORKDIR /src
+COPY src/package*.json ./
+RUN npm ci --only=production
+
+COPY src/ .
+RUN npm run build
+
+# Stage 2: Backend Python  
+FROM python:3.11-slim AS backend
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=100
+    PIP_NO_CACHE_DIR=1
 
-# Crear directorio de trabajo
 WORKDIR /app
 
 # Instalar dependencias del sistema
@@ -17,21 +24,23 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements e instalar dependencias Python
-COPY requirements.txt .
+# Instalar dependencias Python
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código de la aplicación
-COPY . .
+# Copiar código backend
+COPY backend/app/ ./app/
+COPY backend/app.py backend/wsgi.py ./
+COPY companies_config.json extended_companies_config.json ./
 
-# Crear usuario no-root para seguridad
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app
+# Copiar el build del frontend desde el stage anterior
+COPY --from=frontend-builder /src/build ./src/build
 
-USER app
+# Usuario no-root
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
 
-# Exponer puerto (Railway lo asigna dinámicamente)
 EXPOSE 8080
 
-# IMPORTANTE: Cambiar el comando para usar wsgi:app en lugar de app:app
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "--keep-alive", "5", "wsgi:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "wsgi:app"]
