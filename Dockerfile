@@ -6,7 +6,7 @@
 # ============================================================================
 FROM node:18-alpine AS frontend-builder
 
-WORKDIR /scr
+WORKDIR /src
 
 # Copiar archivos de configuración de npm
 COPY src/package.json ./
