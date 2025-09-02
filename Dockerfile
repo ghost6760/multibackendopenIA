@@ -14,8 +14,17 @@ COPY src/package.json ./
 # Instalar dependencias (usar npm install ya que no hay lock file)
 RUN npm install --no-audit --prefer-offline
 
-# Copiar código fuente del frontend manteniendo estructura
-COPY src/ .
+# Crear estructura de carpetas que React Scripts espera
+RUN mkdir -p src
+
+# Copiar archivos del frontend a la estructura correcta
+COPY src/index.js ./src/
+COPY src/App.js ./src/
+COPY src/components/ ./src/components/
+COPY src/services/ ./src/services/
+COPY src/hooks/ ./src/hooks/
+COPY src/styles/ ./src/styles/
+COPY src/public/ ./public/
 
 # Verificar estructura y archivos críticos
 RUN ls -la && ls -la src/ && ls -la public/
@@ -60,9 +69,6 @@ COPY companies_config.json extended_companies_config.json ./
 # Copiar archivos build del frontend desde el stage anterior
 COPY --from=frontend-builder /frontend/build ./src/build
 
-# Copiar configuración de Gunicorn
-COPY gunicorn.conf.py ./
-
 # Verificar que los archivos se copiaron correctamente
 RUN ls -la src/build/ && test -f src/build/index.html
 
@@ -79,5 +85,17 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# Comando de inicio simplificado usando archivo de configuración
-CMD ["gunicorn", "--config", "gunicorn.conf.py", "wsgi:app"]
+# Comando de inicio con configuración optimizada para Railway
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:8080", \
+     "--workers", "2", \
+     "--threads", "4", \
+     "--timeout", "120", \
+     "--keep-alive", "2", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "100", \
+     "--preload", \
+     "--log-level", "info", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "wsgi:app"]
