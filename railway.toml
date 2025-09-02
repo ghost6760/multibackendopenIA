@@ -1,0 +1,20 @@
+[build]
+builder = "nixpacks"
+
+[build.buildCommand]
+value = """
+  echo 'Building React frontend from src/...' &&
+  cd src && 
+  npm ci --only=production && 
+  npm run build && 
+  cd .. &&
+  pip install -r requirements.txt &&
+  echo 'Build completed'
+"""
+
+[deploy]
+startCommand = "python run.py"
+restartPolicyType = "on-failure"
+
+[deploy.healthcheckPath]
+value = "/api/health"
