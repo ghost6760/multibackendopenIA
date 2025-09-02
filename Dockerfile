@@ -1,10 +1,14 @@
-# Dockerfile multi-stage - Estructura real
+# Dockerfile multi-stage - CORREGIDO
 FROM node:18-alpine AS frontend-builder
 
 # Construir frontend React desde src/
 WORKDIR /frontend
-COPY src/package*.json ./
-RUN npm ci --only=production
+COPY src/package.json ./
+# Copiar package-lock.json si existe
+COPY src/package-lock.json* ./
+
+# Cambiar npm ci por npm install
+RUN npm install --production
 
 COPY src/ .
 RUN npm run build
