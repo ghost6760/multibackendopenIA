@@ -14,17 +14,8 @@ COPY src/package.json ./
 # Instalar dependencias (usar npm install ya que no hay lock file)
 RUN npm install --no-audit --prefer-offline
 
-# Crear estructura de carpetas que React Scripts espera
-RUN mkdir -p src
-
-# Copiar archivos del frontend a la estructura correcta
-COPY src/index.js ./src/
-COPY src/App.js ./src/
-COPY src/components/ ./src/components/
-COPY src/services/ ./src/services/
-COPY src/hooks/ ./src/hooks/
-COPY src/styles/ ./src/styles/
-COPY src/public/ ./public/
+# Copiar código fuente del frontend manteniendo estructura
+COPY src/ .
 
 # Verificar estructura y archivos críticos
 RUN ls -la && ls -la src/ && ls -la public/
@@ -89,9 +80,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 CMD ["gunicorn", \
      "--bind", "0.0.0.0:8080", \
      "--workers", "2", \
+     "--worker-class", "gthread", \
      "--threads", "4", \
      "--timeout", "120", \
-     "--keepalive", "2", \
+     "--keep-alive", "2", \
      "--max-requests", "1000", \
      "--max-requests-jitter", "100", \
      "--preload", \
