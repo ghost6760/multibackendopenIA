@@ -60,6 +60,9 @@ COPY companies_config.json extended_companies_config.json ./
 # Copiar archivos build del frontend desde el stage anterior
 COPY --from=frontend-builder /frontend/build ./src/build
 
+# Copiar configuración de Gunicorn
+COPY gunicorn.conf.py ./
+
 # Verificar que los archivos se copiaron correctamente
 RUN ls -la src/build/ && test -f src/build/index.html
 
@@ -76,18 +79,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# Comando de inicio con configuración optimizada para Railway
-CMD ["gunicorn", \
-     "--bind", "0.0.0.0:8080", \
-     "--workers", "2", \
-     "--worker-class", "gthread", \
-     "--threads", "4", \
-     "--timeout", "120", \
-     "--keep-alive", "2", \
-     "--max-requests", "1000", \
-     "--max-requests-jitter", "100", \
-     "--preload", \
-     "--log-level", "info", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "wsgi:app"]
+# Comando de inicio simplificado usando archivo de configuración
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "wsgi:app"]
