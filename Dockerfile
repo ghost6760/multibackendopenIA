@@ -9,10 +9,10 @@ FROM node:18-alpine AS frontend-builder
 WORKDIR /frontend
 
 # Copiar archivos de configuración de npm
-COPY src/package.json src/package-lock.json* ./
+COPY src/package.json ./
 
-# Instalar dependencias (usar cache si está disponible)
-RUN npm ci --prefer-offline --no-audit
+# Instalar dependencias (usar npm install ya que no hay lock file)
+RUN npm install --no-audit --prefer-offline
 
 # Copiar código fuente del frontend
 COPY src/ .
