@@ -88,7 +88,13 @@ class CompanyManager:
             with open(self.config_file_path, 'r', encoding='utf-8') as f:
                 config_data = json.load(f)
             
-            companies_data = config_data.get('companies', {})
+            # CORREGIDO: Extraer la sección 'companies' del JSON
+            if 'companies' in config_data:
+                companies_data = config_data['companies']
+            else:
+                # Si no hay sección 'companies', asumir que todo el archivo es companies
+                companies_data = config_data
+            
             loaded_companies = []
             
             for company_id, company_data in companies_data.items():
@@ -127,6 +133,10 @@ class CompanyManager:
             
             logger.info(f"Loaded company configs from file: {self.config_file_path}")
             logger.info(f"Loaded configurations for companies: {loaded_companies}")
+            
+            if not loaded_companies:
+                logger.warning("No companies loaded from config file, creating defaults")
+                self._create_default_config()
             
         except Exception as e:
             logger.error(f"Error loading companies config: {e}")
