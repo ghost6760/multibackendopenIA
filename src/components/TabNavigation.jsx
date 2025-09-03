@@ -1,34 +1,27 @@
-// src/components/TabNavigation.jsx
 import React from 'react';
-import { MessageSquare, FileText, Settings } from 'lucide-react';
 
-const TabNavigation = ({ activeTab, onTabChange }) => {
-  const tabs = [
-    { id: 'chat', label: 'Chat Testing', icon: MessageSquare },
-    { id: 'documents', label: 'Documentos', icon: FileText },
-    { id: 'admin', label: 'Administración', icon: Settings }
-  ];
-
+const TabNavigation = ({ activeTab, tabs, onTabChange }) => {
   return (
-    <div className="mb-8">
-      <nav className="flex space-x-8">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => onTabChange(id)}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === id
-                ? 'bg-white text-blue-600 shadow-sm'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            <Icon className="h-5 w-5" />
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
+    <nav className="flex space-x-8 border-b">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          onClick={() => onTabChange(tab.id)}
+          className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+            activeTab === tab.id
+              ? 'border-blue-500 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          <span className="flex items-center space-x-2">
+            <span>{tab.icon}</span>
+            <span>{tab.name}</span>
+          </span>
+        </button>
+      ))}
+    </nav>
   );
 };
 
 export default TabNavigation;
+
