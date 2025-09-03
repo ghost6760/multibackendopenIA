@@ -7,7 +7,7 @@ import ChatSection from './components/ChatSection';
 import DocumentsSection from './components/DocumentsSection';
 import ConversationsSection from './components/ConversationsSection';
 
-// Importar estilos
+// Importar estilos CSS
 import './styles/global.css';
 
 function App() {
