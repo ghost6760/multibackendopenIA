@@ -1,7 +1,7 @@
 {
-  "short_name": "MT Admin",
-  "name": "Multi-Tenant Admin Interface",
-  "description": "Interfaz de administración para sistema de chatbots multi-tenant",
+  "short_name": "Chatbot Admin",
+  "name": "Multi-Tenant Chatbot Admin Panel",
+  "description": "Panel de administración para sistema de chatbot multi-tenant con IA",
   "icons": [
     {
       "src": "favicon.ico",
@@ -11,26 +11,62 @@
     {
       "src": "logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "maskable"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any"
     }
   ],
-  "start_url": "./",
+  "start_url": ".",
   "display": "standalone",
   "theme_color": "#3b82f6",
-  "background_color": "#ffffff",
+  "background_color": "#667eea",
   "orientation": "portrait-primary",
-  "scope": "./",
-  "categories": [
-    "business",
-    "productivity",
-    "utilities"
-  ],
-  "lang": "es-ES",
+  "categories": ["business", "productivity"],
+  "lang": "es",
   "dir": "ltr",
-  "prefer_related_applications": false
+  "scope": "/",
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Chat Tester",
+      "short_name": "Chat",
+      "description": "Probar conversaciones con el chatbot",
+      "url": "/?tab=chat",
+      "icons": [
+        {
+          "src": "logo192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Document Manager",
+      "short_name": "Docs",
+      "description": "Gestionar documentos de conocimiento",
+      "url": "/?tab=documents",
+      "icons": [
+        {
+          "src": "logo192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "System Status",
+      "short_name": "System",
+      "description": "Ver estado del sistema",
+      "url": "/?tab=system",
+      "icons": [
+        {
+          "src": "logo192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
 }
