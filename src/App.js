@@ -1,240 +1,276 @@
-// src/App.js
-import React, { useState, useEffect } from 'react';
-import { Building, Activity } from 'lucide-react';
+// src/App.js - Frontend React Multi-Tenant completamente funcional
 
-// Importar componentes modulares
+import React, { useState, useEffect, useCallback } from 'react';
+import './styles/globals.css';
+
+// Componentes principales
 import CompanySelector from './components/CompanySelector';
-import TabNavigation from './components/TabNavigation';
-import ChatSection from './components/ChatSection';
-import DocumentsSection from './components/DocumentsSection';
-import AdminSection from './components/AdminSection';
-import LoadingOverlay from './components/LoadingOverlay';
-import ToastContainer from './components/ToastContainer';
+import Dashboard from './components/Dashboard';
+import DocumentManager from './components/DocumentManager';
+import ChatTester from './components/ChatTester';
+import AdminPanel from './components/AdminPanel';
+import LoadingSpinner from './components/LoadingSpinner';
+import ErrorBoundary from './components/ErrorBoundary';
 
-// Importar modales
-import UploadModal from './components/modals/UploadModal';
-import ConfigModal from './components/modals/ConfigModal';
-import CameraModal from './components/modals/CameraModal';
+// Services
+import { apiService } from './services/api';
 
-// Importar hooks personalizados
-import { useLoading } from './hooks/useLoading';
-import { useToast } from './hooks/useToast';
-
-// Importar servicios
-import { companiesService } from './services/companiesService';
-import { documentsService } from './services/documentsService';
-import { conversationsService } from './services/conversationsService';
-
-const MultiTenantAdmin = () => {
+function App() {
   // Estados principales
-  const [companies, setCompanies] = useState({});
-  const [currentCompanyId, setCurrentCompanyId] = useState('');
-  const [documents, setDocuments] = useState([]);
-  const [conversations, setConversations] = useState([]);
-  const [activeTab, setActiveTab] = useState('chat');
+  const [selectedCompany, setSelectedCompany] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [systemStatus, setSystemStatus] = useState({});
 
-  // Hooks personalizados
-  const { loading, message, showLoading, hideLoading } = useLoading();
-  const { toasts, showToast, removeToast } = useToast();
-
-  // Estados para modales
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [showCameraModal, setShowCameraModal] = useState(false);
-  const [showConfigModal, setShowConfigModal] = useState(false);
-
-  // Estados para configuración
-  const [googleCalendarUrl, setGoogleCalendarUrl] = useState('');
-
-  // Cargar empresas al inicializar
+  // Cargar datos iniciales
   useEffect(() => {
-    loadCompanies();
+    initializeApp();
   }, []);
 
-  // Cargar datos cuando cambia la empresa
-  useEffect(() => {
-    if (currentCompanyId) {
-      loadDocuments();
-      loadConversations();
-    }
-  }, [currentCompanyId]);
-
-  // Funciones para cargar datos
-  const loadCompanies = async () => {
+  const initializeApp = async () => {
     try {
-      showLoading('Cargando empresas...');
-      const data = await companiesService.getAll();
+      setLoading(true);
+      setError(null);
       
-      setCompanies(data.companies);
+      console.log('🚀 Initializing Multi-Tenant Admin App...');
       
-      // Establecer primera empresa como actual
-      const companyIds = Object.keys(data.companies);
-      if (companyIds.length > 0 && !currentCompanyId) {
-        setCurrentCompanyId(companyIds[0]);
+      // Cargar empresas disponibles
+      const companiesResponse = await apiService.getCompanies();
+      if (companiesResponse?.companies) {
+        setCompanies(companiesResponse.companies);
+        console.log(`✅ Loaded ${companiesResponse.companies.length} companies`);
+        
+        // Seleccionar primera empresa por defecto
+        if (companiesResponse.companies.length > 0) {
+          setSelectedCompany(companiesResponse.companies[0]);
+        }
       }
       
-      showToast('✅ Empresas cargadas correctamente', 'success');
-    } catch (error) {
-      showToast('❌ Error cargando empresas: ' + error.message, 'error');
-    } finally {
-      hideLoading();
-    }
-  };
-
-  const loadDocuments = async () => {
-    if (!currentCompanyId) return;
-    
-    try {
-      const data = await documentsService.list(currentCompanyId);
-      setDocuments(data.documents || []);
-    } catch (error) {
-      showToast('❌ Error cargando documentos: ' + error.message, 'error');
-    }
-  };
-
-  const loadConversations = async () => {
-    if (!currentCompanyId) return;
-    
-    try {
-      const data = await conversationsService.list(currentCompanyId);
-      setConversations(data.conversations || []);
-    } catch (error) {
-      showToast('❌ Error cargando conversaciones: ' + error.message, 'error');
-    }
-  };
-
-  // Función para verificar salud del sistema
-  const checkSystemHealth = async () => {
-    try {
-      showLoading('Verificando salud del sistema...');
+      // Verificar estado del sistema
+      const healthResponse = await apiService.getSystemHealth();
+      if (healthResponse) {
+        setSystemStatus(healthResponse);
+        console.log('✅ System health status loaded');
+      }
       
-      const response = await fetch('/api/health');
-      const data = await response.json();
+    } catch (err) {
+      console.error('❌ App initialization failed:', err);
+      setError('Error al inicializar la aplicación. Verificando conexión...');
       
-      const healthStatus = data.status === 'healthy' ? '✅ Saludable' : '❌ Con problemas';
-      showToast(`Sistema: ${healthStatus}`, data.status === 'healthy' ? 'success' : 'warning');
-    } catch (error) {
-      showToast('❌ Error verificando salud: ' + error.message, 'error');
+      // Intentar reintentar después de un delay
+      setTimeout(() => {
+        initializeApp();
+      }, 5000);
     } finally {
-      hideLoading();
+      setLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-blue-800">
-      {/* Header */}
-      <header className="bg-white/95 backdrop-blur-sm border-b border-white/20 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center space-x-3">
-              <Building className="h-8 w-8 text-blue-600" />
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                Multi-Tenant Admin
-              </h1>
-            </div>
-            
-            <div className="flex items-center space-x-4">
-              <CompanySelector
-                companies={companies}
-                currentCompanyId={currentCompanyId}
-                onCompanyChange={setCurrentCompanyId}
-              />
-              
-              <button
-                onClick={checkSystemHealth}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
-              >
-                <Activity className="h-4 w-4" />
-                <span>Health</span>
-              </button>
-            </div>
+  const handleCompanyChange = useCallback(async (company) => {
+    try {
+      setLoading(true);
+      setSelectedCompany(company);
+      console.log(`🏢 Switched to company: ${company.company_name}`);
+      
+      // Actualizar configuración del API service
+      apiService.setCompanyId(company.company_id);
+      
+    } catch (err) {
+      console.error('Error switching company:', err);
+      setError('Error al cambiar de empresa');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const handleTabChange = useCallback((tab) => {
+    setActiveTab(tab);
+    console.log(`📑 Tab changed to: ${tab}`);
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    await initializeApp();
+  }, []);
+
+  // Loading state
+  if (loading && !selectedCompany) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <LoadingSpinner size="large" />
+          <h2 className="mt-4 text-xl font-semibold text-gray-700">
+            Cargando Sistema Multi-Tenant...
+          </h2>
+          <p className="mt-2 text-gray-500">
+            Inicializando empresas y configuraciones
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error && !selectedCompany) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 to-red-100 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="bg-white rounded-lg shadow-lg p-8">
+            <div className="text-red-500 text-6xl mb-4">⚠️</div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">
+              Error de Conexión
+            </h2>
+            <p className="text-gray-600 mb-4">{error}</p>
+            <button
+              onClick={initializeApp}
+              className="btn-primary"
+            >
+              Reintentar Conexión
+            </button>
           </div>
         </div>
-      </header>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Navegación por pestañas */}
-        <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
-
-        {/* Contenido de las pestañas */}
-        {activeTab === 'chat' && (
-          <ChatSection
-            currentCompanyId={currentCompanyId}
-            companies={companies}
-            showToast={showToast}
-            showLoading={showLoading}
-            hideLoading={hideLoading}
-            setShowCameraModal={setShowCameraModal}
-          />
-        )}
-
-        {activeTab === 'documents' && (
-          <DocumentsSection
-            documents={documents}
-            currentCompanyId={currentCompanyId}
-            companies={companies}
-            loadDocuments={loadDocuments}
-            showToast={showToast}
-            showLoading={showLoading}
-            hideLoading={hideLoading}
-            setShowUploadModal={setShowUploadModal}
-          />
-        )}
-
-        {activeTab === 'admin' && (
-          <AdminSection
-            currentCompanyId={currentCompanyId}
-            companies={companies}
-            conversations={conversations}
-            setShowConfigModal={setShowConfigModal}
-            checkSystemHealth={checkSystemHealth}
-            showToast={showToast}
-          />
-        )}
       </div>
+    );
+  }
 
-      {/* Modales */}
-      {showUploadModal && (
-        <UploadModal
-          onClose={() => setShowUploadModal(false)}
-          currentCompanyId={currentCompanyId}
-          companies={companies}
-          onSuccess={loadDocuments}
-          showToast={showToast}
-          showLoading={showLoading}
-          hideLoading={hideLoading}
-        />
-      )}
+  return (
+    <ErrorBoundary>
+      <div className="min-h-screen bg-gray-50">
+        {/* Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-16">
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white font-bold text-sm">MT</span>
+                  </div>
+                  <h1 className="text-xl font-bold text-gray-900">
+                    Multi-Tenant Admin
+                  </h1>
+                </div>
+                
+                {/* System Status Indicator */}
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full ${
+                    systemStatus.status === 'healthy' ? 'bg-green-500' :
+                    systemStatus.status === 'partial' ? 'bg-yellow-500' : 'bg-red-500'
+                  }`}></div>
+                  <span className="text-sm text-gray-500">
+                    {systemStatus.status === 'healthy' ? 'Sistema Operativo' :
+                     systemStatus.status === 'partial' ? 'Funcionamiento Parcial' : 'Sistema con Problemas'}
+                  </span>
+                </div>
+              </div>
 
-      {showConfigModal && (
-        <ConfigModal
-          onClose={() => setShowConfigModal(false)}
-          currentCompanyId={currentCompanyId}
-          googleCalendarUrl={googleCalendarUrl}
-          setGoogleCalendarUrl={setGoogleCalendarUrl}
-          showToast={showToast}
-          showLoading={showLoading}
-          hideLoading={hideLoading}
-        />
-      )}
+              <div className="flex items-center space-x-4">
+                <button
+                  onClick={refreshData}
+                  className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
+                  title="Actualizar datos"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+                
+                {/* Company Selector */}
+                <CompanySelector
+                  companies={companies}
+                  selectedCompany={selectedCompany}
+                  onCompanyChange={handleCompanyChange}
+                />
+              </div>
+            </div>
+          </div>
+        </header>
 
-      {showCameraModal && (
-        <CameraModal
-          onClose={() => setShowCameraModal(false)}
-          currentCompanyId={currentCompanyId}
-          companies={companies}
-          showToast={showToast}
-          showLoading={showLoading}
-          hideLoading={hideLoading}
-        />
-      )}
+        {/* Navigation Tabs */}
+        <nav className="bg-white border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex space-x-8">
+              {[
+                { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+                { id: 'documents', label: 'Documentos', icon: '📁' },
+                { id: 'chat', label: 'Test Chat', icon: '💬' },
+                { id: 'admin', label: 'Admin', icon: '⚙️' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => handleTabChange(tab.id)}
+                  className={`flex items-center space-x-2 py-4 px-2 border-b-2 font-medium text-sm transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <span>{tab.icon}</span>
+                  <span>{tab.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </nav>
 
-      {/* Loading overlay */}
-      <LoadingOverlay loading={loading} message={message} />
+        {/* Main Content */}
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          {loading ? (
+            <div className="flex justify-center items-center h-64">
+              <LoadingSpinner />
+            </div>
+          ) : (
+            <>
+              {activeTab === 'dashboard' && (
+                <Dashboard 
+                  company={selectedCompany}
+                  systemStatus={systemStatus}
+                  onRefresh={refreshData}
+                />
+              )}
+              
+              {activeTab === 'documents' && (
+                <DocumentManager 
+                  company={selectedCompany}
+                />
+              )}
+              
+              {activeTab === 'chat' && (
+                <ChatTester 
+                  company={selectedCompany}
+                />
+              )}
+              
+              {activeTab === 'admin' && (
+                <AdminPanel 
+                  company={selectedCompany}
+                  companies={companies}
+                  systemStatus={systemStatus}
+                  onRefresh={refreshData}
+                />
+              )}
+            </>
+          )}
+        </main>
 
-      {/* Toast notifications */}
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
-    </div>
+        {/* Footer */}
+        <footer className="bg-white border-t border-gray-200 mt-12">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex justify-between items-center text-sm text-gray-500">
+              <div>
+                Multi-Tenant Chatbot System v1.0.0
+              </div>
+              <div className="flex items-center space-x-4">
+                <span>Empresas: {companies.length}</span>
+                <span>•</span>
+                <span>Empresa Activa: {selectedCompany?.company_name || 'Ninguna'}</span>
+              </div>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </ErrorBoundary>
   );
-};
+}
 
-export default MultiTenantAdmin;
+export default App;
