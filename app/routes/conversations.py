@@ -1,12 +1,11 @@
-# app/routes/conversations.py - VERSIÓN CORREGIDA COMPLETA
-# Reemplaza completamente el archivo existente
+# app/routes/conversations.py - VERSIÓN CORREGIDA COMPATIBLE CON TUS HELPERS EXISTENTES
 
 from flask import Blueprint, request, jsonify
 from app.services.multi_agent_factory import get_multi_agent_factory
 from app.services.redis_service import get_redis_client
 from app.config.company_config import get_company_manager
 from app.utils.decorators import handle_errors
-from app.utils.helpers import create_success_response, create_error_response
+from app.utils.helpers import create_success_response, create_error_response, get_iso_timestamp
 import logging
 import json
 from datetime import datetime
@@ -57,6 +56,7 @@ def get_conversations():
             ]
             redis_client.setex(conversations_key, 3600, json.dumps(conversations))
         
+        # Usar tu función existente con la estructura que espera
         return create_success_response({
             "conversations": conversations,
             "total": len(conversations),
@@ -65,7 +65,7 @@ def get_conversations():
         
     except Exception as e:
         logger.error(f"Error getting conversations: {e}")
-        return create_error_response(f"Error retrieving conversations: {str(e)}", 500)
+        return create_error_response(f"Error retrieving conversations: {str(e)}")
 
 @bp.route('/message', methods=['POST'])
 @handle_errors
@@ -128,6 +128,7 @@ def send_message():
             
             logger.info(f"Message processed successfully for {company_id}")
             
+            # Usar tu función existente con la estructura correcta
             return create_success_response({
                 "response": response.get('response', 'No response available'),
                 "agent_type": response.get('agent_type', 'unknown'),
@@ -141,8 +142,8 @@ def send_message():
         except Exception as orchestrator_error:
             logger.error(f"Orchestrator error for company {company_id}: {orchestrator_error}")
             
-            # Fallback response
-            fallback_response = {
+            # Fallback response usando tu función existente
+            return create_success_response({
                 "response": f"Lo siento, estoy experimentando dificultades técnicas en este momento. Por favor, intenta de nuevo más tarde. [Error: {company_id}]",
                 "agent_type": "fallback",
                 "company_id": company_id,
@@ -150,9 +151,7 @@ def send_message():
                 "timestamp": datetime.utcnow().isoformat(),
                 "conversation_id": conversation_id,
                 "error": "orchestrator_unavailable"
-            }
-            
-            return create_success_response(fallback_response)
+            })
             
     except Exception as e:
         logger.error(f"Critical error in send_message: {e}")
