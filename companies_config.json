@@ -1,0 +1,180 @@
+{
+  "companies": {
+    "benova": {
+      "company_name": "Benova Centro Estético",
+      "description": "Centro estético especializado en tratamientos de belleza y rejuvenecimiento",
+      "industry": "belleza",
+      "location": "Medellín, Colombia",
+      "services": [
+        "Tratamientos faciales",
+        "Rejuvenecimiento",
+        "Hidratación profunda",
+        "Limpieza facial",
+        "Peeling químico",
+        "Microdermoabrasión",
+        "Radiofrecuencia",
+        "Mesoterapia facial",
+        "Botox",
+        "Rellenos dérmicos"
+      ],
+      "chatwoot_base_url": "https://app.chatwoot.com",
+      "chatwoot_access_token": "",
+      "schedule_service_url": "http://127.0.0.1:4040",
+      "elasticsearch_index": "benova_documents",
+      "vectorstore_collection_name": "benova_vectors",
+      "agent_config": {
+        "sales_agent_name": "Sofia - Asesora Benova",
+        "support_agent_name": "Carlos - Soporte Benova",
+        "router_temperature": 0.2,
+        "sales_temperature": 0.7
+      },
+      "contact_info": {
+        "phone": "+57 304 123 4567",
+        "email": "info@benova.com",
+        "website": "https://benova.com",
+        "address": "Calle 123 #45-67, Medellín"
+      },
+      "business_hours": {
+        "monday": "8:00-18:00",
+        "tuesday": "8:00-18:00", 
+        "wednesday": "8:00-18:00",
+        "thursday": "8:00-18:00",
+        "friday": "8:00-18:00",
+        "saturday": "8:00-14:00",
+        "sunday": "closed"
+      }
+    },
+    "spa_wellness": {
+      "company_name": "Wellness Spa & Relax",
+      "description": "Spa integral de bienestar y relajación",
+      "industry": "bienestar",
+      "location": "Medellín, Colombia",
+      "services": [
+        "Masajes terapéuticos",
+        "Masajes relajantes",
+        "Aromaterapia",
+        "Hot stones",
+        "Reflexología",
+        "Sauna",
+        "Jacuzzi",
+        "Yoga",
+        "Meditación",
+        "Terapias holísticas"
+      ],
+      "chatwoot_base_url": "https://app.chatwoot.com",
+      "chatwoot_access_token": "",
+      "schedule_service_url": "http://127.0.0.1:4043",
+      "elasticsearch_index": "wellness_documents",
+      "vectorstore_collection_name": "wellness_vectors",
+      "agent_config": {
+        "sales_agent_name": "Luna - Asesora Wellness",
+        "support_agent_name": "Diego - Soporte Wellness",
+        "router_temperature": 0.2,
+        "sales_temperature": 0.7
+      },
+      "contact_info": {
+        "phone": "+57 305 123 4567",
+        "email": "info@wellnessspa.com",
+        "website": "https://wellnessspa.com",
+        "address": "Carrera 456 #78-90, Medellín"
+      },
+      "business_hours": {
+        "monday": "9:00-19:00",
+        "tuesday": "9:00-19:00",
+        "wednesday": "9:00-19:00", 
+        "thursday": "9:00-19:00",
+        "friday": "9:00-19:00",
+        "saturday": "9:00-17:00",
+        "sunday": "10:00-16:00"
+      }
+    },
+    "medispa": {
+      "company_name": "MediSpa Elite",
+      "description": "Medicina estética y tratamientos especializados",
+      "industry": "medicina estética",
+      "location": "Medellín, Colombia",
+      "services": [
+        "Botox",
+        "Rellenos dérmicos",
+        "Láser CO2",
+        "Láser IPL",
+        "Coolsculpting",
+        "Radiofrecuencia",
+        "Mesoterapia",
+        "PRP facial",
+        "Hilos tensores",
+        "Peeling profundo"
+      ],
+      "chatwoot_base_url": "https://app.chatwoot.com",
+      "chatwoot_access_token": "",
+      "schedule_service_url": "http://127.0.0.1:4041",
+      "elasticsearch_index": "medispa_documents",
+      "vectorstore_collection_name": "medispa_vectors",
+      "agent_config": {
+        "sales_agent_name": "Dra. Patricia - Asesora MediSpa",
+        "support_agent_name": "Ana - Soporte MediSpa", 
+        "router_temperature": 0.1,
+        "sales_temperature": 0.6
+      },
+      "contact_info": {
+        "phone": "+57 306 123 4567",
+        "email": "info@medispae lite.com",
+        "website": "https://medispaelite.com",
+        "address": "Avenida 789 #12-34, Medellín"
+      },
+      "business_hours": {
+        "monday": "7:00-17:00",
+        "tuesday": "7:00-17:00",
+        "wednesday": "7:00-17:00",
+        "thursday": "7:00-17:00", 
+        "friday": "7:00-17:00",
+        "saturday": "8:00-12:00",
+        "sunday": "closed"
+      }
+    },
+    "clinica_dental": {
+      "company_name": "Clínica Dental Sonrisa",
+      "description": "Clínica dental integral con tecnología avanzada",
+      "industry": "odontología",
+      "location": "Medellín, Colombia", 
+      "services": [
+        "Limpieza dental",
+        "Ortodoncia",
+        "Implantes dentales",
+        "Blanqueamiento",
+        "Endodoncia",
+        "Periodoncia",
+        "Cirugía oral",
+        "Prótesis dentales",
+        "Odontopediatría",
+        "Estética dental"
+      ],
+      "chatwoot_base_url": "https://app.chatwoot.com",
+      "chatwoot_access_token": "",
+      "schedule_service_url": "http://127.0.0.1:4042",
+      "elasticsearch_index": "dental_documents", 
+      "vectorstore_collection_name": "dental_vectors",
+      "agent_config": {
+        "sales_agent_name": "Dr. Miguel - Asesor Dental",
+        "support_agent_name": "Lucía - Soporte Dental",
+        "router_temperature": 0.1,
+        "sales_temperature": 0.5
+      },
+      "contact_info": {
+        "phone": "+57 307 123 4567",
+        "email": "info@clinicasonrisa.com", 
+        "website": "https://clinicasonrisa.com",
+        "address": "Calle 321 #98-76, Medellín"
+      },
+      "business_hours": {
+        "monday": "8:00-18:00",
+        "tuesday": "8:00-18:00",
+        "wednesday": "8:00-18:00",
+        "thursday": "8:00-18:00",
+        "friday": "8:00-18:00", 
+        "saturday": "8:00-13:00",
+        "sunday": "closed"
+      }
+    }
+  }
+}
