@@ -267,3 +267,51 @@ def document_diagnostics():
     except Exception as e:
         logger.error(f"Error in diagnostics for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to run diagnostics", 500)
+
+# Agregar este endpoint al final de tu archivo app/routes/documents.py
+
+@bp.route('/list', methods=['GET'])
+@handle_errors
+def list_documents():
+    """Listar documentos para una empresa específica"""
+    try:
+        company_id = request.args.get('company_id') or request.headers.get('X-Company-ID') or 'benova'
+        
+        logger.info(f"Listing documents for company: {company_id}")
+        
+        # Validar empresa
+        from app.config.company_config import get_company_manager
+        company_manager = get_company_manager()
+        
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Simular lista de documentos (en producción vendría de vectorstore)
+        documents = [
+            {
+                "id": "doc_001",
+                "title": f"Servicios de {company_id}",
+                "content_preview": f"Información sobre servicios disponibles en {company_id}...",
+                "created_at": "2025-01-15T10:00:00Z",
+                "size": 1024,
+                "type": "text"
+            },
+            {
+                "id": "doc_002", 
+                "title": f"Precios y tarifas {company_id}",
+                "content_preview": f"Lista de precios actualizada para {company_id}...",
+                "created_at": "2025-01-14T15:30:00Z",
+                "size": 2048,
+                "type": "text"
+            }
+        ]
+        
+        return create_success_response({
+            "documents": documents,
+            "total": len(documents),
+            "company_id": company_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        return create_error_response(f"Error retrieving documents: {str(e)}", 500)
