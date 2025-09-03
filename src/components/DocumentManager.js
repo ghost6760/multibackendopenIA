@@ -66,7 +66,8 @@ const DocumentManager = ({ company }) => {
   };
 
   const handleDeleteDocument = async (documentId) => {
-    if (!confirm('¿Estás seguro de que quieres eliminar este documento?')) {
+    // ESLint fix: replace confirm() with window.confirm()
+    if (!window.confirm('¿Estás seguro de que quieres eliminar este documento?')) {
       return;
     }
 
@@ -294,6 +295,9 @@ const DocumentManager = ({ company }) => {
       </div>
     </div>
   );
+};
+
+export default DocumentManager;
 };
 
 export default DocumentManager;
