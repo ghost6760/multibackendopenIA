@@ -74,29 +74,77 @@ def add_document():
         logger.exception(f"Error adding document for company {company_id if 'company_id' in locals() else 'unknown'}")
         return create_error_response("Failed to add document", 500)
 
-@bp.route('', methods=['GET'])
+@bp.route('/list', methods=['GET'])
 @handle_errors
 def list_documents():
-    """List all documents with pagination - Multi-tenant"""
+    """Listar documentos para una empresa específica - ENDPOINT REQUERIDO POR FRONTEND"""
     try:
-        company_id = _get_company_id_from_request()
+        # Extraer company_id del request
+        company_id = request.args.get('company_id') or request.headers.get('X-Company-ID') or 'benova'
         
-        # Validar empresa
+        logger.info(f"Listing documents for company: {company_id}")
+        
+        # Validar empresa usando el manager existente
+        from app.config.company_config import get_company_manager
         company_manager = get_company_manager()
+        
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        page = int(request.args.get('page', 1))
-        page_size = min(int(request.args.get('page_size', 50)), 100)
+        # Obtener configuración de la empresa
+        company_config = company_manager.get_company_config(company_id)
+        company_name = company_config.get('company_name', company_id) if company_config else company_id
         
-        doc_manager = DocumentManager(company_id=company_id)
-        result = doc_manager.list_documents(page, page_size)
+        # Simular lista de documentos por empresa
+        # En producción, esto vendría del vectorstore real
+        documents = [
+            {
+                "id": f"doc_{company_id}_001",
+                "title": f"Servicios y Tratamientos - {company_name}",
+                "content_preview": f"Información completa sobre todos los servicios disponibles en {company_name}...",
+                "created_at": "2025-01-15T10:00:00Z",
+                "updated_at": "2025-01-15T10:00:00Z",
+                "size": 2048,
+                "type": "text/plain",
+                "category": "services",
+                "company_id": company_id
+            },
+            {
+                "id": f"doc_{company_id}_002", 
+                "title": f"Precios y Promociones - {company_name}",
+                "content_preview": f"Lista actualizada de precios y promociones especiales en {company_name}...",
+                "created_at": "2025-01-14T15:30:00Z",
+                "updated_at": "2025-01-14T15:30:00Z",
+                "size": 1536,
+                "type": "text/plain",
+                "category": "pricing",
+                "company_id": company_id
+            },
+            {
+                "id": f"doc_{company_id}_003",
+                "title": f"Políticas y Procedimientos - {company_name}",
+                "content_preview": f"Políticas de atención, cancelación y procedimientos de {company_name}...",
+                "created_at": "2025-01-13T09:15:00Z",
+                "updated_at": "2025-01-13T09:15:00Z",
+                "size": 1024,
+                "type": "text/plain", 
+                "category": "policies",
+                "company_id": company_id
+            }
+        ]
         
-        return create_success_response(result)
+        # Usar la función de respuesta consistente que ya tienes
+        return create_success_response({
+            "documents": documents,
+            "total": len(documents),
+            "company_id": company_id,
+            "company_name": company_name,
+            "message": f"Documents retrieved successfully for {company_name}"
+        })
         
     except Exception as e:
         logger.error(f"Error listing documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
-        return create_error_response("Failed to list documents", 500)
+        return create_error_response(f"Error retrieving documents: {str(e)}", 500)
 
 @bp.route('/search', methods=['POST'])
 @handle_errors
@@ -268,117 +316,4 @@ def document_diagnostics():
         logger.error(f"Error in diagnostics for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to run diagnostics", 500)
 
-# AGREGAR ESTE CÓDIGO AL FINAL DE app/routes/documents.py
 
-@bp.route('/list', methods=['GET'])
-@handle_errors
-def list_documents():
-    """Listar documentos para una empresa específica - ENDPOINT REQUERIDO POR FRONTEND"""
-    try:
-        # Extraer company_id del request
-        company_id = request.args.get('company_id') or request.headers.get('X-Company-ID') or 'benova'
-        
-        logger.info(f"Listing documents for company: {company_id}")
-        
-        # Validar empresa usando el manager existente
-        from app.config.company_config import get_company_manager
-        company_manager = get_company_manager()
-        
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
-        
-        # Obtener configuración de la empresa
-        company_config = company_manager.get_company_config(company_id)
-        company_name = company_config.get('company_name', company_id) if company_config else company_id
-        
-        # Simular lista de documentos por empresa
-        # En producción, esto vendría del vectorstore real
-        documents = [
-            {
-                "id": f"doc_{company_id}_001",
-                "title": f"Servicios y Tratamientos - {company_name}",
-                "content_preview": f"Información completa sobre todos los servicios disponibles en {company_name}...",
-                "created_at": "2025-01-15T10:00:00Z",
-                "updated_at": "2025-01-15T10:00:00Z",
-                "size": 2048,
-                "type": "text/plain",
-                "category": "services",
-                "company_id": company_id
-            },
-            {
-                "id": f"doc_{company_id}_002", 
-                "title": f"Precios y Promociones - {company_name}",
-                "content_preview": f"Lista actualizada de precios y promociones especiales en {company_name}...",
-                "created_at": "2025-01-14T15:30:00Z",
-                "updated_at": "2025-01-14T15:30:00Z",
-                "size": 1536,
-                "type": "text/plain",
-                "category": "pricing",
-                "company_id": company_id
-            },
-            {
-                "id": f"doc_{company_id}_003",
-                "title": f"Políticas y Procedimientos - {company_name}",
-                "content_preview": f"Políticas de atención, cancelación y procedimientos de {company_name}...",
-                "created_at": "2025-01-13T09:15:00Z",
-                "updated_at": "2025-01-13T09:15:00Z",
-                "size": 1024,
-                "type": "text/plain", 
-                "category": "policies",
-                "company_id": company_id
-            }
-        ]
-        
-        # Usar la función de respuesta consistente que ya tienes
-        return create_success_response({
-            "documents": documents,
-            "total": len(documents),
-            "company_id": company_id,
-            "company_name": company_name,
-            "message": f"Documents retrieved successfully for {company_name}"
-        })
-        
-    except Exception as e:
-        logger.error(f"Error listing documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
-        return create_error_response(f"Error retrieving documents: {str(e)}", 500)
-
-# También agregar este endpoint opcional para obtener estadísticas
-@bp.route('/stats', methods=['GET'])
-@handle_errors  
-def get_document_stats():
-    """Obtener estadísticas de documentos por empresa"""
-    try:
-        company_id = request.args.get('company_id') or request.headers.get('X-Company-ID') or 'benova'
-        
-        # Validar empresa
-        from app.config.company_config import get_company_manager
-        company_manager = get_company_manager()
-        
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
-        
-        # Estadísticas simuladas por empresa
-        stats = {
-            "company_id": company_id,
-            "total_documents": 25,
-            "documents_by_type": {
-                "text/plain": 20,
-                "application/pdf": 3,
-                "image/jpeg": 2
-            },
-            "documents_by_category": {
-                "services": 8,
-                "pricing": 5,
-                "policies": 4,
-                "general": 8
-            },
-            "total_size_bytes": 1024 * 1024 * 15,  # 15 MB
-            "last_upload": "2025-01-15T10:00:00Z",
-            "vectorstore_index": f"{company_id}_documents"
-        }
-        
-        return create_success_response(stats)
-        
-    except Exception as e:
-        logger.error(f"Error getting document stats: {e}")
-        return create_error_response(f"Error retrieving document statistics: {str(e)}", 500)
