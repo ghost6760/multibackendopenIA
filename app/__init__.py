@@ -227,6 +227,89 @@ def create_app(config_class=Config):
                 "status": "error",
                 "message": str(e)
             }), 500
+
+
+    # Agregar este endpoint de debug a tu app/__init__.py para ver qué archivos existen
+    
+    @app.route('/debug/build-structure')
+    def debug_build_structure():
+        """Ver la estructura completa de archivos build"""
+        import os
+        
+        build_path = '/app/src/build'
+        result = {
+            "build_path": build_path,
+            "exists": os.path.exists(build_path)
+        }
+        
+        if os.path.exists(build_path):
+            # Listar todo recursivamente
+            all_files = []
+            for root, dirs, files in os.walk(build_path):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, build_path)
+                    file_info = {
+                        "path": rel_path,
+                        "size": os.path.getsize(full_path),
+                        "full_path": full_path
+                    }
+                    all_files.append(file_info)
+            
+            result["all_files"] = all_files
+            result["total_files"] = len(all_files)
+            
+            # Verificar específicamente las carpetas static
+            static_path = os.path.join(build_path, 'static')
+            if os.path.exists(static_path):
+                css_path = os.path.join(static_path, 'css')
+                js_path = os.path.join(static_path, 'js')
+                
+                result["static_structure"] = {
+                    "css_exists": os.path.exists(css_path),
+                    "js_exists": os.path.exists(js_path),
+                    "css_files": os.listdir(css_path) if os.path.exists(css_path) else [],
+                    "js_files": os.listdir(js_path) if os.path.exists(js_path) else []
+                }
+        
+        return jsonify(result)
+    
+    # También agregar este endpoint para probar servir un archivo específico
+    @app.route('/debug/test-static/<path:filename>')
+    def debug_test_static(filename):
+        """Probar servir un archivo estático específico"""
+        import os
+        
+        # Probar múltiples ubicaciones
+        possible_paths = [
+            f'/app/src/build/static/{filename}',
+            f'/app/src/build/{filename}',
+            f'/app/static/{filename}'
+        ]
+        
+        results = []
+        for path in possible_paths:
+            result = {
+                "path": path,
+                "exists": os.path.exists(path),
+                "is_file": os.path.isfile(path) if os.path.exists(path) else False
+            }
+            
+            if os.path.exists(path) and os.path.isfile(path):
+                result["size"] = os.path.getsize(path)
+                # Intentar servir
+                try:
+                    return send_file(path)
+                except Exception as e:
+                    result["error"] = str(e)
+            
+            results.append(result)
+        
+        return jsonify({
+            "filename": filename,
+            "attempted_paths": results,
+            "success": False
+        })
     
     # ============================================================================
     # ENDPOINTS LEGACY PARA RETROCOMPATIBILIDAD
