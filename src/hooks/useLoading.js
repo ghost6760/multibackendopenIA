@@ -2,18 +2,12 @@
 import { useState } from 'react';
 
 export const useLoading = () => {
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   
-  const showLoading = (msg = 'Cargando...') => {
-    setMessage(msg);
-    setLoading(true);
-  };
+  const startLoading = () => setIsLoading(true);
+  const stopLoading = () => setIsLoading(false);
   
-  const hideLoading = () => {
-    setLoading(false);
-    setMessage('');
-  };
-  
-  return { loading, message, showLoading, hideLoading };
+  return { isLoading, startLoading, stopLoading };
 };
+
+export default useLoading;
