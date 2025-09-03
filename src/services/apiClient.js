@@ -1,91 +1,92 @@
-// src/services/apiClient.js
-const API_BASE = window.location.origin.includes('localhost') 
-  ? 'http://localhost:8080/api' 
-  : '/api';
+// src/services/apiClient.js - Cliente API básico
+export const apiClient = {
+  get: async (url) => {
+    const response = await fetch(url);
+    return { data: await response.json() };
+  },
+  post: async (url, data) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return { data: await response.json() };
+  },
+  withCompany: (companyId) => ({
+    get: (url) => apiClient.get(`${url}?company_id=${companyId}`),
+    post: (url, data) => apiClient.post(url, { ...data, company_id: companyId })
+  })
+};
 
-class ApiClient {
-  constructor(baseURL) {
-    this.baseURL = baseURL;
+// src/services/companiesService.js - Servicio de empresas básico  
+export const companiesService = {
+  async list() {
+    const response = await apiClient.get('/api/companies');
+    return response.data;
+  },
+  
+  async getById(companyId) {
+    const response = await apiClient.get(`/api/companies/${companyId}`);
+    return response.data;
   }
+};
 
-  async request(endpoint, options = {}) {
-    const url = `${this.baseURL}${endpoint}`;
+// src/services/documentsService.js - Servicio de documentos básico
+export const documentsService = {
+  async list(companyId) {
+    const response = await apiClient.get(`/api/documents?company_id=${companyId}`);
+    return response.data;
+  },
+
+  async upload(companyId, file, description) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('description', description);
+    formData.append('company_id', companyId);
     
-    const config = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      ...options,
-    };
+    const response = await fetch('/api/documents', {
+      method: 'POST',
+      body: formData
+    });
+    
+    return { data: await response.json() };
+  },
 
-    // No agregar Content-Type para FormData
-    if (options.body instanceof FormData) {
-      delete config.headers['Content-Type'];
-    }
-
-    try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: 'Error desconocido' }));
-        throw new Error(errorData.message || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.status === 'error') {
-        throw new Error(data.message || 'Error en la respuesta del servidor');
-      }
-
-      return { data, response };
-    } catch (error) {
-      if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-        throw new Error('Error de conexión. Verifica que el servidor esté ejecutándose.');
-      }
-      throw error;
-    }
+  async delete(companyId, documentId) {
+    const response = await apiClient.withCompany(companyId).delete(`/documents/${documentId}`);
+    return response.data;
   }
+};
 
-  async get(endpoint, options = {}) {
-    return this.request(endpoint, { method: 'GET', ...options });
+// src/services/conversationsService.js - Servicio de conversaciones básico  
+export const conversationsService = {
+  async list(companyId) {
+    const response = await apiClient.get(`/api/conversations?company_id=${companyId}`);
+    return response.data;
+  },
+
+  async sendMessage(companyId, userId, message) {
+    const response = await apiClient.post('/api/conversations/message', {
+      user_id: userId,
+      message: message,
+      company_id: companyId
+    });
+    return response.data;
   }
+};
 
-  async post(endpoint, data, options = {}) {
-    const body = data instanceof FormData ? data : JSON.stringify(data);
-    return this.request(endpoint, { method: 'POST', body, ...options });
+// src/services/multimediaService.js - Servicio multimedia básico
+export const multimediaService = {
+  async uploadImage(companyId, file) {
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('company_id', companyId);
+    
+    const response = await fetch('/api/multimedia/image', {
+      method: 'POST', 
+      body: formData
+    });
+    
+    return { data: await response.json() };
   }
-
-  async put(endpoint, data, options = {}) {
-    const body = data instanceof FormData ? data : JSON.stringify(data);
-    return this.request(endpoint, { method: 'PUT', body, ...options });
-  }
-
-  async delete(endpoint, options = {}) {
-    return this.request(endpoint, { method: 'DELETE', ...options });
-  }
-
-  // Método helper para añadir company context
-  withCompany(companyId) {
-    return {
-      get: (endpoint, options = {}) => this.get(endpoint, {
-        ...options,
-        headers: { 'X-Company-ID': companyId, ...options.headers }
-      }),
-      post: (endpoint, data, options = {}) => this.post(endpoint, data, {
-        ...options,
-        headers: { 'X-Company-ID': companyId, ...options.headers }
-      }),
-      put: (endpoint, data, options = {}) => this.put(endpoint, data, {
-        ...options,
-        headers: { 'X-Company-ID': companyId, ...options.headers }
-      }),
-      delete: (endpoint, options = {}) => this.delete(endpoint, {
-        ...options,
-        headers: { 'X-Company-ID': companyId, ...options.headers }
-      })
-    };
-  }
-}
-
-export const apiClient = new ApiClient(API_BASE);
+};
