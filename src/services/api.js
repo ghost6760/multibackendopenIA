@@ -1,4 +1,4 @@
-// src/services/api.js - Servicio de API corregido y robusto
+// src/services/api.js - Servicio de API corregido con endpoints exactos del backend
 
 class APIService {
   constructor() {
@@ -62,69 +62,69 @@ class APIService {
     // Si hay company_id y es una petición GET, añadirlo como query param también
     if (this.companyId && (!options.method || options.method === 'GET')) {
       const separator = endpoint.includes('?') ? '&' : '?';
-      const urlWithCompany = `${url}${separator}company_id=${this.companyId}`;
-      
-      console.log(`📡 Making request to: ${urlWithCompany}`);
-      
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), requestOptions.timeout);
-        
-        const response = await fetch(urlWithCompany, {
-          ...requestOptions,
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        console.log(`✅ Request successful:`, data);
-        return data;
-        
-      } catch (error) {
-        console.error(`❌ Request failed for ${urlWithCompany}:`, error);
-        throw this.handleError(error);
+      // Solo añadir company_id si no está ya en la URL
+      if (!endpoint.includes('company_id=') && !endpoint.includes('/companies')) {
+        endpoint += `${separator}company_id=${this.companyId}`;
       }
-    } else {
-      console.log(`📡 Making request to: ${url}`);
+    }
+
+    try {
+      console.log(`📡 API Request: ${options.method || 'GET'} ${url}`);
       
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), requestOptions.timeout);
-        
-        const response = await fetch(url, {
-          ...requestOptions,
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        console.log(`✅ Request successful:`, data);
-        return data;
-        
-      } catch (error) {
-        console.error(`❌ Request failed for ${url}:`, error);
-        throw this.handleError(error);
-      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), requestOptions.timeout);
+
+      const response = await fetch(url, {
+        ...requestOptions,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      const responseData = await this.handleResponse(response);
+      console.log(`✅ API Response: ${response.status}`, responseData);
+      return responseData;
+      
+    } catch (error) {
+      console.error(`❌ API Error: ${options.method || 'GET'} ${url}:`, error);
+      throw this.processError(error);
     }
   }
 
-  handleError(error) {
+  async handleResponse(response) {
+    const contentType = response.headers.get('content-type');
+    
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      
+      try {
+        if (contentType?.includes('application/json')) {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } else {
+          errorMessage = await response.text();
+        }
+      } catch (e) {
+        // Si no se puede leer el error, usar el mensaje por defecto
+      }
+      
+      throw new Error(errorMessage);
+    }
+
+    if (contentType?.includes('application/json')) {
+      return await response.json();
+    } else {
+      return await response.text();
+    }
+  }
+
+  processError(error) {
     if (error.name === 'AbortError') {
-      return new Error('La petición tardó demasiado en responder');
+      return new Error('La petición tardó demasiado. Verifica tu conexión a internet.');
     }
     
     if (error.message.includes('Failed to fetch')) {
-      return new Error('Error de conexión. Verifica tu conexión a internet.');
+      return new Error('No se pudo conectar con el servidor. Verifica tu conexión a internet.');
     }
     
     if (error.message.includes('HTTP 404')) {
@@ -164,6 +164,17 @@ class APIService {
       return result;
     } catch (error) {
       console.error(`Error getting company details for ${companyId}:`, error);
+      throw error;
+    }
+  }
+
+  async getCompanyStatus(companyId) {
+    try {
+      return await this.makeRequest(`/api/companies/${companyId}/status`, {
+        includeCompany: false
+      });
+    } catch (error) {
+      console.error(`Error getting company status for ${companyId}:`, error);
       throw error;
     }
   }
@@ -209,41 +220,34 @@ class APIService {
     }
     
     try {
-      return await this.makeRequest('/api/documents/list');
+      return await this.makeRequest('/api/documents');
     } catch (error) {
       console.error('Error getting documents:', error);
       throw error;
     }
   }
 
-  async uploadDocument(file, metadata = {}) {
+  async uploadDocument(formData) {
     if (!this.companyId) {
-      throw new Error('Company ID is required to upload documents');
+      throw new Error('Company ID is required to upload document');
     }
-    
+
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('company_id', this.companyId);
-      
-      if (metadata && Object.keys(metadata).length > 0) {
-        formData.append('metadata', JSON.stringify(metadata));
+      // Para FormData, no establecer Content-Type (el navegador lo hace automáticamente)
+      const headers = {};
+      if (this.companyId) {
+        headers['X-Company-ID'] = this.companyId;
       }
 
-      const response = await fetch(`${this.baseURL}/api/documents/upload`, {
+      const url = `${this.baseURL}/api/documents?company_id=${this.companyId}`;
+      
+      const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'X-Company-ID': this.companyId
-        },
+        headers: headers,
         body: formData
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.json();
-      
+      return await this.handleResponse(response);
     } catch (error) {
       console.error('Error uploading document:', error);
       throw error;
@@ -252,35 +256,15 @@ class APIService {
 
   async deleteDocument(documentId) {
     if (!this.companyId) {
-      throw new Error('Company ID is required to delete documents');
+      throw new Error('Company ID is required to delete document');
     }
-    
+
     try {
-      return await this.makeRequest(`/api/documents/delete/${documentId}`, {
+      return await this.makeRequest(`/api/documents/${documentId}`, {
         method: 'DELETE'
       });
     } catch (error) {
       console.error(`Error deleting document ${documentId}:`, error);
-      throw error;
-    }
-  }
-
-  async searchDocuments(query, options = {}) {
-    if (!this.companyId) {
-      throw new Error('Company ID is required to search documents');
-    }
-    
-    try {
-      return await this.makeRequest('/api/documents/search', {
-        method: 'POST',
-        body: JSON.stringify({
-          query,
-          k: options.k || 5,
-          filter: options.filter || {}
-        })
-      });
-    } catch (error) {
-      console.error('Error searching documents:', error);
       throw error;
     }
   }
@@ -354,6 +338,19 @@ class APIService {
     }
   }
 
+  async getConversationsStats() {
+    if (!this.companyId) {
+      throw new Error('Company ID is required to get conversation stats');
+    }
+    
+    try {
+      return await this.makeRequest('/api/conversations/stats');
+    } catch (error) {
+      console.error('Error getting conversation stats:', error);
+      throw error;
+    }
+  }
+
   // ============================================================================
   // ENDPOINTS DE ADMIN
   // ============================================================================
@@ -371,7 +368,7 @@ class APIService {
 
   async reloadCompaniesConfig() {
     try {
-      return await this.makeRequest('/api/admin/reload-companies', {
+      return await this.makeRequest('/api/admin/config/reload', {
         method: 'POST',
         includeCompany: false
       });
@@ -381,99 +378,95 @@ class APIService {
     }
   }
 
-  async testMultimedia() {
-    if (!this.companyId) {
-      throw new Error('Company ID is required to test multimedia');
-    }
-    
+  async updateGoogleCalendarConfig(companyId, googleCalendarUrl) {
     try {
-      return await this.makeRequest('/api/admin/multimedia/test', {
-        method: 'POST'
+      const payload = {
+        company_id: companyId,
+        google_calendar_url: googleCalendarUrl
+      };
+
+      return await this.makeRequest('/api/admin/config/google-calendar', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        includeCompany: false
       });
     } catch (error) {
-      console.error('Error testing multimedia:', error);
+      console.error('Error updating Google Calendar config:', error);
+      throw error;
+    }
+  }
+
+  async clearVectors(companyId) {
+    try {
+      const payload = {
+        company_id: companyId
+      };
+
+      return await this.makeRequest('/api/admin/vectors/clear', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        includeCompany: false
+      });
+    } catch (error) {
+      console.error('Error clearing vectors:', error);
+      throw error;
+    }
+  }
+
+  async rebuildVectors(companyId) {
+    try {
+      const payload = {
+        company_id: companyId
+      };
+
+      return await this.makeRequest('/api/admin/vectors/rebuild', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        includeCompany: false
+      });
+    } catch (error) {
+      console.error('Error rebuilding vectors:', error);
       throw error;
     }
   }
 
   // ============================================================================
-  // UTILIDADES
+  // ENDPOINTS DE MULTIMEDIA
   // ============================================================================
   
-  async testConnection() {
-    try {
-      const response = await this.getSystemHealth();
-      return {
-        success: true,
-        status: response.status,
-        message: 'Conexión exitosa'
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-        message: 'Error de conexión'
-      };
+  async processAudio(formData) {
+    if (!this.companyId) {
+      throw new Error('Company ID is required to process audio');
     }
-  }
 
-  // Método para verificar si una empresa específica está disponible
-  async verifyCompanyAccess(companyId) {
     try {
-      const originalCompanyId = this.companyId;
-      this.companyId = companyId;
-      
-      const response = await this.getDocuments();
-      
-      this.companyId = originalCompanyId;
-      return {
-        success: true,
-        accessible: true
-      };
-    } catch (error) {
-      return {
-        success: false,
-        accessible: false,
-        error: error.message
-      };
-    }
-  }
+      // Añadir company_id al FormData
+      formData.append('company_id', this.companyId);
 
-  // Método para obtener configuración completa de una empresa
-  async getFullCompanyConfig(companyId) {
-    try {
-      const originalCompanyId = this.companyId;
-      this.companyId = companyId;
+      // Para FormData, no establecer Content-Type
+      const headers = {};
+      if (this.companyId) {
+        headers['X-Company-ID'] = this.companyId;
+      }
+
+      const url = `${this.baseURL}/api/multimedia/process-voice`;
       
-      const [details, documents, conversations] = await Promise.allSettled([
-        this.getCompanyDetails(companyId),
-        this.getDocuments(),
-        this.getConversations()
-      ]);
-      
-      this.companyId = originalCompanyId;
-      
-      return {
-        success: true,
-        company: details.status === 'fulfilled' ? details.value : null,
-        documents_available: documents.status === 'fulfilled',
-        conversations_available: conversations.status === 'fulfilled',
-        documents_count: documents.status === 'fulfilled' ? 
-          (documents.value?.documents_count || 0) : 0,
-        conversations_count: conversations.status === 'fulfilled' ? 
-          (conversations.value?.conversations?.length || 0) : 0
-      };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: headers,
+        body: formData
+      });
+
+      return await this.handleResponse(response);
     } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
+      console.error('Error processing audio:', error);
+      throw error;
     }
   }
 }
 
 // Crear instancia singleton
-export const apiService = new APIService();
+const apiService = new APIService();
 
-// Export default para compatibilidad
+export { apiService };
 export default apiService;
