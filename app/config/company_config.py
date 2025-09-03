@@ -331,3 +331,167 @@ def validate_company_id(company_id: str) -> bool:
 def get_all_companies() -> Dict[str, CompanyConfig]:
     """Función de utilidad para obtener todas las empresas"""
     return get_company_manager().get_all_companies()
+
+# ============================================================================
+# FUNCIONES DE WEBHOOK MULTI-TENANT (REQUERIDAS POR webhook.py)
+# ============================================================================
+
+def extract_company_id_from_webhook(data: Dict[str, Any]) -> str:
+    """Extraer company_id del payload de webhook de Chatwoot"""
+    try:
+        # Método 1: Desde conversation.meta
+        conversation = data.get("conversation", {})
+        meta = conversation.get("meta", {})
+        
+        if "company_id" in meta:
+            logger.debug(f"Company ID found in conversation meta: {meta['company_id']}")
+            return meta["company_id"]
+        
+        # Método 2: Desde account_id (mapeo predefinido)
+        account_id = conversation.get("account", {}).get("id") or conversation.get("account_id")
+        
+        if account_id:
+            # Mapeo de account_id a company_id (configurar según tu setup de Chatwoot)
+            account_mapping = {
+                "7": "benova",      # Benova Chatwoot account
+                "8": "medispa",     # MediSpa account
+                "9": "spa_wellness", # Spa Wellness account
+                "10": "clinica_dental" # Clínica Dental account
+            }
+            
+            company_id = account_mapping.get(str(account_id))
+            if company_id:
+                logger.debug(f"Company ID mapped from account_id {account_id}: {company_id}")
+                return company_id
+        
+        # Método 3: Desde inbox personalizado (si está configurado)
+        inbox = conversation.get("inbox", {})
+        inbox_name = inbox.get("name", "").lower()
+        
+        # Mapeo basado en nombres de inbox
+        if "benova" in inbox_name:
+            return "benova"
+        elif "medispa" in inbox_name:
+            return "medispa"
+        elif "wellness" in inbox_name or "spa" in inbox_name:
+            return "spa_wellness"
+        elif "dental" in inbox_name or "clinica" in inbox_name:
+            return "clinica_dental"
+        
+        # Método 4: Desde URL del webhook (si incluye company_id)
+        # Este método requeriría que el webhook URL tenga formato: /webhook/chatwoot/{company_id}
+        from flask import request
+        if hasattr(request, 'view_args') and request.view_args:
+            webhook_company_id = request.view_args.get('company_id')
+            if webhook_company_id:
+                logger.debug(f"Company ID from webhook URL: {webhook_company_id}")
+                return webhook_company_id
+        
+        # Método 5: Por defecto basado en configuración de entorno
+        default_company = os.getenv('DEFAULT_COMPANY_ID', 'benova')
+        logger.warning(f"Could not extract company_id from webhook data, using default: {default_company}")
+        return default_company
+        
+    except Exception as e:
+        logger.error(f"Error extracting company_id from webhook: {e}")
+        # Fallback seguro
+        return os.getenv('DEFAULT_COMPANY_ID', 'benova')
+
+def validate_company_context(company_id: str) -> bool:
+    """Validar que el contexto de empresa sea válido antes de procesar webhook"""
+    try:
+        if not company_id or not isinstance(company_id, str):
+            logger.error("Company ID is empty or not a string")
+            return False
+        
+        # Validar que la empresa exista en la configuración
+        manager = get_company_manager()
+        
+        if not manager.validate_company_id(company_id):
+            available_companies = list(manager.get_all_companies().keys())
+            logger.error(f"Invalid company_id: {company_id}. Available companies: {available_companies}")
+            return False
+        
+        # Verificación adicional: asegurar que la empresa tenga configuración mínima
+        company_config = manager.get_company_config(company_id)
+        if not company_config:
+            logger.error(f"No configuration found for company_id: {company_id}")
+            return False
+        
+        # Verificar que tenga nombre de empresa (configuración mínima válida)
+        if not hasattr(company_config, 'company_name') or not company_config.company_name:
+            logger.error(f"Company {company_id} has invalid configuration (missing company_name)")
+            return False
+        
+        logger.debug(f"Company context validated for: {company_id} ({company_config.company_name})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating company context for {company_id}: {e}")
+        return False
+
+# ============================================================================
+# FUNCIONES DE UTILIDAD PARA SERVICIOS INTEGRADOS
+# ============================================================================
+
+def get_company_chatwoot_config(company_id: str) -> Dict[str, str]:
+    """Obtener configuración de Chatwoot para una empresa específica"""
+    try:
+        company_config = get_company_config(company_id)
+        if not company_config:
+            return {}
+        
+        return {
+            "base_url": getattr(company_config, 'chatwoot_base_url', ''),
+            "access_token": getattr(company_config, 'chatwoot_access_token', ''),
+            "company_id": company_id,
+            "company_name": getattr(company_config, 'company_name', company_id)
+        }
+    except Exception as e:
+        logger.error(f"Error getting Chatwoot config for {company_id}: {e}")
+        return {}
+
+def get_company_vectorstore_config(company_id: str) -> Dict[str, str]:
+    """Obtener configuración de vectorstore para una empresa específica"""
+    try:
+        company_config = get_company_config(company_id)
+        if not company_config:
+            return {
+                "index": f"{company_id}_documents",
+                "collection": f"{company_id}_vectors"
+            }
+        
+        return {
+            "index": getattr(company_config, 'elasticsearch_index', f"{company_id}_documents"),
+            "collection": getattr(company_config, 'vectorstore_collection_name', f"{company_id}_vectors"),
+            "company_id": company_id,
+            "company_name": getattr(company_config, 'company_name', company_id)
+        }
+    except Exception as e:
+        logger.error(f"Error getting vectorstore config for {company_id}: {e}")
+        return {
+            "index": f"{company_id}_documents",
+            "collection": f"{company_id}_vectors"
+        }
+
+def create_calendar_integration_service(company_id: str):
+    """Crear servicio de integración de calendario para una empresa"""
+    try:
+        # Importar dinámicamente para evitar dependencias circulares
+        from app.services.calendar_integration_service import create_calendar_service
+        
+        manager = get_company_manager()
+        extended_config = manager.get_extended_config(company_id)
+        
+        if extended_config:
+            return create_calendar_service(extended_config)
+        else:
+            logger.warning(f"No extended config found for {company_id}, calendar integration not available")
+            return None
+            
+    except ImportError:
+        logger.warning("Calendar integration service not available")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating calendar service for {company_id}: {e}")
+        return None
