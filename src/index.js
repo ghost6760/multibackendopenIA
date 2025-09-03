@@ -1,10 +1,45 @@
-// src/index.js - Punto de entrada de la aplicación React
+// src/index.js - Punto de entrada principal de React corregido
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './styles/globals.css';
 import App from './App';
 
-// Error boundary para capturar errores de React
+// Service Worker para PWA (opcional)
+import * as serviceWorkerRegistration from './serviceWorkerRegistration';
+
+// Reportar métricas web vitals (opcional)
+import reportWebVitals from './reportWebVitals';
+
+// Configuración global de errores
+const originalError = console.error;
+console.error = (...args) => {
+  // Log estructurado para debugging en producción
+  if (window.location.hostname.includes('railway')) {
+    const errorInfo = {
+      timestamp: new Date().toISOString(),
+      level: 'ERROR',
+      message: args.join(' '),
+      url: window.location.href,
+      userAgent: navigator.userAgent
+    };
+    console.log('🚨 FRONTEND_ERROR:', JSON.stringify(errorInfo));
+  }
+  originalError.apply(console, args);
+};
+
+// Crear root de React
+const container = document.getElementById('root');
+const root = ReactDOM.createRoot(container);
+
+// Renderizar aplicación con manejo de errores
+root.render(
+  <React.StrictMode>
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  </React.StrictMode>
+);
+
+// Error Boundary component
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -20,7 +55,7 @@ class ErrorBoundary extends React.Component {
       error: error,
       errorInfo: errorInfo
     });
-    
+
     // Log error para debugging
     console.error('🚨 React Error Boundary:', {
       error: error.message,
@@ -33,42 +68,114 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-red-400 via-red-500 to-red-600 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl p-8 max-w-md w-full text-center shadow-2xl">
-            <div className="text-red-600 mb-4">
-              <svg className="h-16 w-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-            </div>
-            
-            <h2 className="text-xl font-bold text-gray-800 mb-2">
-              ¡Oops! Algo salió mal
-            </h2>
-            
-            <p className="text-gray-600 mb-6">
-              La aplicación encontró un error inesperado. Por favor, recarga la página.
+        <div style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          fontFamily: 'Inter, sans-serif'
+        }}>
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(10px)',
+            borderRadius: '16px',
+            padding: '2rem',
+            maxWidth: '500px',
+            margin: '1rem',
+            textAlign: 'center',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>💥</div>
+            <h1 style={{ 
+              color: '#1f2937', 
+              marginBottom: '1rem',
+              fontSize: '1.5rem',
+              fontWeight: '600'
+            }}>
+              Error en la Aplicación
+            </h1>
+            <p style={{ 
+              color: '#6b7280', 
+              marginBottom: '1.5rem',
+              lineHeight: '1.6'
+            }}>
+              Algo salió mal. Por favor recarga la página o contacta al soporte técnico.
             </p>
             
-            <div className="space-y-3">
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
                 onClick={() => window.location.reload()}
-                className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                style={{
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  padding: '0.75rem 1.5rem',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseOver={(e) => e.target.style.background = '#2563eb'}
+                onMouseOut={(e) => e.target.style.background = '#3b82f6'}
               >
                 🔄 Recargar Página
               </button>
               
-              <details className="text-left">
-                <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-700">
-                  Ver detalles del error
+              <button
+                onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
+                style={{
+                  background: '#f3f4f6',
+                  color: '#374151',
+                  border: '1px solid #d1d5db',
+                  padding: '0.75rem 1.5rem',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseOver={(e) => e.target.style.background = '#e5e7eb'}
+                onMouseOut={(e) => e.target.style.background = '#f3f4f6'}
+              >
+                ↩️ Intentar de Nuevo
+              </button>
+            </div>
+
+            {/* Debug info para desarrollo */}
+            {process.env.NODE_ENV === 'development' && this.state.error && (
+              <details style={{ 
+                marginTop: '1.5rem', 
+                textAlign: 'left',
+                background: '#f9fafb',
+                padding: '1rem',
+                borderRadius: '0.5rem',
+                fontSize: '0.75rem'
+              }}>
+                <summary style={{ 
+                  cursor: 'pointer', 
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '0.5rem'
+                }}>
+                  🔧 Debug Info (Solo Desarrollo)
                 </summary>
-                <div className="mt-3 p-3 bg-gray-50 rounded-lg text-xs font-mono text-gray-700 overflow-auto max-h-32">
-                  <strong>Error:</strong> {this.state.error && this.state.error.toString()}
-                  <br /><br />
-                  <strong>Stack:</strong>
-                  <pre>{this.state.errorInfo.componentStack}</pre>
+                <div style={{ color: '#6b7280' }}>
+                  <strong>Error:</strong> {this.state.error.message}<br/>
+                  <strong>Stack:</strong><br/>
+                  <pre style={{ 
+                    whiteSpace: 'pre-wrap', 
+                    fontSize: '0.6rem',
+                    marginTop: '0.25rem',
+                    maxHeight: '100px',
+                    overflow: 'auto'
+                  }}>
+                    {this.state.error.stack}
+                  </pre>
                 </div>
               </details>
-            </div>
+            )}
           </div>
         </div>
       );
@@ -78,79 +185,45 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-// Configuración global para fetch (manejo de errores de red)
-const originalFetch = window.fetch;
-window.fetch = function(...args) {
-  return originalFetch.apply(this, args)
-    .catch(error => {
-      console.error('🌐 Network Error:', {
-        url: args[0],
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
-      throw error;
+// Service Worker registration
+serviceWorkerRegistration.register({
+  onSuccess: (registration) => {
+    console.log('✅ Service Worker registered successfully:', registration);
+  },
+  onUpdate: (registration) => {
+    console.log('🔄 Service Worker update available:', registration);
+    if (window.confirm('Nueva versión disponible. ¿Recargar la aplicación?')) {
+      window.location.reload();
+    }
+  }
+});
+
+// Web Vitals reporting
+reportWebVitals((metric) => {
+  // Solo en desarrollo o si se configuran analytics
+  if (process.env.NODE_ENV === 'development') {
+    console.log('📊 Web Vital:', metric);
+  }
+  
+  // Enviar a analytics si está configurado
+  if (window.gtag) {
+    window.gtag('event', metric.name, {
+      event_category: 'Web Vitals',
+      value: Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value),
+      event_label: metric.id,
+      non_interaction: true,
     });
-};
-
-// Event listener para errores no capturados
-window.addEventListener('error', (event) => {
-  console.error('🚨 Global Error:', {
-    message: event.error?.message || event.message,
-    filename: event.filename,
-    lineno: event.lineno,
-    colno: event.colno,
-    stack: event.error?.stack,
-    timestamp: new Date().toISOString(),
-    url: window.location.href
-  });
+  }
 });
 
-// Event listener para promesas rechazadas
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('🚨 Unhandled Promise Rejection:', {
-    reason: event.reason,
-    promise: event.promise,
-    timestamp: new Date().toISOString(),
-    url: window.location.href
-  });
-});
-
-// Crear root y renderizar la aplicación
-const root = ReactDOM.createRoot(document.getElementById('root'));
-
-root.render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>
-);
-
-// Service Worker para PWA (opcional)
-if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('✅ SW registered: ', registration);
-      })
-      .catch((registrationError) => {
-        console.log('❌ SW registration failed: ', registrationError);
-      });
-  });
-}
-
-// Performance monitoring
-if (process.env.NODE_ENV === 'development') {
-  // Log performance metrics en desarrollo
-  window.addEventListener('load', () => {
+// Ocultar splash screen inicial
+const initialLoading = document.getElementById('initial-loading');
+if (initialLoading) {
+  setTimeout(() => {
+    initialLoading.style.opacity = '0';
+    initialLoading.style.transition = 'opacity 0.5s ease-out';
     setTimeout(() => {
-      const perfData = performance.getEntriesByType('navigation')[0];
-      console.log('📊 Performance Metrics:', {
-        domContentLoaded: perfData.domContentLoadedEventEnd - perfData.domContentLoadedEventStart,
-        loadComplete: perfData.loadEventEnd - perfData.loadEventStart,
-        totalTime: perfData.loadEventEnd - perfData.fetchStart,
-        timestamp: new Date().toISOString()
-      });
-    }, 1000);
-  });
+      initialLoading.style.display = 'none';
+    }, 500);
+  }, 1000);
 }
