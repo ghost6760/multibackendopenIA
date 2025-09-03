@@ -1,15 +1,14 @@
-# app/agents/availability_agent.py - Fixed version with proper logging
+# app/agents/availability_agent.py - VERSIÓN COMPLETAMENTE CORREGIDA
 
 import logging
 from datetime import datetime, timedelta
 import json
-from app.config.company_config import get_company_manager
 
 # Configurar logger correctamente
 logger = logging.getLogger(__name__)
 
 class AvailabilityAgent:
-    def __init__(self, company_id: str):
+    def __init__(self, company_id: str):  # SOLO 2 ARGUMENTOS: self y company_id
         self.company_id = company_id
         self.agent_type = "availability"
         logger.info(f"[{company_id}] AvailabilityAgent: initialized")
@@ -30,18 +29,19 @@ class AvailabilityAgent:
             ]
             
             # Obtener configuración de la empresa
-            company_manager = get_company_manager()
-            company_config = company_manager.get_company_config(self.company_id)
-            
-            if not company_config:
-                logger.warning(f"[{self.company_id}] No company config found")
-                return {
-                    "available": False,
-                    "message": "No se pudo verificar la disponibilidad en este momento.",
-                    "error": "company_config_not_found"
-                }
-            
-            company_name = company_config.get('company_name', self.company_id)
+            try:
+                from app.config.company_config import get_company_manager
+                company_manager = get_company_manager()
+                company_config = company_manager.get_company_config(self.company_id)
+                
+                if company_config:
+                    company_name = getattr(company_config, 'company_name', self.company_id)
+                else:
+                    company_name = self.company_id
+                    
+            except Exception as e:
+                logger.warning(f"[{self.company_id}] Could not get company config: {e}")
+                company_name = self.company_id
             
             # Simular disponibilidad (en producción, esto consultaría un sistema real)
             if time_str and time_str in available_times:
@@ -112,9 +112,19 @@ class AvailabilityAgent:
         try:
             logger.info(f"[{self.company_id}] Booking appointment for {date_str} {time_str}")
             
-            company_manager = get_company_manager()
-            company_config = company_manager.get_company_config(self.company_id)
-            company_name = company_config.get('company_name', self.company_id) if company_config else self.company_id
+            try:
+                from app.config.company_config import get_company_manager
+                company_manager = get_company_manager()
+                company_config = company_manager.get_company_config(self.company_id)
+                
+                if company_config:
+                    company_name = getattr(company_config, 'company_name', self.company_id)
+                else:
+                    company_name = self.company_id
+                    
+            except Exception as e:
+                logger.warning(f"[{self.company_id}] Could not get company config: {e}")
+                company_name = self.company_id
             
             booking_reference = f"{self.company_id}_{date_str}_{time_str}_{datetime.now().strftime('%H%M%S')}".replace("-", "").replace(":", "")
             
