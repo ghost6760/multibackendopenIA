@@ -4,14 +4,21 @@ import logging
 from datetime import datetime, timedelta
 import json
 
-# Configurar logger correctamente
 logger = logging.getLogger(__name__)
 
 class AvailabilityAgent:
-    def __init__(self, company_id: str):  # SOLO 2 ARGUMENTOS: self y company_id
-        self.company_id = company_id
+    def __init__(self, company_config, openai_service):  # CORREGIDO: 3 argumentos
+        self.company_config = company_config
+        self.openai_service = openai_service
+        self.company_id = company_config.company_id if hasattr(company_config, 'company_id') else 'default'
         self.agent_type = "availability"
-        logger.info(f"[{company_id}] AvailabilityAgent: initialized")
+        self.schedule_agent = None  # Para conectar con ScheduleAgent
+        logger.info(f"[{self.company_id}] AvailabilityAgent: initialized")
+    
+    def set_schedule_agent(self, schedule_agent):
+        """Conectar con el schedule agent para verificación de disponibilidad"""
+        self.schedule_agent = schedule_agent
+        logger.info(f"[{self.company_id}] AvailabilityAgent: connected to ScheduleAgent")
     
     def check_availability(self, date_str=None, time_str=None, service_type=None):
         """Verificar disponibilidad para una fecha y hora específica"""
@@ -28,22 +35,19 @@ class AvailabilityAgent:
                 "09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"
             ]
             
-            # Obtener configuración de la empresa
-            try:
-                from app.config.company_config import get_company_manager
-                company_manager = get_company_manager()
-                company_config = company_manager.get_company_config(self.company_id)
-                
-                if company_config:
-                    company_name = getattr(company_config, 'company_name', self.company_id)
-                else:
-                    company_name = self.company_id
-                    
-            except Exception as e:
-                logger.warning(f"[{self.company_id}] Could not get company config: {e}")
-                company_name = self.company_id
+            # Obtener nombre de la empresa
+            company_name = getattr(self.company_config, 'company_name', self.company_id)
             
-            # Simular disponibilidad (en producción, esto consultaría un sistema real)
+            # Si tenemos schedule_agent, usarlo para verificar disponibilidad real
+            if self.schedule_agent:
+                try:
+                    real_availability = self.schedule_agent.check_real_availability(date_str, time_str, service_type)
+                    if real_availability.get('success'):
+                        return real_availability
+                except Exception as e:
+                    logger.warning(f"[{self.company_id}] Schedule agent unavailable, using fallback: {e}")
+            
+            # Fallback: respuesta simulada
             if time_str and time_str in available_times:
                 response = {
                     "available": True,
@@ -58,7 +62,7 @@ class AvailabilityAgent:
                 response = {
                     "available": True,
                     "date": date_str,
-                    "suggested_times": available_times[:3],  # Mostrar primeras 3 opciones
+                    "suggested_times": available_times[:3],
                     "service_type": service_type or "consulta general", 
                     "company": company_name,
                     "message": f"📅 Horarios disponibles para el {date_str} en {company_name}:\n" + 
@@ -112,20 +116,20 @@ class AvailabilityAgent:
         try:
             logger.info(f"[{self.company_id}] Booking appointment for {date_str} {time_str}")
             
-            try:
-                from app.config.company_config import get_company_manager
-                company_manager = get_company_manager()
-                company_config = company_manager.get_company_config(self.company_id)
-                
-                if company_config:
-                    company_name = getattr(company_config, 'company_name', self.company_id)
-                else:
-                    company_name = self.company_id
-                    
-            except Exception as e:
-                logger.warning(f"[{self.company_id}] Could not get company config: {e}")
-                company_name = self.company_id
+            company_name = getattr(self.company_config, 'company_name', self.company_id)
             
+            # Si tenemos schedule_agent, usarlo para booking real
+            if self.schedule_agent:
+                try:
+                    real_booking = self.schedule_agent.book_real_appointment(
+                        date_str, time_str, client_info, service_type
+                    )
+                    if real_booking.get('success'):
+                        return real_booking
+                except Exception as e:
+                    logger.warning(f"[{self.company_id}] Schedule agent booking failed, using fallback: {e}")
+            
+            # Fallback: booking simulado
             booking_reference = f"{self.company_id}_{date_str}_{time_str}_{datetime.now().strftime('%H%M%S')}".replace("-", "").replace(":", "")
             
             return {
