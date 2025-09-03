@@ -366,50 +366,55 @@ def create_app(config_class=Config):
         
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
-    def serve_frontend(path):
-        """Servir el frontend React o respuesta API"""
+    def serve_react_app(path):
+        """Servir la aplicación React con manejo correcto de archivos estáticos"""
+        
         # Si es una llamada a la API, no servir frontend
         if path.startswith('api/'):
             return jsonify({"error": "API endpoint not found"}), 404
-            
-        # Intentar servir archivo estático de React
-        frontend_build = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src', 'build')
         
-        if os.path.exists(frontend_build):
-            if path != "" and os.path.exists(os.path.join(frontend_build, path)):
-                return send_from_directory(frontend_build, path)
-            else:
-                return send_from_directory(frontend_build, 'index.html')
-        else:
-            # Fallback para desarrollo - servir archivos legacy si existen
-            legacy_files = ['index.html', 'script.js', 'style.css']
-            if path in legacy_files:
-                legacy_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), path)
-                if os.path.exists(legacy_path):
-                    return send_file(legacy_path)
+        # Si es debug, no interferir
+        if path.startswith('debug/'):
+            return jsonify({"error": "Debug endpoint not found"}), 404
+        
+        # MANEJO ESPECÍFICO DE ARCHIVOS ESTÁTICOS - ESTA ES LA CLAVE
+        if path.startswith('static/'):
+            static_file_path = os.path.join('/app', 'src', 'build', path)
+            app.logger.info(f"Static file request: {path}")
+            app.logger.info(f"Full path: {static_file_path}")
+            app.logger.info(f"File exists: {os.path.exists(static_file_path)}")
             
-            # Fallback final - información del sistema
-            try:
-                company_manager = get_company_manager()
-                companies = company_manager.get_all_companies()
-                
+            if os.path.exists(static_file_path):
+                app.logger.info(f"✓ Serving static file: {path}")
+                return send_file(static_file_path)
+            else:
+                app.logger.error(f"✗ Static file not found: {path}")
                 return jsonify({
-                    "status": "healthy",
-                    "message": "Multi-Tenant Chatbot Backend API is running",
-                    "system_type": "multi-tenant-multi-agent",
-                    "companies_configured": len(companies),
-                    "available_companies": list(companies.keys()),
-                    "frontend_status": "React frontend not built. Run 'npm run build' in frontend directory.",
-                    "api_documentation": "/api/system/info"
-                })
-            except Exception as e:
-                logger.error(f"Error serving frontend fallback: {e}")
-                return jsonify({
-                    "status": "healthy", 
-                    "message": "Multi-Tenant Backend API is running",
-                    "system_type": "multi-tenant-multi-agent",
-                    "error": "Could not load company information"
-                })
+                    "error": "Static file not found", 
+                    "requested": path,
+                    "full_path": static_file_path,
+                    "exists": False
+                }), 404
+        
+        # Manejar otros archivos específicos (favicon, manifest, etc.)
+        if path in ['favicon.ico', 'Favicon.ico', 'manifest.json', 'robots.txt']:
+            file_path = os.path.join('/app', 'src', 'build', path)
+            if os.path.exists(file_path):
+                return send_file(file_path)
+        
+        # Para todas las demás rutas, servir index.html (SPA routing)
+        index_path = os.path.join('/app', 'src', 'build', 'index.html')
+        
+        if os.path.exists(index_path):
+            app.logger.info(f"Serving React app index.html for path: {path}")
+            return send_file(index_path)
+        else:
+            app.logger.error(f"React index.html not found at: {index_path}")
+            return jsonify({
+                "error": "Frontend not available",
+                "message": "React build not found",
+                "expected_path": index_path
+            }), 404
     
     # ============================================================================
     # INICIALIZACIÓN MULTI-TENANT
