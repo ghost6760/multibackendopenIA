@@ -4,70 +4,64 @@
   <meta charset="utf-8" />
   <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#000000" />
-  <meta name="description" content="Multi-Tenant Admin Interface - Sistema de administración para chatbots multi-agente" />
+  <meta name="theme-color" content="#3b82f6" />
+  <meta name="description" content="Sistema Multi-Tenant de Chatbot con IA - Panel de Administración" />
   
-  <!-- Open Graph / Facebook -->
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="%PUBLIC_URL%" />
-  <meta property="og:title" content="Multi-Tenant Admin - Sistema de Gestión" />
-  <meta property="og:description" content="Interfaz de administración para sistema de chatbots multi-tenant con agentes especializados" />
-  <meta property="og:image" content="%PUBLIC_URL%/og-image.jpg" />
-
-  <!-- Twitter -->
-  <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:url" content="%PUBLIC_URL%" />
-  <meta property="twitter:title" content="Multi-Tenant Admin - Sistema de Gestión" />
-  <meta property="twitter:description" content="Interfaz de administración para sistema de chatbots multi-tenant con agentes especializados" />
-  <meta property="twitter:image" content="%PUBLIC_URL%/og-image.jpg" />
-
-  <!-- PWA -->
+  <!-- Apple Touch Icon -->
   <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+  
+  <!-- Web App Manifest -->
   <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-
-  <!-- Preload crítico -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-          },
-          colors: {
-            primary: {
-              50: '#eff6ff',
-              100: '#dbeafe',
-              200: '#bfdbfe',
-              300: '#93c5fd',
-              400: '#60a5fa',
-              500: '#3b82f6',
-              600: '#2563eb',
-              700: '#1d4ed8',
-              800: '#1e40af',
-              900: '#1e3a8a',
-            }
-          }
-        }
-      }
-    }
-  </script>
-
-  <title>Multi-Tenant Admin - Sistema de Gestión</title>
-
+  
+  <!-- Preload Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Meta Tags para SEO y Social Media -->
+  <meta property="og:title" content="Multi-Tenant Chatbot Admin" />
+  <meta property="og:description" content="Panel de administración para sistema de chatbot multi-tenant con IA" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="%PUBLIC_URL%/logo512.png" />
+  
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Multi-Tenant Chatbot Admin" />
+  <meta name="twitter:description" content="Panel de administración para sistema de chatbot multi-tenant con IA" />
+  <meta name="twitter:image" content="%PUBLIC_URL%/logo192.png" />
+  
+  <title>Multi-Tenant Chatbot Admin</title>
+  
+  <!-- Inline critical CSS para evitar FOUC -->
   <style>
-    /* Loading spinner */
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+    
+    #root {
+      min-height: 100vh;
+    }
+    
+    /* Loading spinner inicial */
+    .initial-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
     .loading-spinner {
-      border: 3px solid #f3f4f6;
-      border-top: 3px solid #3b82f6;
+      width: 40px;
+      height: 40px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid white;
       border-radius: 50%;
-      width: 30px;
-      height: 30px;
       animation: spin 1s linear infinite;
     }
     
@@ -75,95 +69,91 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
-
-    /* Error fallback styles */
-    .error-fallback {
-      min-height: 100vh;
-      background: linear-gradient(135deg, #ef4444, #dc2626);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    
+    .loading-text {
       color: white;
-      font-family: system-ui, -apple-system, sans-serif;
+      margin-top: 16px;
+      font-size: 16px;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
   <noscript>
-    <div class="error-fallback">
-      <div style="text-align: center; padding: 2rem;">
-        <h1 style="font-size: 2rem; margin-bottom: 1rem;">JavaScript Requerido</h1>
-        <p style="font-size: 1.1rem; opacity: 0.9;">
-          Esta aplicación requiere JavaScript para funcionar correctamente.
-          <br />
-          Por favor habilita JavaScript en tu navegador.
-        </p>
+    <div style="text-align: center; padding: 50px; background: #f8f9fa;">
+      <h1 style="color: #dc3545; margin-bottom: 20px;">JavaScript Requerido</h1>
+      <p style="color: #6c757d; max-width: 500px; margin: 0 auto; line-height: 1.6;">
+        Esta aplicación requiere JavaScript para funcionar correctamente. 
+        Por favor habilita JavaScript en tu navegador y recarga la página.
+      </p>
+      <div style="margin-top: 30px;">
+        <a href="https://enable-javascript.com/es" 
+           style="color: #007bff; text-decoration: none; font-weight: 500;"
+           target="_blank" rel="noopener noreferrer">
+          ¿Cómo habilitar JavaScript? →
+        </a>
       </div>
     </div>
   </noscript>
-
-  <!-- Loading inicial -->
-  <div id="loading-screen" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; display: flex; align-items: center; justify-content: center; z-index: 9999;">
+  
+  <!-- Loading inicial mientras React carga -->
+  <div id="initial-loading" class="initial-loading">
     <div style="text-align: center;">
-      <div class="loading-spinner" style="margin: 0 auto 1rem;"></div>
-      <p style="color: #6b7280; font-family: system-ui;">Cargando Multi-Tenant Admin...</p>
+      <div class="loading-spinner"></div>
+      <div class="loading-text">🤖 Cargando Sistema Multi-Tenant...</div>
     </div>
   </div>
-
-  <!-- React App Container -->
+  
+  <!-- Container principal de React -->
   <div id="root"></div>
-
-  <!-- Fallback si React no carga -->
+  
+  <!-- Script para ocultar loading inicial -->
   <script>
-    setTimeout(function() {
-      const root = document.getElementById('root');
-      if (!root.hasChildNodes()) {
-        document.body.innerHTML = `
-          <div class="error-fallback">
-            <div style="text-align: center; padding: 2rem; max-width: 400px;">
-              <h1 style="font-size: 2rem; margin-bottom: 1rem;">Error de Carga</h1>
-              <p style="font-size: 1rem; margin-bottom: 1.5rem; opacity: 0.9;">
-                No se pudo cargar la aplicación. Esto puede deberse a:
-              </p>
-              <ul style="text-align: left; margin-bottom: 1.5rem; opacity: 0.9;">
-                <li>• Problemas de conectividad</li>
-                <li>• Error en el build de React</li>
-                <li>• Conflictos de JavaScript</li>
-              </ul>
-              <button onclick="window.location.reload()" style="background: white; color: #dc2626; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; font-weight: bold; cursor: pointer;">
-                🔄 Recargar Página
-              </button>
-            </div>
-          </div>
-        `;
-      }
-    }, 5000);
-
-    // Ocultar loading cuando React se monte
+    // Ocultar loading inicial cuando React monte
     window.addEventListener('load', function() {
-      const loadingScreen = document.getElementById('loading-screen');
-      if (loadingScreen) {
-        setTimeout(() => {
-          loadingScreen.style.opacity = '0';
-          setTimeout(() => loadingScreen.remove(), 300);
-        }, 500);
-      }
+      setTimeout(function() {
+        const initialLoading = document.getElementById('initial-loading');
+        if (initialLoading) {
+          initialLoading.style.opacity = '0';
+          initialLoading.style.transition = 'opacity 0.3s ease-out';
+          setTimeout(function() {
+            initialLoading.style.display = 'none';
+          }, 300);
+        }
+      }, 500);
     });
-  </script>
-
-  <!-- Service Worker Registration -->
-  <script>
-    if ('serviceWorker' in navigator && window.location.hostname !== 'localhost') {
-      window.addEventListener('load', function() {
-        navigator.serviceWorker.register('%PUBLIC_URL%/sw.js')
-          .then(function(registration) {
-            console.log('✅ SW registration successful:', registration.scope);
-          })
-          .catch(function(registrationError) {
-            console.log('❌ SW registration failed:', registrationError);
-          });
+    
+    // Error handling global
+    window.addEventListener('error', function(event) {
+      console.error('🚨 Application Error:', {
+        message: event.error?.message || event.message,
+        filename: event.filename,
+        line: event.lineno,
+        column: event.colno,
+        stack: event.error?.stack,
+        timestamp: new Date().toISOString(),
+        url: window.location.href,
+        userAgent: navigator.userAgent
       });
-    }
+    });
+    
+    // Unhandled promise rejections
+    window.addEventListener('unhandledrejection', function(event) {
+      console.error('🚨 Unhandled Promise Rejection:', {
+        reason: event.reason,
+        timestamp: new Date().toISOString(),
+        url: window.location.href
+      });
+    });
+    
+    // Network status
+    window.addEventListener('online', function() {
+      console.log('🌐 Connection restored');
+    });
+    
+    window.addEventListener('offline', function() {
+      console.warn('🔌 Connection lost');
+    });
   </script>
 </body>
 </html>
