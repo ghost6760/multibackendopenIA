@@ -968,3 +968,166 @@ Para agendar necesito:
             "company_id": self.company_config.company_id,
             "schedules_configured": len(self._get_schedules_configuration())
         }
+
+    # Agregar este método al ScheduleAgent (app/agents/schedule_agent.py)
+    
+    def _format_services(self, services) -> str:
+        """Convierte services en un string legible, sin errores - Método requerido por AvailabilityAgent"""
+        try:
+            if isinstance(services, dict):
+                return ", ".join(services.keys())
+            elif isinstance(services, list):
+                return ", ".join(str(s) for s in services)
+            elif isinstance(services, str):
+                return services
+            else:
+                return "servicios disponibles"  # Fallback seguro
+        except Exception as e:
+            logger.warning(f"Error formatting services for {self.company_config.company_id}: {e}")
+            return "servicios disponibles"
+    
+    def check_availability(self, question: str, chat_history: list, schedule_context: Dict[str, Any]) -> str:
+        """
+        Método mejorado para verificar disponibilidad - llamado por AvailabilityAgent
+        """
+        try:
+            company_name = schedule_context.get("company_name", self.company_config.company_name)
+            services = schedule_context.get("services", self.company_config.services)
+            
+            # Usar el método _format_services local
+            formatted_services = self._format_services(services)
+            
+            # Extraer fecha de la pregunta
+            date = self._extract_date_from_question(question, chat_history)
+            treatment = self._extract_treatment_from_question(question)
+            
+            if date and treatment:
+                # Intentar verificar disponibilidad real si tenemos API
+                try:
+                    availability_data = self._call_check_availability(date, treatment)
+                    if availability_data and availability_data.get("available_slots"):
+                        slots = availability_data["available_slots"]
+                        return self._format_availability_response(slots, date, treatment, company_name)
+                except Exception as api_error:
+                    logger.warning(f"API availability check failed: {api_error}")
+            
+            # Respuesta por defecto con servicios formateados
+            return (
+                f"Para consultar disponibilidad en {company_name}, necesito:\n\n"
+                f"📅 Fecha específica (DD-MM-YYYY)\n"
+                f"🩺 Tipo de servicio ({formatted_services})\n\n"
+                f"¿Puedes proporcionarme estos datos?"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error en check_availability para {schedule_context.get('company_name', 'empresa')}: {e}")
+            return f"❌ No pude verificar disponibilidad. Te conectaré con un asesor."
+    
+    def _format_availability_response(self, slots: list, date: str, treatment: str, company_name: str) -> str:
+        """Formatea la respuesta de disponibilidad"""
+        if not slots:
+            return f"No hay horarios disponibles para {treatment} el {date} en {company_name}."
+        
+        slots_text = "\n".join([f"• {slot}" for slot in slots[:5]])  # Máximo 5 slots
+        
+        return (
+            f"✅ Horarios disponibles para {treatment} el {date} en {company_name}:\n\n"
+            f"{slots_text}\n\n"
+            f"¿Te gustaría reservar alguno de estos horarios?"
+        )
+    
+    def _extract_date_from_question(self, question: str, chat_history: list) -> str:
+        """Extrae fecha de la pregunta con patrones mejorados"""
+        import re
+        from datetime import datetime, timedelta
+        
+        # Patrones de fecha
+        date_patterns = [
+            r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b',  # DD/MM/YYYY o DD-MM-YYYY
+            r'\b(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})\b',  # YYYY/MM/DD o YYYY-MM-DD
+        ]
+        
+        # Buscar en la pregunta actual
+        text_to_search = question.lower()
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, text_to_search)
+            if match:
+                try:
+                    # Intentar parsear la fecha
+                    groups = match.groups()
+                    if len(groups[0]) == 4:  # YYYY-MM-DD
+                        year, month, day = groups
+                    else:  # DD-MM-YYYY
+                        day, month, year = groups
+                    
+                    # Crear fecha válida
+                    if len(year) == 2:
+                        year = f"20{year}"
+                    
+                    parsed_date = datetime(int(year), int(month), int(day))
+                    return parsed_date.strftime("%d-%m-%Y")
+                except (ValueError, TypeError):
+                    continue
+        
+        # Palabras relativas comunes
+        today = datetime.now()
+        relative_dates = {
+            'hoy': today,
+            'mañana': today + timedelta(days=1),
+            'pasado mañana': today + timedelta(days=2),
+            'lunes': today + timedelta(days=(7-today.weekday()) % 7),
+            'martes': today + timedelta(days=(8-today.weekday()) % 7),
+            'miércoles': today + timedelta(days=(9-today.weekday()) % 7),
+            'jueves': today + timedelta(days=(10-today.weekday()) % 7),
+            'viernes': today + timedelta(days=(11-today.weekday()) % 7),
+        }
+        
+        for word, date_obj in relative_dates.items():
+            if word in text_to_search:
+                return date_obj.strftime("%d-%m-%Y")
+        
+        return None
+    
+    def _extract_treatment_from_question(self, question: str) -> str:
+        """Extrae el tipo de tratamiento de la pregunta"""
+        question_lower = question.lower()
+        
+        # Obtener tratamientos de la configuración
+        if hasattr(self.company_config, 'treatment_durations') and self.company_config.treatment_durations:
+            for treatment in self.company_config.treatment_durations.keys():
+                if treatment.lower() in question_lower:
+                    return treatment
+        
+        # Palabras clave genéricas de tratamientos
+        treatment_keywords = [
+            'limpieza', 'consulta', 'revisión', 'tratamiento', 'terapia',
+            'botox', 'relleno', 'facial', 'dental', 'implante', 'ortodoncia'
+        ]
+        
+        for keyword in treatment_keywords:
+            if keyword in question_lower:
+                return keyword
+        
+        return "consulta general"
+    
+    def _call_check_availability(self, date: str, treatment: str) -> Dict[str, Any]:
+        """Llama al API de disponibilidad si está configurado"""
+        if not self.schedule_service_available:
+            return None
+        
+        try:
+            treatment_config = self._get_treatment_configuration(treatment)
+            
+            if self.integration_type == 'google_calendar':
+                return self._check_google_calendar_availability(date, treatment_config)
+            elif self.integration_type == 'calendly':
+                return self._check_calendly_availability(date, treatment_config)
+            elif self.integration_type == 'webhook':
+                return self._check_webhook_availability(date, treatment_config)
+            else:
+                return self._check_generic_availability(date, treatment_config)
+                
+        except Exception as e:
+            logger.error(f"Error calling availability endpoint: {e}")
+            return None
