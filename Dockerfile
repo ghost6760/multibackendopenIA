@@ -6,6 +6,7 @@
 # ============================================================================
 FROM node:18-alpine AS frontend-builder
 
+
 WORKDIR /frontend
 
 # Copiar archivos de configuración de npm
