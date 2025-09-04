@@ -24,6 +24,19 @@ import threading
 import time
 import os
 
+
+app = Flask(__name__)
+
+# =============================
+# Configuración del directorio React build
+# =============================
+REACT_BUILD_DIR = os.path.abspath(
+    os.getenv("REACT_BUILD_DIR", os.path.join(os.getcwd(), "src/build"))
+)
+
+app.logger.info(f"✅ React build directory set to: {REACT_BUILD_DIR}")
+
+
 def create_app(config_class=Config):
     """Factory pattern para crear la aplicación Flask multi-tenant"""
     app = Flask(__name__)
@@ -267,19 +280,42 @@ def create_app(config_class=Config):
     @app.route('/static/<path:filename>')
     def serve_static(filename):
         static_dir = os.path.join(REACT_BUILD_DIR, 'static')
+    
+        # ✅ Evitar path traversal (por seguridad)
+        if ".." in filename or filename.startswith("/"):
+            app.logger.warning(f"❌ Invalid static file request: {filename}")
+            return jsonify({"error": "Invalid file path"}), 400
+    
         full_path = os.path.join(static_dir, filename)
+    
+        # ✅ Verificar si el archivo existe
         if os.path.exists(full_path):
+            app.logger.info(f"📄 Serving static file: {filename}")
             return send_from_directory(static_dir, filename)
         else:
-            return {"error": "Static file not found", "requested": filename}, 404
+            app.logger.error(f"❌ Static file not found: {filename}")
+            return jsonify({"error": "Static file not found", "requested": filename}), 40
 
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve_react(path):
+        # Evitar que APIs o rutas internas pasen por aquí
         if path.startswith('api/') or path.startswith('debug/'):
-            return {"error": "API endpoint not found"}, 404
+            return jsonify({"error": "API endpoint not found"}), 404
+    
         index_path = os.path.join(REACT_BUILD_DIR, 'index.html')
-        return send_file(index_path)
+    
+        # ✅ Si el archivo existe, servirlo
+        if os.path.exists(index_path):
+            app.logger.info(f"📄 Serving React app from: {index_path}")
+            return send_file(index_path)
+        else:
+            # ✅ Si no existe, devolver un error informativo
+            app.logger.error(f"❌ React build not found at {index_path}")
+            return jsonify({
+                "error": "React build not found",
+                "expected_path": index_path
+            }), 500
 
     # ================================================================
     # Inicialización multi-tenant
