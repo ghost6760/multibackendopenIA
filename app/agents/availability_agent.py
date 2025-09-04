@@ -35,15 +35,17 @@ class AvailabilityAgent(BaseAgent):
         try:
             if self.schedule_agent:
                 schedule_context = self._build_schedule_context(question, chat_history)
-                return self.schedule_agent.check_availability(question, chat_history, schedule_context)
+                return self.schedule_agent.check_availability(
+                    question, chat_history, schedule_context
+                )
             else:
-                return self._basic_availability_response(question)
-
+                return self._basic_availability_response()
         except Exception as e:
             logger.error(f"Error verificando disponibilidad en {self.company_config.company_name}: {e}")
             return f"❌ Ocurrió un problema al consultar disponibilidad en {self.company_config.company_name}. Te conecto con un asesor."
 
     def _build_schedule_context(self, question: str, chat_history: list) -> Dict[str, Any]:
+        """Construye el contexto para el ScheduleAgent"""
         return {
             "company_id": self.company_config.company_id,
             "company_name": self.company_config.company_name,
@@ -52,11 +54,25 @@ class AvailabilityAgent(BaseAgent):
             "chat_history": chat_history
         }
 
-    def _basic_availability_response(self, question: str) -> str:
+    def _basic_availability_response(self) -> str:
+        """Genera una respuesta básica de disponibilidad con lista de servicios"""
+        # Normalizamos los servicios para mostrarlos correctamente
+        services_display = self._format_services(self.company_config.services)
+
         return (
             f"Para consultar disponibilidad en {self.company_config.company_name}, indícame:\n\n"
             f"📅 Fecha específica (DD-MM-YYYY)\n"
-            f"🩺 Tipo de servicio que deseas\n"
+            f"🩺 Tipo de servicio que deseas ({services_display})\n"
         )
+
+    def _format_services(self, services: Any) -> str:
+        """Convierte services en un string legible, sin errores"""
+        if isinstance(services, dict):
+            return ", ".join(services.keys())
+        elif isinstance(services, list):
+            return ", ".join(str(s) for s in services)
+        elif isinstance(services, str):
+            return services
+        return "servicio disponible"  # Fallback
 
 
