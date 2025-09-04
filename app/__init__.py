@@ -336,28 +336,32 @@ def create_app(config_class=Config):
     # ============================================================================
     # SERVIR FRONTEND REACT
     # ============================================================================
-    REACT_BUILD_DIR = '/app/src/build'
+REACT_BUILD_DIR = '/app/src/build'
 
     @app.route('/static/<path:filename>')
-    def serve_static_files(filename):
-        """Servir cualquier archivo estático (CSS, JS, media)"""
+    def serve_static(filename):
+        """Servir cualquier archivo dentro de /static (CSS, JS, media)"""
         static_dir = os.path.join(REACT_BUILD_DIR, 'static')
-        file_path = os.path.join(static_dir, filename)
+        full_path = os.path.join(static_dir, filename)
     
-        app.logger.info(f"Static file requested: {file_path}")
-        if os.path.exists(file_path):
-            return send_from_directory(static_dir, filename, cache_timeout=31536000)
+        app.logger.info(f"Requested static file: {filename}")
+        app.logger.info(f"Full path: {full_path}")
+    
+        if os.path.exists(full_path):
+            return send_from_directory(static_dir, filename)
         else:
-            return jsonify({"error": "Static file not found", "requested": filename}), 404
+            return {"error": "Static file not found", "requested": filename}, 404
 
     
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
-    def serve_react_app(path):
-        """Servir la aplicación React (SPA)"""
-        # Evitar interceptar endpoints de API
-        if path.startswith('api/'):
-            return jsonify({"error": "API endpoint not found"}), 404
+    def serve_react(path):
+        if path.startswith('api/') or path.startswith('debug/'):
+            return {"error": "API endpoint not found"}, 404
+    
+        index_path = os.path.join(REACT_BUILD_DIR, 'index.html')
+        return send_file(index_path)
+
     
         # Archivos especiales (favicon, manifest.json, robots.txt)
         special_files = ['favicon.ico', 'manifest.json', 'robots.txt']
