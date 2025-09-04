@@ -4,6 +4,8 @@ from langchain.prompts import ChatPromptTemplate
 from typing import Dict, Any, List, Optional, Tuple
 import logging
 
+logger = logging.getLogger(__name__)
+
 class AvailabilityAgent(BaseAgent):
     """Agente de disponibilidad multi-tenant"""
     
