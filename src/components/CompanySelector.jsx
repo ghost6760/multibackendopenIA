@@ -17,6 +17,9 @@ const CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => {
         value={selectedCompany?.company_id || ''} 
         onChange={(e) => {
           console.log('Company selected:', e.target.value);
+          console.log('Available companies:', companies); // NUEVO: Ver estructura real
+          console.log('First company structure:', companies[0]); // NUEVO: Ver primer objeto
+          console.log('Companies length:', companies.length); // NUEVO: Verificar cantidad
           const company = companies.find(c => c.company_id === e.target.value);
           console.log('Found company:', company);
           if (company) {
@@ -34,16 +37,15 @@ const CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => {
         }}
       >
         <option value="">Seleccionar empresa...</option>
-        {companies.map(company => (
-          <option key={company.company_id} value={company.company_id}>
-            {company.company_name}
+        {companies.map((company, index) => (
+          <option key={company.company_id || index} value={company.company_id}>
+            {company.company_name || `Empresa ${index + 1}`}
           </option>
         ))}
       </select>
     </div>
   );
 };
-
 
 export default CompanySelector;
 
