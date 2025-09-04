@@ -632,6 +632,10 @@ function App() {
       let companiesArray = [];
       if (companiesResponse?.companies && Array.isArray(companiesResponse.companies)) {
         companiesArray = companiesResponse.companies;
+      } else if (companiesResponse?.companies && typeof companiesResponse.companies === 'object') {
+        // NUEVO: Convertir objeto de empresas a array
+        companiesArray = Object.values(companiesResponse.companies);
+        console.log('DEBUG: Converted companies object to array:', companiesArray);
       } else if (companiesResponse?.data?.companies && Array.isArray(companiesResponse.data.companies)) {
         companiesArray = companiesResponse.data.companies;
       } else if (Array.isArray(companiesResponse)) {
