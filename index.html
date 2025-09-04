@@ -205,12 +205,16 @@
                         <label for="audioUserId">ID de Usuario</label>
                         <input type="text" id="audioUserId" placeholder="user123" value="user123">
                     </div>
-                    <button class="btn btn-primary" onclick="processAudio()">
-                        🎵 Procesar Audio
-                    </button>
+                    <div class="form-group" style="display: flex; gap: 10px;">
+                        <button class="btn btn-primary" onclick="processAudio()">
+                            🎵 Procesar Audio
+                        </button>
+                        <button id="recordVoiceButton" class="btn btn-primary" onclick="toggleVoiceRecording()">
+                            🎤 Grabar Voz
+                        </button>
+                    </div>
                     <div id="audioResult" style="margin-top: 15px;"></div>
                 </div>
-
                 <div class="card">
                     <h3>🖼️ Procesamiento de Imagen</h3>
                     <div class="form-group">
@@ -221,13 +225,17 @@
                         <label for="imageUserId">ID de Usuario</label>
                         <input type="text" id="imageUserId" placeholder="user123" value="user123">
                     </div>
-                    <button class="btn btn-primary" onclick="processImage()">
-                        📸 Procesar Imagen
-                    </button>
+                    <div class="form-group" style="display: flex; gap: 10px;">
+                        <button class="btn btn-primary" onclick="processImage()">
+                            📸 Procesar Imagen
+                        </button>
+                        <button class="btn btn-secondary" onclick="captureScreen()">
+                            📷 Capturar Pantalla
+                        </button>
+                    </div>
                     <div id="imageResult" style="margin-top: 15px;"></div>
                 </div>
             </div>
-
             <div class="card">
                 <h3>🧪 Test de Integración Multimedia</h3>
                 <button class="btn btn-success" onclick="testMultimediaIntegration()">
