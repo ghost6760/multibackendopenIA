@@ -1708,7 +1708,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Configurar event listeners para tabs
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
-                e.preventDefault();
                 const tabName = e.target.getAttribute('data-tab');
                 if (tabName) {
                     switchTab(tabName);
@@ -1723,9 +1722,6 @@ document.addEventListener('DOMContentLoaded', async function() {
                 handleCompanyChange(e.target.value);
             });
         }
-        
-        // Configurar drag and drop para archivos
-        setupFileUploadHandlers();
         
         // Cargar datos iniciales
         await loadCompanies();
@@ -1743,39 +1739,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         showNotification('Error al inicializar la aplicación', 'error');
     }
 });
-
-/**
- * Configura los manejadores de drag and drop para archivos
- */
-function setupFileUploadHandlers() {
-    const fileUploadElements = document.querySelectorAll('.file-upload');
-    
-    fileUploadElements.forEach(element => {
-        element.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            element.classList.add('dragover');
-        });
-        
-        element.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            element.classList.remove('dragover');
-        });
-        
-        element.addEventListener('drop', (e) => {
-            e.preventDefault();
-            element.classList.remove('dragover');
-            
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                const input = element.querySelector('input[type="file"]');
-                if (input) {
-                    input.files = files;
-                    showNotification(`Archivo seleccionado: ${files[0].name}`, 'success', 3000);
-                }
-            }
-        });
-    });
-}
 
 // ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
@@ -1813,4 +1776,183 @@ window.clearSystemLog = clearSystemLog;
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
+    
+    try {
+        const response = await apiRequest('/api/documents');
+        const documents = response.data || response.documents || [];
+        
+        const container = document.getElementById('documentsList');
+        if (!container) return;
+        
+        if (documents.length === 0) {
+            container.innerHTML = `
+                <p style="padding: 20px; text-align: center; color: #718096;">
+                    No hay documentos para la empresa ${currentCompanyId}
+                </p>
+            `;
+            return;
+        }
+        
+        const documentsHTML = documents.map(doc => `
+            <div class="data-item">
+                <div class="data-item-header">
+                    <div class="data-item-title">📄 ${escapeHTML(doc.title || doc.name || 'Sin título')}</div>
+                    <div class="data-item-meta">
+                        ${doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'Fecha desconocida'}
+                    </div>
+                </div>
+                <div class="data-item-content">
+                    ${doc.content ? escapeHTML(doc.content.substring(0, 150)) + '...' : 'Sin contenido'}
+                </div>
+                <div class="data-item-actions">
+                    <button class="btn btn-secondary" onclick="viewDocument('${doc.id}')">
+                        👁️ Ver
+                    </button>
+                    <button class="btn btn-danger" onclick="deleteDocument('${doc.id}')">
+                        🗑️ Eliminar
+                    </button>
+                </div>
+            </div>
+        `).join('');
+        
+        container.innerHTML = documentsHTML;
+        
+    } catch (error) {
+        console.error('Error loading documents:', error);
+        const container = document.getElementById('documentsList');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al cargar documentos</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+}
 
+/**
+ * Busca documentos
+ */
+async function searchDocuments() {
+    if (!validateCompanySelection()) return;
+    
+    const query = document.getElementById('searchQuery').value.trim();
+    if (!query) {
+        showNotification('Por favor ingresa una consulta de búsqueda', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest('/api/documents/search', {
+            method: 'POST',
+            body: {
+                query: query,
+                company_id: currentCompanyId
+            }
+        });
+        
+        const results = response.data || response.results || [];
+        const container = document.getElementById('searchResults');
+        
+        if (results.length === 0) {
+            container.innerHTML = `
+                <div class="result-container result-warning">
+                    <p>🔍 No se encontraron resultados para "${escapeHTML(query)}"</p>
+                </div>
+            `;
+            return;
+        }
+        
+        const resultsHTML = `
+            <div class="result-container result-success">
+                <h4>🔍 Resultados de búsqueda (${results.length})</h4>
+                ${results.map(result => `
+                    <div class="search-result" style="border-left: 3px solid #667eea; padding-left: 15px; margin: 10px 0;">
+                        <h5>${escapeHTML(result.title || result.document_title || 'Sin título')}</h5>
+                        <p>${escapeHTML(result.content || result.text || 'Sin contenido').substring(0, 200)}...</p>
+                        ${result.score ? `<small>Relevancia: ${Math.round(result.score * 100)}%</small>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        container.innerHTML = resultsHTML;
+        
+    } catch (error) {
+        console.error('Error searching documents:', error);
+        const container = document.getElementById('searchResults');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error en la búsqueda</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Ve un documento específico
+ */
+async function viewDocument(docId) {
+    try {
+        const response = await apiRequest(`/api/documents/${docId}`);
+        const doc = response.data || response;
+        
+        // Crear modal para mostrar el documento
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-width: 80%; max-height: 80%; overflow-y: auto; z-index: 10000;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px;">
+                    <h3>📄 ${escapeHTML(doc.title || 'Documento')}</h3>
+                    <button class="btn btn-secondary" onclick="closeModal()" style="padding: 8px 12px;">✕</button>
+                </div>
+                <div class="modal-body">
+                    <pre style="white-space: pre-wrap; word-wrap: break-word; font-family: 'Segoe UI', sans-serif; line-height: 1.6;">${escapeHTML(doc.content || 'Sin contenido')}</pre>
+                </div>
+            </div>
+            <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999;" onclick="closeModal()"></div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+    } catch (error) {
+        console.error('Error viewing document:', error);
+        showNotification('Error al ver documento: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Cierra el modal
+ */
+function closeModal() {
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) {
+        document.body.removeChild(modal);
+    }
+}
+
+/**
+ * Elimina un documento
+ */
+async function deleteDocument(docId) {
+    if (!confirm('¿Estás seguro de que quieres eliminar este documento?')) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/documents/${docId}`, {
+            method: 'DELETE'
+        });
+        
+        showNotification('Documento eliminado exitosamente', 'success');
+        await loadDocuments();
+        
+    } catch (error) {
+        console.error('Error deleting document:', error);
+        showNotification('Error al eliminar documento: ' + error.message, 'error');
+    }
+}
