@@ -336,7 +336,7 @@ def create_app(config_class=Config):
     # ============================================================================
     # SERVIR FRONTEND REACT
     # ============================================================================
-REACT_BUILD_DIR = '/app/src/build'
+    REACT_BUILD_DIR = '/app/src/build'
 
     @app.route('/static/<path:filename>')
     def serve_static(filename):
