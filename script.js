@@ -1578,3 +1578,87 @@ function clearSystemLog() {
     addToLog('System log cleared', 'info');
     showNotification('Log del sistema limpiado', 'success');
 }
+
+
+// ============================================================================
+// INICIALIZACIÓN Y EVENT LISTENERS
+// ============================================================================
+
+/**
+ * Inicializa la aplicación cuando se carga la página
+ */
+document.addEventListener('DOMContentLoaded', async function() {
+    addToLog('Application initializing...', 'info');
+    
+    try {
+        // Configurar event listeners para tabs
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                const tabName = e.target.getAttribute('data-tab');
+                if (tabName) {
+                    switchTab(tabName);
+                }
+            });
+        });
+        
+        // Configurar event listener para selector de empresa
+        const companySelect = document.getElementById('companySelect');
+        if (companySelect) {
+            companySelect.addEventListener('change', (e) => {
+                handleCompanyChange(e.target.value);
+            });
+        }
+        
+        // Cargar datos iniciales
+        await loadCompanies();
+        await loadSystemInfo();
+        
+        // Cargar tab inicial (dashboard)
+        switchTab('dashboard');
+        
+        addToLog('Application initialized successfully', 'info');
+        showNotification('Sistema inicializado correctamente', 'success', 3000);
+        
+    } catch (error) {
+        console.error('Error initializing application:', error);
+        addToLog(`Initialization error: ${error.message}`, 'error');
+        showNotification('Error al inicializar la aplicación', 'error');
+    }
+});
+
+// ============================================================================
+// EXPONER FUNCIONES GLOBALES PARA EL HTML
+// ============================================================================
+
+// Hacer las funciones disponibles globalmente para los onclick del HTML
+window.switchTab = switchTab;
+window.loadSystemInfo = loadSystemInfo;
+window.loadCompaniesStatus = loadCompaniesStatus;
+window.uploadDocument = uploadDocument;
+window.loadDocuments = loadDocuments;
+window.searchDocuments = searchDocuments;
+window.viewDocument = viewDocument;
+window.deleteDocument = deleteDocument;
+window.closeModal = closeModal;
+window.testConversation = testConversation;
+window.getConversation = getConversation;
+window.deleteConversation = deleteConversation;
+window.loadConversations = loadConversations;
+window.viewConversationDetail = viewConversationDetail;
+window.deleteConversationFromList = deleteConversationFromList;
+window.processAudio = processAudio;
+window.processImage = processImage;
+window.testMultimediaIntegration = testMultimediaIntegration;
+window.updateGoogleCalendarConfig = updateGoogleCalendarConfig;
+window.reloadCompaniesConfig = reloadCompaniesConfig;
+window.runSystemDiagnostics = runSystemDiagnostics;
+window.performHealthCheck = performHealthCheck;
+window.performCompanyHealthCheck = performCompanyHealthCheck;
+window.checkServicesStatus = checkServicesStatus;
+window.runAutoDiagnostics = runAutoDiagnostics;
+window.startRealTimeMonitoring = startRealTimeMonitoring;
+window.stopRealTimeMonitoring = stopRealTimeMonitoring;
+window.clearSystemLog = clearSystemLog;
+
+// Log final de inicialización del script
+addToLog('Script loaded successfully', 'info');
