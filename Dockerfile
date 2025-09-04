@@ -14,32 +14,54 @@ COPY src/package.json ./
 RUN npm install --no-audit --prefer-offline
 
 # Crear estructura necesaria para React
-RUN mkdir -p src public
+RUN mkdir -p src public src/styles src/components src/services src/hooks
 
-# Copiar archivos de configuración
-COPY src/tailwind.config.js ./
-COPY src/postcss.config.js ./
+# Copiar archivos de configuración PRIMERO
+COPY src/tailwind.config.js ./tailwind.config.js 2>/dev/null || echo "No tailwind config found"
+COPY src/postcss.config.js ./postcss.config.js 2>/dev/null || echo "No postcss config found"
 
-# Copiar archivos del frontend
-COPY src/index.js ./src/
-COPY src/App.js ./src/
-COPY src/serviceWorkerRegistration.js ./src/
-COPY src/reportWebVitals.js ./src/
-COPY src/components/ ./src/components/
-COPY src/services/ ./src/services/
-COPY src/hooks/ ./src/hooks/
-COPY src/styles/ ./src/styles/
+# Copiar archivos del PUBLIC (manifest, favicon, etc)
 COPY src/public/ ./public/
 
-# Debug: Verificar estructura
-RUN echo "📂 Frontend structure:" && find . -type f | head -20
+# CRÍTICO: Copiar archivos CSS ANTES que los JS
+COPY src/styles/ ./src/styles/
 
-# Build de producción
+# Verificar que el CSS se copió correctamente
+RUN ls -la src/styles/ || echo "No styles directory found"
+RUN test -f src/styles/globals.css && echo "✅ CSS found" || echo "❌ CSS NOT found"
+
+# Copiar archivos React principales
+COPY src/index.js ./src/index.js
+COPY src/App.js ./src/App.js
+
+# Copiar el resto de archivos React
+COPY src/serviceWorkerRegistration.js ./src/serviceWorkerRegistration.js 2>/dev/null || echo "No serviceWorker found"
+COPY src/reportWebVitals.js ./src/reportWebVitals.js 2>/dev/null || echo "No reportWebVitals found"
+
+# Copiar directorios de componentes y servicios
+COPY src/components/ ./src/components/ 2>/dev/null || echo "No components directory found"
+COPY src/services/ ./src/services/ 2>/dev/null || echo "No services directory found"
+COPY src/hooks/ ./src/hooks/ 2>/dev/null || echo "No hooks directory found"
+
+# Debug final: Verificar estructura completa
+RUN echo "📂 Complete Frontend structure:" && \
+    find src -type f | head -30 && \
+    echo "📄 Critical files check:" && \
+    test -f src/index.js && echo "✅ index.js exists" || echo "❌ index.js missing" && \
+    test -f src/App.js && echo "✅ App.js exists" || echo "❌ App.js missing" && \
+    test -f src/styles/globals.css && echo "✅ globals.css exists" || echo "❌ globals.css missing" && \
+    test -f public/index.html && echo "✅ index.html exists" || echo "❌ index.html missing"
+
+# Build de producción con variables de entorno específicas
 ENV NODE_ENV=production
-RUN npm run build
+ENV GENERATE_SOURCEMAP=false
+ENV INLINE_RUNTIME_CHUNK=false
 
-# Verificar que el build se creó correctamente
-RUN ls -la build/ && test -f build/index.html && echo "✅ Build successful"
+# Ejecutar build
+RUN npm run build 2>&1 | tee build.log && \
+    echo "Build completed, checking results:" && \
+    ls -la build/ && \
+    test -f build/index.html && echo "✅ Build successful" || (echo "❌ Build failed" && cat build.log && exit 1)
 
 # ============================================================================
 # STAGE 2: Backend Python + Frontend Integration
@@ -72,18 +94,21 @@ COPY wsgi.py run.py ./
 COPY companies_config.json ./
 COPY extended_companies_config.json ./
 
-# ✅ CLAVE: Copiar build de React a la ubicación correcta
+# CRÍTICO: Copiar build de React a la ubicación correcta
 COPY --from=frontend-builder /frontend/build ./src/build
 
-# Debug: Verificar que se copió correctamente
-RUN echo "📂 Backend structure:" && \
+# Verificar que se copió correctamente
+RUN echo "📂 Backend + Frontend structure:" && \
     ls -la . && \
-    echo "📂 React build:" && \
+    echo "📂 React build verification:" && \
     ls -la src/build/ && \
+    test -f src/build/index.html && echo "✅ React index.html found" || echo "❌ React index.html missing" && \
     echo "📂 Static files:" && \
-    ls -la src/build/static/ && \
-    test -f src/build/index.html && \
-    echo "✅ All files copied successfully"
+    ls -la src/build/static/ 2>/dev/null || echo "No static directory" && \
+    echo "📂 Static CSS:" && \
+    ls -la src/build/static/css/ 2>/dev/null || echo "No CSS directory" && \
+    echo "📂 Static JS:" && \
+    ls -la src/build/static/js/ 2>/dev/null || echo "No JS directory"
 
 # Crear usuario no root
 RUN useradd --create-home --shell /bin/bash --uid 1000 appuser && \
@@ -112,4 +137,3 @@ CMD ["gunicorn", \
      "--access-logfile", "-", \
      "--error-logfile", "-", \
      "wsgi:app"]
-
