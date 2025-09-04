@@ -1956,3 +1956,176 @@ async function deleteDocument(docId) {
         showNotification('Error al eliminar documento: ' + error.message, 'error');
     }
 }
+
+// ============================================================================
+// GESTIÓN DE CONVERSACIONES
+// ============================================================================
+
+/**
+ * Prueba una conversación
+ */
+async function testConversation() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('testUserId').value.trim();
+    const message = document.getElementById('testMessage').value.trim();
+    
+    if (!userId || !message) {
+        showNotification('Por favor completa todos los campos', 'warning');
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        // Crear AbortController para timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+        
+        console.log(`Testing conversation for user: ${userId}, company: ${currentCompanyId}`);
+        console.log(`Message: ${message}`);
+        
+        const response = await fetch(`${API_BASE_URL}/api/conversations/${userId}/test`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Company-ID': currentCompanyId
+            },
+            body: JSON.stringify({
+                message: message,
+                company_id: currentCompanyId
+            }),
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
+            throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('Response data:', data);
+        
+        const container = document.getElementById('conversationResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>💬 Respuesta del Bot</h4>
+                <p><strong>Usuario:</strong> ${escapeHTML(message)}</p>
+                <p><strong>Bot:</strong> ${escapeHTML(data.bot_response || data.response || data.message || 'Sin respuesta')}</p>
+                <p><strong>Agente usado:</strong> ${data.agent_used || data.agent || 'Desconocido'}</p>
+                <p><strong>Empresa:</strong> ${data.company_id || currentCompanyId}</p>
+                ${data.processing_time ? `<p><strong>Tiempo de procesamiento:</strong> ${data.processing_time}ms</p>` : ''}
+            </div>
+        `;
+        
+        showNotification('Conversación probada exitosamente', 'success');
+        
+    } catch (error) {
+        console.error('Error testing conversation:', error);
+        
+        let errorMessage = error.message;
+        
+        if (error.name === 'AbortError') {
+            errorMessage = 'La solicitud tardó demasiado en responder (timeout de 30 segundos)';
+        }
+        
+        const container = document.getElementById('conversationResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al probar conversación</p>
+                <p><strong>Error:</strong> ${escapeHTML(errorMessage)}</p>
+                <p><strong>Usuario:</strong> ${escapeHTML(userId)}</p>
+                <p><strong>Mensaje enviado:</strong> ${escapeHTML(message)}</p>
+                <p><strong>Empresa:</strong> ${currentCompanyId}</p>
+                <small>Revisa los logs del servidor para más detalles</small>
+            </div>
+        `;
+        
+        showNotification('Error al probar conversación: ' + errorMessage, 'error');
+        
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Obtiene una conversación específica
+ */
+async function getConversation() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('manageUserId').value.trim();
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/api/conversations/${userId}`);
+        const conversation = response.data || response;
+        
+        const container = document.getElementById('conversationDetails');
+        container.innerHTML = `
+            <div class="result-container result-info">
+                <h4>👤 Conversación de ${escapeHTML(userId)}</h4>
+                <div class="conversation-history" style="max-height: 300px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px;">
+                    ${conversation.history ? conversation.history.map(msg => `
+                        <div class="message" style="margin-bottom: 15px; padding: 10px; border-radius: 8px; background: ${msg.role === 'user' ? '#f0fff4' : '#ebf8ff'};">
+                            <strong>${msg.role === 'user' ? '👤 Usuario' : '🤖 Bot'}:</strong> ${escapeHTML(msg.content)}
+                            <br><small style="color: #718096;">${msg.timestamp || 'Sin fecha'}</small>
+                        </div>
+                    `).join('') : '<p>No hay historial disponible</p>'}
+                </div>
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Error getting conversation:', error);
+        const container = document.getElementById('conversationDetails');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al obtener conversación</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Elimina una conversación
+ */
+async function deleteConversation() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('manageUserId').value.trim();
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    if (!confirm(`¿Estás seguro de que quieres eliminar la conversación de ${userId}?`)) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/conversations/${userId}`, {
+            method: 'DELETE'
+        });
+        
+        showNotification('Conversación eliminada exitosamente', 'success');
+        
+        // Limpiar detalles mostrados
+        const container = document.getElementById('conversationDetails');
+        container.innerHTML = '';
+        
+        // Recargar lista
+        await loadConversations();
+        
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+        showNotification('Error al eliminar conversación: ' + error.message, 'error');
+    }
