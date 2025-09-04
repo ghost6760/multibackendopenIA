@@ -6,42 +6,40 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { apiService } from './services/api';
 
 // Componentes principales con fallbacks
-let CompanySelector, Dashboard, DocumentManager, ChatTester, AdminPanel, LoadingSpinner;
-
-try {
-  CompanySelector = require('./components/CompanySelector').default;
-} catch {
-  CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>
-        Seleccionar Empresa:
-      </label>
-      <select 
-        value={selectedCompany?.company_id || ''} 
-        onChange={(e) => {
-          const company = companies.find(c => c.company_id === e.target.value);
-          onCompanyChange(company);
-        }}
-        style={{
-          display: 'block',
-          width: '100%',
-          padding: '0.75rem',
-          border: '1px solid #d1d5db',
-          borderRadius: '0.375rem',
-          background: 'white',
-          fontSize: '1rem'
-        }}
-      >
-        <option value="">Seleccionar empresa...</option>
-        {companies.map(company => (
-          <option key={company.company_id} value={company.company_id}>
-            {company.company_name}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
+CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => (
+  <div style={{ marginBottom: '1.5rem' }}>
+    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>
+      Seleccionar Empresa:
+    </label>
+    <select 
+      value={selectedCompany?.company_id || ''} 
+      onChange={(e) => {
+        console.log('Company selected:', e.target.value); // Debug
+        const company = companies.find(c => c.company_id === e.target.value);
+        console.log('Found company:', company); // Debug
+        if (company) {
+          onCompanyChange(company); // Pasar el objeto completo, no solo el ID
+        }
+      }}
+      style={{
+        display: 'block',
+        width: '100%',
+        padding: '0.75rem',
+        border: '1px solid #d1d5db',
+        borderRadius: '0.375rem',
+        background: 'white',
+        fontSize: '1rem'
+      }}
+    >
+      <option value="">Seleccionar empresa...</option>
+      {companies.map(company => (
+        <option key={company.company_id} value={company.company_id}>
+          {company.company_name}
+        </option>
+      ))}
+    </select>
+  </div>
+);
 
 try {
   ChatTester = require('./components/ChatTester').default;
