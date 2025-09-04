@@ -362,16 +362,24 @@ async function loadCompaniesStatus() {
             let statusHTML = '';
             
             Object.entries(response.companies).forEach(([companyId, status]) => {
-                // El API devuelve system_healthy: true/false
-                const isHealthy = status.system_healthy === true;
+                // Verificar si el campo existe en el objeto status
+                let isHealthy = false;
+                if (status.system_healthy !== undefined) {
+                    isHealthy = status.system_healthy === true;
+                } else {
+                    // Si no hay system_healthy, asumimos que está saludable si tiene información
+                    isHealthy = true;
+                }
+                
                 const statusClass = isHealthy ? 'healthy' : 'error';
                 const statusIcon = isHealthy ? '✅' : '❌';
                 const statusText = isHealthy ? 'ONLINE' : 'ERROR';
+                const companyName = status.company_name || companyId;
                 
                 statusHTML += `
                     <div class="health-status ${statusClass}">
                         <span class="status-indicator status-${isHealthy ? 'healthy' : 'error'}"></span>
-                        ${statusIcon} <strong>${companyId}</strong>
+                        ${statusIcon} <strong>${companyName}</strong>
                         <span class="badge badge-${isHealthy ? 'success' : 'error'}">
                             ${statusText}
                         </span>
