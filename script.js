@@ -932,6 +932,7 @@ async function deleteConversation() {
         console.error('Error deleting conversation:', error);
         showNotification('Error al eliminar conversación: ' + error.message, 'error');
     }
+} // <- Esta llave de cierre faltaba
 
 /**
  * Carga la lista de conversaciones
@@ -1811,4 +1812,4 @@ window.stopRealTimeMonitoring = stopRealTimeMonitoring;
 window.clearSystemLog = clearSystemLog;
 
 // Log final de inicialización del script
-    addToLog('Script loaded successfully', 'info');
+addToLog('Script loaded successfully', 'info');
