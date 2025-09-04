@@ -44,5 +44,6 @@ const CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => {
   );
 };
 
+
 export default CompanySelector;
 
