@@ -1,4 +1,4 @@
-# app/__init__.py - Multi-Tenant Flask Application Factory - VERSIÓN FINAL
+# app/__init__.py - Multi-Tenant Flask Application Factory - VERSIÓN CORREGIDA
 
 from flask import Flask, request, send_from_directory, send_file, jsonify
 from app.config import Config
@@ -24,19 +24,16 @@ import threading
 import time
 import os
 
-
-app = Flask(__name__)
-
-# =============================
-# Configuración del directorio React build
-# =============================
-REACT_BUILD_DIR = os.path.join(os.getcwd(), 'src', 'build')
-
-
 def create_app(config_class=Config):
     """Factory pattern para crear la aplicación Flask multi-tenant"""
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)  # Desactivar static folder por defecto
     app.config.from_object(config_class)
+    
+    # =============================
+    # Configuración del directorio React build
+    # =============================
+    REACT_BUILD_DIR = os.path.join('/app', 'src', 'build')
+    STATIC_DIR = os.path.join(REACT_BUILD_DIR, 'static')
     
     # Configurar logging con contexto multi-tenant
     logging.basicConfig(
@@ -47,6 +44,12 @@ def create_app(config_class=Config):
     
     logger = logging.getLogger(__name__)
     logger.info("🚀 Initializing Multi-Tenant Chatbot System")
+    
+    # Log de configuración de archivos estáticos
+    logger.info(f"📁 React build directory: {REACT_BUILD_DIR}")
+    logger.info(f"📁 Static directory: {STATIC_DIR}")
+    logger.info(f"📁 Build exists: {os.path.exists(REACT_BUILD_DIR)}")
+    logger.info(f"📁 Static exists: {os.path.exists(STATIC_DIR)}")
     
     # Inicializar servicios básicos
     with app.app_context():
@@ -161,6 +164,10 @@ def create_app(config_class=Config):
                 "version": "1.0.0",
                 "companies_configured": len(companies),
                 "available_companies": list(companies.keys()),
+                "frontend_build": {
+                    "exists": os.path.exists(REACT_BUILD_DIR),
+                    "path": REACT_BUILD_DIR
+                },
                 "endpoints": {
                     "health": "/api/health",
                     "companies": "/api/companies",
@@ -200,7 +207,9 @@ def create_app(config_class=Config):
             health_data = {
                 "status": "healthy",
                 "timestamp": time.time(),
-                "system_type": "multi-tenant-multi-agent"
+                "system_type": "multi-tenant-multi-agent",
+                "frontend_ready": os.path.exists(os.path.join(REACT_BUILD_DIR, 'index.html')),
+                "static_ready": os.path.exists(STATIC_DIR)
             }
             
             # Health check específico de empresa si se proporciona
@@ -242,76 +251,141 @@ def create_app(config_class=Config):
     @app.route('/debug/build-structure')
     def debug_build_structure():
         """Ver la estructura completa de archivos build"""
-        build_path = '/app/src/build'
         result = {
-            "build_path": build_path,
-            "exists": os.path.exists(build_path)
+            "build_path": REACT_BUILD_DIR,
+            "exists": os.path.exists(REACT_BUILD_DIR),
+            "static_path": STATIC_DIR,
+            "static_exists": os.path.exists(STATIC_DIR)
         }
         
-        if os.path.exists(build_path):
-            all_files = []
-            for root, dirs, files in os.walk(build_path):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, build_path)
-                    all_files.append({
-                        "path": rel_path,
-                        "size": os.path.getsize(full_path),
-                        "full_path": full_path
-                    })
-            result["all_files"] = all_files
-            result["total_files"] = len(all_files)
-            
-            static_path = os.path.join(build_path, 'static')
-            if os.path.exists(static_path):
-                result["static_structure"] = {
-                    "css_exists": os.path.exists(os.path.join(static_path, 'css')),
-                    "js_exists": os.path.exists(os.path.join(static_path, 'js')),
-                    "css_files": os.listdir(os.path.join(static_path, 'css')) if os.path.exists(os.path.join(static_path, 'css')) else [],
-                    "js_files": os.listdir(os.path.join(static_path, 'js')) if os.path.exists(os.path.join(static_path, 'js')) else []
-                }
+        if os.path.exists(REACT_BUILD_DIR):
+            try:
+                all_files = []
+                for root, dirs, files in os.walk(REACT_BUILD_DIR):
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, REACT_BUILD_DIR)
+                        all_files.append({
+                            "path": rel_path,
+                            "size": os.path.getsize(full_path),
+                            "full_path": full_path
+                        })
+                result["all_files"] = all_files
+                result["total_files"] = len(all_files)
+                
+                # Estructura específica de static
+                if os.path.exists(STATIC_DIR):
+                    css_dir = os.path.join(STATIC_DIR, 'css')
+                    js_dir = os.path.join(STATIC_DIR, 'js')
+                    
+                    result["static_structure"] = {
+                        "css_exists": os.path.exists(css_dir),
+                        "js_exists": os.path.exists(js_dir),
+                        "css_files": os.listdir(css_dir) if os.path.exists(css_dir) else [],
+                        "js_files": os.listdir(js_dir) if os.path.exists(js_dir) else []
+                    }
+                
+                # Archivos críticos
+                critical_files = ['index.html', 'manifest.json', 'favicon.ico']
+                result["critical_files"] = {}
+                for file in critical_files:
+                    file_path = os.path.join(REACT_BUILD_DIR, file)
+                    result["critical_files"][file] = {
+                        "exists": os.path.exists(file_path),
+                        "path": file_path
+                    }
+                    
+            except Exception as e:
+                result["error"] = str(e)
         
         return jsonify(result)
-
+    
+    # ================================================================
+    # SERVIR ARCHIVOS ESTÁTICOS - CONFIGURACIÓN CORREGIDA
+    # ================================================================
+    
     @app.route('/static/<path:filename>')
     def serve_static(filename):
-        static_dir = os.path.join(REACT_BUILD_DIR, 'static')
-        full_path = os.path.join(static_dir, filename)
-    
-        app.logger.info(f"Static request: {filename}")
-        app.logger.info(f"Expected path: {full_path}")
-        app.logger.info(f"Exists: {os.path.exists(full_path)}")
-    
-        if os.path.exists(full_path):
-            return send_from_directory(static_dir, filename)
+        """Servir todos los archivos estáticos (JS, CSS, etc.)"""
+        static_file_path = os.path.join(STATIC_DIR, filename)
+        
+        logger.info(f"📁 Static request: {filename}")
+        logger.info(f"📁 Looking for: {static_file_path}")
+        logger.info(f"📁 Exists: {os.path.exists(static_file_path)}")
+        
+        if os.path.exists(static_file_path):
+            logger.info(f"✅ Serving static file: {filename}")
+            return send_file(static_file_path)
         else:
-            # ✅ Si no encuentra, debug response
+            logger.error(f"❌ Static file not found: {filename}")
             return jsonify({
                 "error": "Static file not found",
                 "requested": filename,
-                "expected_path": full_path,
+                "expected_path": static_file_path,
+                "static_dir": STATIC_DIR,
                 "build_dir": REACT_BUILD_DIR
             }), 404
-
+    
+    @app.route('/manifest.json')
+    def serve_manifest():
+        """Servir manifest.json"""
+        manifest_path = os.path.join(REACT_BUILD_DIR, 'manifest.json')
+        logger.info(f"📄 Manifest request: {manifest_path}")
+        
+        if os.path.exists(manifest_path):
+            logger.info("✅ Serving manifest.json")
+            return send_file(manifest_path)
+        else:
+            logger.error("❌ manifest.json not found")
+            return jsonify({"error": "manifest.json not found"}), 404
+    
+    @app.route('/favicon.ico')
+    def serve_favicon():
+        """Servir favicon"""
+        favicon_path = os.path.join(REACT_BUILD_DIR, 'favicon.ico')
+        if os.path.exists(favicon_path):
+            return send_file(favicon_path)
+        return '', 404
+    
+    @app.route('/asset-manifest.json')
+    def serve_asset_manifest():
+        """Servir asset-manifest.json si existe"""
+        asset_manifest_path = os.path.join(REACT_BUILD_DIR, 'asset-manifest.json')
+        if os.path.exists(asset_manifest_path):
+            return send_file(asset_manifest_path)
+        return jsonify({"error": "asset-manifest.json not found"}), 404
+    
+    # ================================================================
+    # SERVIR REACT APP - CATCH-ALL ROUTE
+    # ================================================================
+    
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve_react(path):
-        # Evitar que APIs o rutas internas pasen por aquí
+        """Servir React app con fallback correcto"""
+        
+        # No interferir con rutas de API
         if path.startswith('api/') or path.startswith('debug/'):
-            return jsonify({"error": "API endpoint not found"}), 404
-    
+            logger.warning(f"⚠️ API route not found: {path}")
+            return jsonify({"error": f"API endpoint not found: {path}"}), 404
+        
+        # Servir index.html para todas las rutas de frontend
         index_path = os.path.join(REACT_BUILD_DIR, 'index.html')
-    
-        # ✅ Si el archivo existe, servirlo
+        
+        logger.info(f"🌐 React route request: '{path}'")
+        logger.info(f"📄 Serving index from: {index_path}")
+        logger.info(f"📄 Index exists: {os.path.exists(index_path)}")
+        
         if os.path.exists(index_path):
-            app.logger.info(f"📄 Serving React app from: {index_path}")
+            logger.info("✅ Serving React app")
             return send_file(index_path)
         else:
-            # ✅ Si no existe, devolver un error informativo
-            app.logger.error(f"❌ React build not found at {index_path}")
+            logger.error(f"❌ React build not found at {index_path}")
             return jsonify({
                 "error": "React build not found",
-                "expected_path": index_path
+                "expected_path": index_path,
+                "build_dir": REACT_BUILD_DIR,
+                "suggestion": "Check if build was created correctly in Docker"
             }), 500
 
     # ================================================================
@@ -319,20 +393,6 @@ def create_app(config_class=Config):
     # ================================================================
     with app.app_context():
         initialize_multitenant_system(app)
-    start_background_initialization(app)
-    
-    logger.info("🎉 Multi-Tenant Flask application created successfully")
-    return app
-    
-    # ============================================================================
-    # INICIALIZACIÓN MULTI-TENANT
-    # ============================================================================
-    
-    # Inicializar sistemas multi-tenant después de crear la app
-    with app.app_context():
-        initialize_multitenant_system(app)
-    
-    # Iniciar inicialización en background para mejor performance
     start_background_initialization(app)
     
     logger.info("🎉 Multi-Tenant Flask application created successfully")
