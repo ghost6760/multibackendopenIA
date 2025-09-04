@@ -934,7 +934,10 @@ Para agendar necesito:
     def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
         """Ejecutar cadena del agente"""
         return self.chain.invoke(inputs)
-    
+    # Alias para compatibilidad con AvailabilityAgent
+    def check_availability(self, question: str, chat_history: list, schedule_context: str = "") -> str:
+        return self._handle_availability_check(question, chat_history, schedule_context)
+
     def get_integration_status(self) -> Dict[str, Any]:
         """Obtener estado de la integración de agendamiento"""
         return {
