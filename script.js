@@ -782,22 +782,47 @@ async function testConversation() {
     try {
         toggleLoadingOverlay(true);
         
-        const response = await apiRequest(`/api/conversations/${userId}/test`, {
+        // Crear AbortController para timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+        
+        console.log(`Testing conversation for user: ${userId}, company: ${currentCompanyId}`);
+        console.log(`Message: ${message}`);
+        
+        const response = await fetch(`${API_BASE_URL}/api/conversations/${userId}/test`, {
             method: 'POST',
-            body: {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Company-ID': currentCompanyId
+            },
+            body: JSON.stringify({
                 message: message,
                 company_id: currentCompanyId
-            }
+            }),
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
+        
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
+            throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('Response data:', data);
         
         const container = document.getElementById('conversationResult');
         container.innerHTML = `
             <div class="result-container result-success">
                 <h4>💬 Respuesta del Bot</h4>
                 <p><strong>Usuario:</strong> ${escapeHTML(message)}</p>
-                <p><strong>Bot:</strong> ${escapeHTML(response.bot_response || response.response || 'Sin respuesta')}</p>
-                <p><strong>Agente usado:</strong> ${response.agent_used || 'Desconocido'}</p>
-                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+                <p><strong>Bot:</strong> ${escapeHTML(data.bot_response || data.response || data.message || 'Sin respuesta')}</p>
+                <p><strong>Agente usado:</strong> ${data.agent_used || data.agent || 'Desconocido'}</p>
+                <p><strong>Empresa:</strong> ${data.company_id || currentCompanyId}</p>
+                ${data.processing_time ? `<p><strong>Tiempo de procesamiento:</strong> ${data.processing_time}ms</p>` : ''}
             </div>
         `;
         
@@ -805,13 +830,27 @@ async function testConversation() {
         
     } catch (error) {
         console.error('Error testing conversation:', error);
+        
+        let errorMessage = error.message;
+        
+        if (error.name === 'AbortError') {
+            errorMessage = 'La solicitud tardó demasiado en responder (timeout de 30 segundos)';
+        }
+        
         const container = document.getElementById('conversationResult');
         container.innerHTML = `
             <div class="result-container result-error">
                 <p>❌ Error al probar conversación</p>
-                <p>${escapeHTML(error.message)}</p>
+                <p><strong>Error:</strong> ${escapeHTML(errorMessage)}</p>
+                <p><strong>Usuario:</strong> ${escapeHTML(userId)}</p>
+                <p><strong>Mensaje enviado:</strong> ${escapeHTML(message)}</p>
+                <p><strong>Empresa:</strong> ${currentCompanyId}</p>
+                <small>Revisa los logs del servidor para más detalles</small>
             </div>
         `;
+        
+        showNotification('Error al probar conversación: ' + errorMessage, 'error');
+        
     } finally {
         toggleLoadingOverlay(false);
     }
@@ -894,7 +933,6 @@ async function deleteConversation() {
         console.error('Error deleting conversation:', error);
         showNotification('Error al eliminar conversación: ' + error.message, 'error');
     }
-}
 
 /**
  * Carga la lista de conversaciones
