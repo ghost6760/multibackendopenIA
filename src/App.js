@@ -1,27 +1,36 @@
 // src/App.js - Frontend React Multi-Tenant completamente funcional
 
 import React, { useState, useEffect, useCallback } from 'react';
-import './styles/globals.css';
 
 // Servicios
 import { apiService } from './services/api';
 
 // Componentes principales con fallbacks
-let CompanySelector, Dashboard, DocumentManager, ChatTester, AdminPanel, LoadingSpinner, TabNavigation;
+let CompanySelector, Dashboard, DocumentManager, ChatTester, AdminPanel, LoadingSpinner;
 
 try {
   CompanySelector = require('./components/CompanySelector').default;
 } catch {
   CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => (
-    <div className="mb-6">
-      <label className="block text-sm font-medium text-white mb-2">Seleccionar Empresa:</label>
+    <div style={{ marginBottom: '1.5rem' }}>
+      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>
+        Seleccionar Empresa:
+      </label>
       <select 
         value={selectedCompany?.company_id || ''} 
         onChange={(e) => {
           const company = companies.find(c => c.company_id === e.target.value);
           onCompanyChange(company);
         }}
-        className="block w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
+        style={{
+          display: 'block',
+          width: '100%',
+          padding: '0.75rem',
+          border: '1px solid #d1d5db',
+          borderRadius: '0.375rem',
+          background: 'white',
+          fontSize: '1rem'
+        }}
       >
         <option value="">Seleccionar empresa...</option>
         {companies.map(company => (
@@ -61,23 +70,52 @@ try {
     };
 
     return (
-      <div className="bg-white/95 backdrop-blur-sm rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">💬 Chat Testing</h3>
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        backdropFilter: 'blur(4px)',
+        borderRadius: '0.75rem',
+        padding: '1.5rem'
+      }}>
+        <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1f2937', marginBottom: '1rem' }}>
+          💬 Chat Testing
+        </h3>
         
-        <div className="h-96 overflow-y-auto mb-4 p-4 bg-gray-50 rounded-lg">
+        <div style={{
+          height: '24rem',
+          overflowY: 'auto',
+          marginBottom: '1rem',
+          padding: '1rem',
+          background: '#f9fafb',
+          borderRadius: '0.5rem',
+          border: '1px solid #e5e7eb'
+        }}>
           {messages.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">Inicia una conversación con el chatbot...</p>
+            <p style={{ color: '#6b7280', textAlign: 'center', padding: '2rem 0' }}>
+              Inicia una conversación con el chatbot...
+            </p>
           ) : (
             messages.map((msg, index) => (
-              <div key={index} className={`mb-4 ${msg.type === 'user' ? 'text-right' : 'text-left'}`}>
-                <div className={`inline-block max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                  msg.type === 'user' ? 'bg-blue-600 text-white' :
-                  msg.type === 'error' ? 'bg-red-100 text-red-800' :
-                  'bg-gray-200 text-gray-800'
-                }`}>
+              <div key={index} style={{
+                marginBottom: '1rem',
+                textAlign: msg.type === 'user' ? 'right' : 'left'
+              }}>
+                <div style={{
+                  display: 'inline-block',
+                  maxWidth: '20rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '0.5rem',
+                  background: msg.type === 'user' ? '#3b82f6' : 
+                            msg.type === 'error' ? '#fef2f2' : '#f3f4f6',
+                  color: msg.type === 'user' ? 'white' :
+                         msg.type === 'error' ? '#dc2626' : '#1f2937'
+                }}>
                   {msg.content}
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
+                <div style={{
+                  fontSize: '0.75rem',
+                  color: '#6b7280',
+                  marginTop: '0.25rem'
+                }}>
                   {msg.timestamp.toLocaleTimeString()}
                 </div>
               </div>
@@ -85,34 +123,80 @@ try {
           )}
         </div>
 
-        <form onSubmit={handleSend} className="flex space-x-2">
+        <form onSubmit={handleSend} style={{ display: 'flex', gap: '0.5rem' }}>
           <input
             type="text"
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             placeholder="Escribe tu mensaje..."
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              flex: 1,
+              padding: '0.75rem 1rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '0.5rem',
+              fontSize: '1rem',
+              outline: 'none'
+            }}
             disabled={sending}
           />
           <button
             type="submit"
             disabled={sending || !inputMessage.trim()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: sending || !inputMessage.trim() ? '#9ca3af' : '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.5rem',
+              cursor: sending || !inputMessage.trim() ? 'not-allowed' : 'pointer',
+              fontSize: '1rem'
+            }}
           >
             {sending ? 'Enviando...' : 'Enviar'}
           </button>
         </form>
 
-        <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-          <h4 className="font-medium text-blue-900 mb-2">🎤 Funciones Multimedia</h4>
-          <div className="flex space-x-2">
-            <button className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+        <div style={{
+          marginTop: '1rem',
+          padding: '1rem',
+          background: '#dbeafe',
+          borderRadius: '0.5rem'
+        }}>
+          <h4 style={{ fontWeight: '500', color: '#1e40af', marginBottom: '0.5rem' }}>
+            🎤 Funciones Multimedia
+          </h4>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button style={{
+              padding: '0.5rem 0.75rem',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.25rem',
+              fontSize: '0.875rem',
+              cursor: 'pointer'
+            }}>
               🎤 Grabar Audio
             </button>
-            <button className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700">
+            <button style={{
+              padding: '0.5rem 0.75rem',
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.25rem',
+              fontSize: '0.875rem',
+              cursor: 'pointer'
+            }}>
               📷 Capturar Imagen
             </button>
-            <button className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-700">
+            <button style={{
+              padding: '0.5rem 0.75rem',
+              background: '#8b5cf6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.25rem',
+              fontSize: '0.875rem',
+              cursor: 'pointer'
+            }}>
               📁 Subir Archivo
             </button>
           </div>
@@ -164,27 +248,52 @@ try {
     };
 
     return (
-      <div className="space-y-6">
-        <div className="bg-white/95 backdrop-blur-sm rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">📁 Gestión de Documentos</h3>
+      <div>
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          backdropFilter: 'blur(4px)',
+          borderRadius: '0.75rem',
+          padding: '1.5rem'
+        }}>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1f2937', marginBottom: '1rem' }}>
+            📁 Gestión de Documentos
+          </h3>
           
-          <form onSubmit={handleUpload} className="mb-6">
-            <div className="flex space-x-4 items-end">
-              <div className="flex-1">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+          <form onSubmit={handleUpload} style={{ marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'end' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '0.875rem',
+                  fontWeight: '500',
+                  color: '#374151',
+                  marginBottom: '0.25rem'
+                }}>
                   Subir Documento
                 </label>
                 <input
                   type="file"
                   onChange={(e) => setUploadFile(e.target.files[0])}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.5rem'
+                  }}
                   accept=".pdf,.txt,.doc,.docx"
                 />
               </div>
               <button
                 type="submit"
                 disabled={!uploadFile}
-                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: !uploadFile ? '#9ca3af' : '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.5rem',
+                  cursor: !uploadFile ? 'not-allowed' : 'pointer'
+                }}
               >
                 📤 Subir
               </button>
@@ -192,34 +301,69 @@ try {
           </form>
 
           <div>
-            <div className="flex justify-between items-center mb-4">
-              <h4 className="font-medium text-gray-900">Documentos ({documents.length})</h4>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '1rem'
+            }}>
+              <h4 style={{ fontWeight: '500', color: '#111827' }}>
+                Documentos ({documents.length})
+              </h4>
               <button
                 onClick={loadDocuments}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  cursor: 'pointer'
+                }}
               >
                 🔄 Actualizar
               </button>
             </div>
 
             {loading ? (
-              <div className="text-center py-8">
-                <div className="loading-spinner mx-auto mb-2"></div>
-                <p className="text-gray-500">Cargando documentos...</p>
+              <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                <div className="loading-spinner" style={{ margin: '0 auto 0.5rem' }}></div>
+                <p style={{ color: '#6b7280' }}>Cargando documentos...</p>
               </div>
             ) : documents.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">No hay documentos disponibles</p>
+              <p style={{ color: '#6b7280', textAlign: 'center', padding: '2rem 0' }}>
+                No hay documentos disponibles
+              </p>
             ) : (
-              <div className="space-y-2">
+              <div>
                 {documents.map((doc, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div key={index} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.75rem',
+                    background: '#f9fafb',
+                    borderRadius: '0.5rem',
+                    marginBottom: '0.5rem'
+                  }}>
                     <div>
-                      <div className="font-medium text-gray-900">{doc.filename || `Documento ${index + 1}`}</div>
-                      <div className="text-sm text-gray-500">
+                      <div style={{ fontWeight: '500', color: '#111827' }}>
+                        {doc.filename || `Documento ${index + 1}`}
+                      </div>
+                      <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
                         {doc.content_type} • {doc.size ? `${(doc.size/1024).toFixed(1)} KB` : 'Tamaño desconocido'}
                       </div>
                     </div>
-                    <button className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700">
+                    <button style={{
+                      padding: '0.25rem 0.75rem',
+                      background: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.875rem',
+                      cursor: 'pointer'
+                    }}>
                       🗑️ Eliminar
                     </button>
                   </div>
@@ -269,68 +413,139 @@ try {
     }, [company]);
 
     return (
-      <div className="space-y-6">
-        <div className="bg-white/95 backdrop-blur-sm rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">⚙️ Panel de Administración</h3>
+      <div>
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          backdropFilter: 'blur(4px)',
+          borderRadius: '0.75rem',
+          padding: '1.5rem',
+          marginBottom: '1.5rem'
+        }}>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#1f2937', marginBottom: '1rem' }}>
+            ⚙️ Panel de Administración
+          </h3>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '1rem',
+            marginBottom: '1.5rem'
+          }}>
             <button
               onClick={loadHealth}
-              className="p-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              style={{
+                padding: '1rem',
+                background: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
             >
-              <div className="text-2xl mb-2">💚</div>
-              <div className="font-medium">Health Check</div>
-              <div className="text-sm opacity-90">Verificar estado del sistema</div>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>💚</div>
+              <div style={{ fontWeight: '500' }}>Health Check</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9 }}>Verificar estado del sistema</div>
             </button>
 
             <button
               onClick={runDiagnostics}
-              className="p-4 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              style={{
+                padding: '1rem',
+                background: '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
             >
-              <div className="text-2xl mb-2">🔬</div>
-              <div className="font-medium">Diagnósticos</div>
-              <div className="text-sm opacity-90">Ejecutar pruebas completas</div>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🔬</div>
+              <div style={{ fontWeight: '500' }}>Diagnósticos</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9 }}>Ejecutar pruebas completas</div>
             </button>
 
             <button
               onClick={() => window.open('/debug/build-structure', '_blank')}
-              className="p-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              style={{
+                padding: '1rem',
+                background: '#8b5cf6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                textAlign: 'center'
+              }}
             >
-              <div className="text-2xl mb-2">🔧</div>
-              <div className="font-medium">Debug Info</div>
-              <div className="text-sm opacity-90">Información técnica</div>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🔧</div>
+              <div style={{ fontWeight: '500' }}>Debug Info</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9 }}>Información técnica</div>
             </button>
           </div>
 
           {systemHealth && (
-            <div className="bg-gray-50 rounded-lg p-4 mb-4">
-              <h4 className="font-medium text-gray-900 mb-2">Estado del Sistema</h4>
-              <pre className="text-sm text-gray-600 overflow-auto">
+            <div style={{
+              background: '#f9fafb',
+              borderRadius: '0.5rem',
+              padding: '1rem',
+              marginBottom: '1rem'
+            }}>
+              <h4 style={{ fontWeight: '500', color: '#111827', marginBottom: '0.5rem' }}>
+                Estado del Sistema
+              </h4>
+              <pre style={{
+                fontSize: '0.875rem',
+                color: '#4b5563',
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap'
+              }}>
                 {JSON.stringify(systemHealth, null, 2)}
               </pre>
             </div>
           )}
 
           {diagnostics && (
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-2">Resultados de Diagnósticos</h4>
-              <pre className="text-sm text-gray-600 overflow-auto">
+            <div style={{
+              background: '#f9fafb',
+              borderRadius: '0.5rem',
+              padding: '1rem'
+            }}>
+              <h4 style={{ fontWeight: '500', color: '#111827', marginBottom: '0.5rem' }}>
+                Resultados de Diagnósticos
+              </h4>
+              <pre style={{
+                fontSize: '0.875rem',
+                color: '#4b5563',
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap'
+              }}>
                 {JSON.stringify(diagnostics, null, 2)}
               </pre>
             </div>
           )}
         </div>
 
-        <div className="bg-white/95 backdrop-blur-sm rounded-xl p-6">
-          <h4 className="font-medium text-gray-900 mb-4">Empresas Configuradas</h4>
-          <div className="space-y-2">
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          backdropFilter: 'blur(4px)',
+          borderRadius: '0.75rem',
+          padding: '1.5rem'
+        }}>
+          <h4 style={{ fontWeight: '500', color: '#111827', marginBottom: '1rem' }}>
+            Empresas Configuradas
+          </h4>
+          <div>
             {companies.map((comp) => (
-              <div key={comp.company_id} className={`p-3 rounded-lg border ${
-                company?.company_id === comp.company_id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-              }`}>
-                <div className="font-medium">{comp.company_name}</div>
-                <div className="text-sm text-gray-500">ID: {comp.company_id}</div>
-                <div className="text-sm text-gray-500">
+              <div key={comp.company_id} style={{
+                padding: '0.75rem',
+                borderRadius: '0.5rem',
+                border: company?.company_id === comp.company_id ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                background: company?.company_id === comp.company_id ? '#eff6ff' : 'white',
+                marginBottom: '0.5rem'
+              }}>
+                <div style={{ fontWeight: '500' }}>{comp.company_name}</div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>ID: {comp.company_id}</div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
                   Servicios: {comp.services_count || 0} • 
                   Configuración Extendida: {comp.has_extended_config ? '✅' : '❌'}
                 </div>
@@ -352,17 +567,26 @@ const TabNavigation = ({ activeTab, onTabChange }) => {
   ];
 
   return (
-    <div className="mb-8">
-      <nav className="flex space-x-8">
+    <div style={{ marginBottom: '2rem' }}>
+      <nav style={{ display: 'flex', gap: '2rem' }}>
         {tabs.map(({ id, label, icon }) => (
           <button
             key={id}
             onClick={() => onTabChange(id)}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === id
-                ? 'bg-white text-blue-600 shadow-sm'
-                : 'text-white/80 hover:text-white hover:bg-white/10'
-            }`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.75rem 1rem',
+              borderRadius: '0.5rem',
+              fontWeight: '500',
+              border: 'none',
+              cursor: 'pointer',
+              background: activeTab === id ? 'white' : 'transparent',
+              color: activeTab === id ? '#3b82f6' : 'rgba(255, 255, 255, 0.8)',
+              boxShadow: activeTab === id ? '0 1px 3px rgba(0, 0, 0, 0.1)' : 'none',
+              transition: 'all 0.2s ease'
+            }}
           >
             <span>{icon}</span>
             <span>{label}</span>
@@ -445,11 +669,19 @@ function App() {
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-purple-700 flex items-center justify-center">
-        <div className="text-center text-white">
-          <div className="loading-spinner mx-auto mb-4"></div>
-          <h2 className="text-xl font-semibold mb-2">Cargando Multi-Tenant Admin</h2>
-          <p className="text-white/80">Inicializando sistema...</p>
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #3b82f6, #8b5cf6, #8b5cf6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{ textAlign: 'center', color: 'white' }}>
+          <div className="loading-spinner" style={{ margin: '0 auto 1rem' }}></div>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
+            Cargando Multi-Tenant Admin
+          </h2>
+          <p style={{ color: 'rgba(255, 255, 255, 0.8)' }}>Inicializando sistema...</p>
         </div>
       </div>
     );
@@ -458,28 +690,75 @@ function App() {
   // Error state
   if (error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl p-8 max-w-md w-full text-center">
-          <div className="text-red-600 mb-4">
-            <div className="w-16 h-16 mx-auto bg-red-100 rounded-full flex items-center justify-center text-2xl">
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem'
+      }}>
+        <div style={{
+          background: 'white',
+          borderRadius: '0.75rem',
+          padding: '2rem',
+          maxWidth: '28rem',
+          width: '100%',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            color: '#dc2626',
+            marginBottom: '1rem'
+          }}>
+            <div style={{
+              width: '4rem',
+              height: '4rem',
+              margin: '0 auto',
+              background: '#fef2f2',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '1.5rem'
+            }}>
               ⚠️
             </div>
           </div>
-          <h2 className="text-xl font-bold text-gray-800 mb-4">Error de Conexión</h2>
-          <p className="text-gray-600 mb-6">{error}</p>
-          <div className="space-y-3">
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1rem' }}>
+            Error de Conexión
+          </h2>
+          <p style={{ color: '#4b5563', marginBottom: '1.5rem' }}>{error}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <button
               onClick={initializeApp}
-              className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem',
+                background: '#dc2626',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
             >
               🔄 Reintentar
             </button>
-            <div className="flex space-x-2">
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
               <a
                 href="/api/system/info"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm text-center"
+                style={{
+                  flex: 1,
+                  padding: '0.5rem 0.75rem',
+                  background: '#4b5563',
+                  color: 'white',
+                  textDecoration: 'none',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  textAlign: 'center'
+                }}
               >
                 📊 System Info
               </a>
@@ -487,7 +766,16 @@ function App() {
                 href="/debug/build-structure"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm text-center"
+                style={{
+                  flex: 1,
+                  padding: '0.5rem 0.75rem',
+                  background: '#3b82f6',
+                  color: 'white',
+                  textDecoration: 'none',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.875rem',
+                  textAlign: 'center'
+                }}
               >
                 🔧 Debug
               </a>
@@ -499,81 +787,132 @@ function App() {
   }
 
   // Aplicación principal
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-purple-700">
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6, #8b5cf6)'
+    }}>
       {/* Header */}
-      <header className="bg-white/10 backdrop-blur-sm border-b border-white/20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
-                <span className="text-xl">🚀</span>
+      <header style={{
+        background: 'rgba(255, 255, 255, 0.1)',
+        backdropFilter: 'blur(4px)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.2)'
+      }}>
+        <div style={{
+          maxWidth: '80rem',
+          margin: '0 auto',
+          padding: '1rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{
+              width: '2.5rem',
+              height: '2.5rem',
+              background: 'white',
+              borderRadius: '0.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <span style={{ fontSize: '1.25rem' }}>🚀</span>
+            </div>
+            <div>
+              <h1 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'white', margin: 0 }}>
+                Multi-Tenant Admin
+              </h1>
+              <p style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '0.875rem', margin: 0 }}>
+                Sistema de Gestión Multi-Tenant
+              </p>
+            </div>
+          </div>
+          
+          {/* Información del estado en la parte derecha del header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ color: 'white', fontSize: '0.875rem', fontWeight: '500' }}>
+                {selectedCompany?.company_name || 'Sin empresa'}
               </div>
-              <div>
-                <h1 className="text-xl font-bold text-white">Multi-Tenant Admin</h1>
-                <p className="text-white/70 text-sm">Sistema de Gestión Multi-Tenant</p>
+              <div style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '0.75rem' }}>
+                {companies.length} empresa{companies.length !== 1 ? 's' : ''} disponible{companies.length !== 1 ? 's' : ''}
               </div>
             </div>
-            
-            <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <div className="text-white text-sm font-medium">
-                  {selectedCompany?.company_name || 'Sin empresa'}
-                </div>
-                <div className="text-white/70 text-xs">
-                  {companies.length} empresa{companies.length !== 1 ? 's' : ''} disponible{companies.length !== 1 ? 's' : ''}
-                </div>
-              </div>
-              <div className={`w-3 h-3 rounded-full ${
-                systemStatus.status === 'healthy' || systemStatus.data?.status === 'healthy' 
-                  ? 'bg-green-400' 
-                  : 'bg-red-400'
-              }`} title="Estado del sistema"></div>
-            </div>
+            <div style={{
+              width: '0.75rem',
+              height: '0.75rem',
+              borderRadius: '50%',
+              background: systemStatus.status === 'healthy' || systemStatus.data?.status === 'healthy' 
+                ? '#4ade80' 
+                : '#ef4444'
+            }} title="Estado del sistema"></div>
           </div>
         </div>
       </header>
-
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Company selector */}
+  
+      {/* Contenido principal */}
+      <main style={{
+        maxWidth: '80rem',
+        margin: '0 auto',
+        padding: '2rem 1rem'
+      }}>
+        {/* Selector de empresa */}
         <CompanySelector
           companies={companies}
           selectedCompany={selectedCompany}
           onCompanyChange={handleCompanyChange}
         />
-
-        {/* Navigation tabs */}
+  
+        {/* Navegación por tabs */}
         <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
-
-        {/* Tab content */}
+  
+        {/* Contenido según la pestaña activa */}
         {selectedCompany ? (
-          <div className="space-y-6">
+          <div>
             {renderTabContent()}
           </div>
         ) : (
-          <div className="bg-white/95 backdrop-blur-sm rounded-xl p-8 text-center">
-            <div className="text-gray-400 text-6xl mb-4">🏢</div>
-            <h3 className="text-xl font-semibold text-gray-800 mb-2">
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(4px)',
+            borderRadius: '0.75rem',
+            padding: '2rem',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '3.75rem', color: '#9ca3af', marginBottom: '1rem' }}>🏢</div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1f2937', marginBottom: '0.5rem' }}>
               Selecciona una Empresa
             </h3>
-            <p className="text-gray-600">
+            <p style={{ color: '#4b5563' }}>
               Elige una empresa para acceder a las funcionalidades de chat testing, 
               gestión de documentos y administración.
             </p>
             {companies.length === 0 && (
-              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-yellow-800 text-sm">
+              <div style={{
+                marginTop: '1rem',
+                padding: '1rem',
+                background: '#fef3c7',
+                border: '1px solid #fbbf24',
+                borderRadius: '0.5rem'
+              }}>
+                <p style={{ margin: 0, fontSize: '0.875rem', color: '#92400e' }}>
                   ⚠️ No hay empresas configuradas en el sistema.
                 </p>
               </div>
             )}
           </div>
         )}
-
-        {/* Footer info */}
-        <div className="mt-12 text-center">
-          <div className="inline-flex items-center space-x-6 text-white/70 text-sm">
+  
+        {/* Información del pie de página */}
+        <div style={{ marginTop: '3rem', textAlign: 'center' }}>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '1.5rem',
+            color: 'rgba(255, 255, 255, 0.7)',
+            fontSize: '0.875rem'
+          }}>
             <span>Backend: Flask Multi-Tenant</span>
             <span>•</span>
             <span>Frontend: React 18</span>
@@ -586,6 +925,5 @@ function App() {
       </main>
     </div>
   );
-}
 
-export default App;
+  export default App;
