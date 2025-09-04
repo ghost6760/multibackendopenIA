@@ -1,22 +1,42 @@
 // src/components/CompanySelector.jsx
 import React from 'react';
 
-const CompanySelector = ({ companies, currentCompanyId, onChange }) => {
+const CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => {
   return (
-    <div className="flex items-center space-x-4">
-      <label htmlFor="company-select" className="text-sm font-medium text-gray-700">
-        Empresa:
+    <div style={{ marginBottom: '1.5rem' }}>
+      <label style={{ 
+        display: 'block', 
+        fontSize: '0.875rem', 
+        fontWeight: '500', 
+        color: 'white', 
+        marginBottom: '0.5rem' 
+      }}>
+        Seleccionar Empresa:
       </label>
-      <select
-        id="company-select"
-        value={currentCompanyId}
-        onChange={(e) => onChange(e.target.value)}
-        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 bg-white"
+      <select 
+        value={selectedCompany?.company_id || ''} 
+        onChange={(e) => {
+          console.log('Company selected:', e.target.value);
+          const company = companies.find(c => c.company_id === e.target.value);
+          console.log('Found company:', company);
+          if (company) {
+            onCompanyChange(company); // Pasar el objeto completo
+          }
+        }}
+        style={{
+          display: 'block',
+          width: '100%',
+          padding: '0.75rem',
+          border: '1px solid #d1d5db',
+          borderRadius: '0.375rem',
+          background: 'white',
+          fontSize: '1rem'
+        }}
       >
         <option value="">Seleccionar empresa...</option>
-        {Object.values(companies).map((company) => (
+        {companies.map(company => (
           <option key={company.company_id} value={company.company_id}>
-            {company.company_name} ({company.company_id})
+            {company.company_name}
           </option>
         ))}
       </select>
