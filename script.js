@@ -1016,7 +1016,14 @@ function deleteConversationFromList(userId) {
 // ============================================================================
 
 /**
- * Procesa un archivo de audio - CORREGIDO
+ * Variables para grabación de voz
+ */
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+/**
+ * Procesa un archivo de audio - CORREGIDO para mostrar respuesta del bot
  */
 async function processAudio() {
     if (!validateCompanySelection()) return;
@@ -1047,21 +1054,41 @@ async function processAudio() {
             body: formData
         });
         
+        console.log('Full audio response:', response); // Debug
+        
         const container = document.getElementById('audioResult');
-        container.innerHTML = `
+        
+        // Extraer los campos de la respuesta de manera más robusta
+        const transcript = response.transcript || response.transcription || 'Sin transcripción';
+        const botResponse = response.bot_response || response.response || response.message || null;
+        const companyId = response.company_id || currentCompanyId;
+        const processingTime = response.processing_time || response.time || null;
+        
+        let resultHTML = `
             <div class="result-container result-success">
                 <h4>🎵 Procesamiento de Audio Completado</h4>
                 <p><strong>Transcripción:</strong></p>
-                <div class="code-block">${escapeHTML(response.transcript || 'Sin transcripción')}</div>
-                ${response.bot_response ? `
-                    <p><strong>Respuesta del Bot:</strong></p>
-                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
-                ` : ''}
-                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
-                ${response.processing_time ? `<p><strong>Tiempo:</strong> ${response.processing_time}ms</p>` : ''}
-            </div>
+                <div class="code-block">${escapeHTML(transcript)}</div>
         `;
         
+        if (botResponse) {
+            resultHTML += `
+                <p><strong>Respuesta del Bot:</strong></p>
+                <div class="code-block">${escapeHTML(botResponse)}</div>
+            `;
+        }
+        
+        resultHTML += `
+                <p><strong>Empresa:</strong> ${companyId}</p>
+        `;
+        
+        if (processingTime) {
+            resultHTML += `<p><strong>Tiempo:</strong> ${processingTime}ms</p>`;
+        }
+        
+        resultHTML += `</div>`;
+        
+        container.innerHTML = resultHTML;
         showNotification('Audio procesado exitosamente', 'success');
         
     } catch (error) {
@@ -1070,16 +1097,19 @@ async function processAudio() {
         container.innerHTML = `
             <div class="result-container result-error">
                 <p>❌ Error al procesar audio</p>
-                <p>${escapeHTML(error.message)}</p>
+                <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+                <p><strong>Usuario:</strong> ${escapeHTML(userId)}</p>
+                <p><strong>Empresa:</strong> ${currentCompanyId}</p>
             </div>
         `;
+        showNotification('Error al procesar audio: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
     }
 }
 
 /**
- * Procesa una imagen - CORREGIDO
+ * Procesa una imagen - CORREGIDO para mostrar respuesta del bot
  */
 async function processImage() {
     if (!validateCompanySelection()) return;
@@ -1110,21 +1140,41 @@ async function processImage() {
             body: formData
         });
         
+        console.log('Full image response:', response); // Debug
+        
         const container = document.getElementById('imageResult');
-        container.innerHTML = `
+        
+        // Extraer los campos de la respuesta de manera más robusta
+        const analysis = response.analysis || response.description || response.image_analysis || 'Sin análisis';
+        const botResponse = response.bot_response || response.response || response.message || null;
+        const companyId = response.company_id || currentCompanyId;
+        const processingTime = response.processing_time || response.time || null;
+        
+        let resultHTML = `
             <div class="result-container result-success">
                 <h4>📸 Procesamiento de Imagen Completado</h4>
                 <p><strong>Análisis:</strong></p>
-                <div class="code-block">${escapeHTML(response.analysis || response.description || 'Sin análisis')}</div>
-                ${response.bot_response ? `
-                    <p><strong>Respuesta del Bot:</strong></p>
-                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
-                ` : ''}
-                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
-                ${response.processing_time ? `<p><strong>Tiempo:</strong> ${response.processing_time}ms</p>` : ''}
-            </div>
+                <div class="code-block">${escapeHTML(analysis)}</div>
         `;
         
+        if (botResponse) {
+            resultHTML += `
+                <p><strong>Respuesta del Bot:</strong></p>
+                <div class="code-block">${escapeHTML(botResponse)}</div>
+            `;
+        }
+        
+        resultHTML += `
+                <p><strong>Empresa:</strong> ${companyId}</p>
+        `;
+        
+        if (processingTime) {
+            resultHTML += `<p><strong>Tiempo:</strong> ${processingTime}ms</p>`;
+        }
+        
+        resultHTML += `</div>`;
+        
+        container.innerHTML = resultHTML;
         showNotification('Imagen procesada exitosamente', 'success');
         
     } catch (error) {
@@ -1133,29 +1183,14 @@ async function processImage() {
         container.innerHTML = `
             <div class="result-container result-error">
                 <p>❌ Error al procesar imagen</p>
-                <p>${escapeHTML(error.message)}</p>
+                <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+                <p><strong>Usuario:</strong> ${escapeHTML(userId)}</p>
+                <p><strong>Empresa:</strong> ${currentCompanyId}</p>
             </div>
         `;
+        showNotification('Error al procesar imagen: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
-    }
-}
-
-/**
- * NUEVA: Inicializa captura de pantalla
- */
-async function initScreenCapture() {
-    try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: {
-                mediaSource: 'screen'
-            }
-        });
-        
-        return stream;
-    } catch (error) {
-        console.error('Error accessing screen capture:', error);
-        throw new Error('No se pudo acceder a la captura de pantalla');
     }
 }
 
@@ -1172,9 +1207,16 @@ async function captureScreen() {
     }
     
     try {
-        showNotification('Iniciando captura de pantalla...', 'info');
+        showNotification('Solicitando permisos de captura de pantalla...', 'info');
         
-        const stream = await initScreenCapture();
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+                mediaSource: 'screen',
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }
+        });
+        
         const video = document.createElement('video');
         video.srcObject = stream;
         video.play();
@@ -1190,25 +1232,31 @@ async function captureScreen() {
             // Detener el stream
             stream.getTracks().forEach(track => track.stop());
             
-            // Convertir a blob
+            showNotification('Captura realizada, procesando...', 'info');
+            
+            // Convertir a blob y procesar
             canvas.toBlob(async (blob) => {
                 try {
                     await processImageBlob(blob, userId, 'Captura de pantalla');
                 } catch (error) {
                     console.error('Error processing screen capture:', error);
-                    showNotification('Error al procesar captura de pantalla', 'error');
+                    showNotification('Error al procesar captura de pantalla: ' + error.message, 'error');
                 }
-            }, 'image/png');
+            }, 'image/png', 0.9);
         });
         
     } catch (error) {
         console.error('Error capturing screen:', error);
-        showNotification('Error al capturar pantalla: ' + error.message, 'error');
+        if (error.name === 'NotAllowedError') {
+            showNotification('Permisos de captura de pantalla denegados', 'warning');
+        } else {
+            showNotification('Error al capturar pantalla: ' + error.message, 'error');
+        }
     }
 }
 
 /**
- * NUEVA: Procesa blob de imagen
+ * NUEVA: Procesa blob de imagen (para capturas de pantalla)
  */
 async function processImageBlob(blob, userId, description = 'Imagen') {
     try {
@@ -1224,20 +1272,35 @@ async function processImageBlob(blob, userId, description = 'Imagen') {
             body: formData
         });
         
+        console.log('Image blob response:', response); // Debug
+        
         const container = document.getElementById('imageResult');
-        container.innerHTML = `
+        
+        // Extraer campos de manera robusta
+        const analysis = response.analysis || response.description || response.image_analysis || 'Sin análisis';
+        const botResponse = response.bot_response || response.response || response.message || null;
+        const companyId = response.company_id || currentCompanyId;
+        
+        let resultHTML = `
             <div class="result-container result-success">
                 <h4>📸 ${description} Procesada</h4>
                 <p><strong>Análisis:</strong></p>
-                <div class="code-block">${escapeHTML(response.analysis || response.description || 'Sin análisis')}</div>
-                ${response.bot_response ? `
-                    <p><strong>Respuesta del Bot:</strong></p>
-                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
-                ` : ''}
-                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+                <div class="code-block">${escapeHTML(analysis)}</div>
+        `;
+        
+        if (botResponse) {
+            resultHTML += `
+                <p><strong>Respuesta del Bot:</strong></p>
+                <div class="code-block">${escapeHTML(botResponse)}</div>
+            `;
+        }
+        
+        resultHTML += `
+                <p><strong>Empresa:</strong> ${companyId}</p>
             </div>
         `;
         
+        container.innerHTML = resultHTML;
         showNotification(`${description} procesada exitosamente`, 'success');
         
     } catch (error) {
@@ -1245,58 +1308,6 @@ async function processImageBlob(blob, userId, description = 'Imagen') {
         showNotification(`Error al procesar ${description.toLowerCase()}: ${error.message}`, 'error');
     } finally {
         toggleLoadingOverlay(false);
-    }
-}
-
-/**
- * NUEVA: Variables para grabación de voz
- */
-let mediaRecorder = null;
-let audioChunks = [];
-let isRecording = false;
-
-/**
- * NUEVA: Inicializa grabación de voz
- */
-async function initVoiceRecording() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                sampleRate: 44100
-            }
-        });
-        
-        mediaRecorder = new MediaRecorder(stream, {
-            mimeType: 'audio/webm;codecs=opus'
-        });
-        
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-                audioChunks.push(event.data);
-            }
-        };
-        
-        mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            audioChunks = [];
-            
-            const userId = document.getElementById('audioUserId').value.trim();
-            if (userId) {
-                await processAudioBlob(audioBlob, userId);
-            } else {
-                showNotification('Por favor ingresa un ID de usuario', 'warning');
-            }
-            
-            // Detener todos los tracks
-            stream.getTracks().forEach(track => track.stop());
-        };
-        
-        return mediaRecorder;
-    } catch (error) {
-        console.error('Error accessing microphone:', error);
-        throw new Error('No se pudo acceder al micrófono');
     }
 }
 
@@ -1317,7 +1328,43 @@ async function toggleVoiceRecording() {
     try {
         if (!isRecording) {
             // Iniciar grabación
-            await initVoiceRecording();
+            showNotification('Solicitando permisos de micrófono...', 'info');
+            
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    sampleRate: 44100
+                }
+            });
+            
+            // Verificar soporte de MediaRecorder
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+                ? 'audio/webm;codecs=opus' 
+                : 'audio/webm';
+            
+            mediaRecorder = new MediaRecorder(stream, { mimeType });
+            
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+            
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: mimeType });
+                audioChunks = [];
+                
+                try {
+                    await processAudioBlob(audioBlob, userId);
+                } catch (error) {
+                    showNotification('Error al procesar grabación: ' + error.message, 'error');
+                }
+                
+                // Detener todos los tracks
+                stream.getTracks().forEach(track => track.stop());
+            };
+            
             mediaRecorder.start();
             isRecording = true;
             
@@ -1325,7 +1372,7 @@ async function toggleVoiceRecording() {
             button.classList.remove('btn-primary');
             button.classList.add('btn-danger');
             
-            showNotification('Grabación iniciada...', 'info');
+            showNotification('Grabación iniciada... Habla ahora', 'success');
             
         } else {
             // Detener grabación
@@ -1343,7 +1390,12 @@ async function toggleVoiceRecording() {
         
     } catch (error) {
         console.error('Error with voice recording:', error);
-        showNotification('Error con la grabación: ' + error.message, 'error');
+        
+        if (error.name === 'NotAllowedError') {
+            showNotification('Permisos de micrófono denegados', 'warning');
+        } else {
+            showNotification('Error con la grabación: ' + error.message, 'error');
+        }
         
         // Resetear estado
         isRecording = false;
@@ -1354,7 +1406,7 @@ async function toggleVoiceRecording() {
 }
 
 /**
- * NUEVA: Procesa blob de audio
+ * NUEVA: Procesa blob de audio grabado
  */
 async function processAudioBlob(blob, userId) {
     try {
@@ -1370,20 +1422,35 @@ async function processAudioBlob(blob, userId) {
             body: formData
         });
         
+        console.log('Voice recording response:', response); // Debug
+        
         const container = document.getElementById('audioResult');
-        container.innerHTML = `
+        
+        // Extraer campos de manera robusta
+        const transcript = response.transcript || response.transcription || 'Sin transcripción';
+        const botResponse = response.bot_response || response.response || response.message || null;
+        const companyId = response.company_id || currentCompanyId;
+        
+        let resultHTML = `
             <div class="result-container result-success">
                 <h4>🎵 Grabación de Voz Procesada</h4>
                 <p><strong>Transcripción:</strong></p>
-                <div class="code-block">${escapeHTML(response.transcript || 'Sin transcripción')}</div>
-                ${response.bot_response ? `
-                    <p><strong>Respuesta del Bot:</strong></p>
-                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
-                ` : ''}
-                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+                <div class="code-block">${escapeHTML(transcript)}</div>
+        `;
+        
+        if (botResponse) {
+            resultHTML += `
+                <p><strong>Respuesta del Bot:</strong></p>
+                <div class="code-block">${escapeHTML(botResponse)}</div>
+            `;
+        }
+        
+        resultHTML += `
+                <p><strong>Empresa:</strong> ${companyId}</p>
             </div>
         `;
         
+        container.innerHTML = resultHTML;
         showNotification('Grabación procesada exitosamente', 'success');
         
     } catch (error) {
@@ -1395,6 +1462,7 @@ async function processAudioBlob(blob, userId) {
                 <p>${escapeHTML(error.message)}</p>
             </div>
         `;
+        showNotification('Error al procesar grabación: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
     }
