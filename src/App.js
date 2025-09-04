@@ -617,6 +617,7 @@ function App() {
   }, []);
 
   const initializeApp = async () => {
+    console.log('DEBUG: initializeApp started');
     try {
       setLoading(true);
       setError(null);
