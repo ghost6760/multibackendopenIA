@@ -223,10 +223,80 @@ function switchTab(tabName) {
 }
 
 // ============================================================================
-// GESTIÓN DE EMPRESAS
+// GESTIÓN DE EMPRESAS - CORREGIDO
 // ============================================================================
 
-async function loadCompanies
+/**
+ * Carga la lista de empresas disponibles - CORREGIDO
+ */
+async function loadCompanies() {
+    try {
+        if (cache.companies && Array.isArray(cache.companies)) {
+            console.log('Using cached companies:', cache.companies);
+            return cache.companies;
+        }
+        
+        console.log('Loading companies from API...');
+        
+        // Intentar primero el endpoint /api/companies
+        try {
+            const response = await apiRequest('/api/companies');
+            console.log('Response from /api/companies:', response);
+            
+            // El endpoint devuelve: { status: "success", data: { companies: {...}, total_companies: N } }
+            if (response.data && response.data.companies) {
+                const companiesObj = response.data.companies;
+                
+                // Convertir objeto de empresas a array
+                cache.companies = Object.keys(companiesObj).map(companyId => {
+                    const companyData = companiesObj[companyId];
+                    return {
+                        id: companyId,
+                        name: companyData.company_name || companyId
+                    };
+                });
+                
+                console.log('Converted companies from /api/companies:', cache.companies);
+                updateCompanySelector();
+                return cache.companies;
+            }
+            
+        } catch (error) {
+            console.log('Fallback to /api/health/companies due to:', error.message);
+            
+            // Fallback: usar health/companies
+            const response = await apiRequest('/api/health/companies');
+            console.log('Raw response from /api/health/companies:', response);
+            
+            // Convertir el objeto de empresas a array
+            if (response.companies && typeof response.companies === 'object') {
+                cache.companies = Object.keys(response.companies).map(companyId => {
+                    const companyData = response.companies[companyId];
+                    return {
+                        id: companyId,
+                        name: companyData.company_name || companyId
+                    };
+                });
+                
+                console.log('Converted companies from health endpoint:', cache.companies);
+                updateCompanySelector();
+                return cache.companies;
+            }
+        }
+        
+        // Si todo falla, devolver array vacío
+        console.error('No companies data available');
+        cache.companies = [];
+        return [];
+        
+    } catch (error) {
+        console.error('Error loading companies:', error);
+        showNotification('Error al cargar empresas: ' + error.message, 'error');
+        cache.companies = [];
+        return [];
+    }
+}
+
 /**
  * Actualiza el selector de empresas en la UI - CORREGIDO
  */
