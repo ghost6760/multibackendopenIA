@@ -336,80 +336,41 @@ def create_app(config_class=Config):
     # ============================================================================
     # SERVIR FRONTEND REACT
     # ============================================================================
+    REACT_BUILD_DIR = os.path.join(os.getcwd(), 'src', 'build')
 
-    @app.route('/static/css/<filename>')
-    def serve_css_files(filename):
-        """Servir archivos CSS específicamente"""
-        css_path = os.path.join('/app', 'src', 'build', 'static', 'css')
-        logger.info(f"CSS request: {filename}")
-        logger.info(f"CSS path: {css_path}")
-        logger.info(f"CSS file exists: {os.path.exists(os.path.join(css_path, filename))}")
-        
-        if os.path.exists(os.path.join(css_path, filename)):
-            return send_from_directory(css_path, filename)
-        else:
-            return jsonify({"error": "CSS file not found", "requested": filename}), 404
+    @app.route('/static/<path:filename>')
+    def serve_static_files(filename):
+        """Servir archivos estáticos (CSS, JS, media)"""
+        static_dir = os.path.join(REACT_BUILD_DIR, 'static')
+        file_path = os.path.join(static_dir, filename)
     
-    # Forzar captura específica de archivos JS
-    @app.route('/static/js/<filename>')
-    def serve_js_files(filename):
-        """Servir archivos JS específicamente"""
-        js_path = os.path.join('/app', 'src', 'build', 'static', 'js')
-        logger.info(f"JS request: {filename}")
-        logger.info(f"JS path: {js_path}")
-        logger.info(f"JS file exists: {os.path.exists(os.path.join(js_path, filename))}")
-        
-        if os.path.exists(os.path.join(js_path, filename)):
-            return send_from_directory(js_path, filename)
+        app.logger.info(f"Static file requested: {file_path}")
+        if os.path.exists(file_path):
+            return send_from_directory(static_dir, filename, cache_timeout=31536000)
         else:
-            return jsonify({"error": "JS file not found", "requested": filename}), 404
-        
+            return jsonify({"error": "Static file not found", "requested": filename}), 404
+    
+    
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve_react_app(path):
-        """Servir la aplicación React con manejo correcto de archivos estáticos"""
-        
-        # Si es una llamada a la API, no servir frontend
+        """Servir la aplicación React (SPA)"""
+        # Evitar interceptar endpoints de API
         if path.startswith('api/'):
             return jsonify({"error": "API endpoint not found"}), 404
-        
-        # Si es debug, no interferir
-        if path.startswith('debug/'):
-            return jsonify({"error": "Debug endpoint not found"}), 404
-        
-        # MANEJO ESPECÍFICO DE ARCHIVOS ESTÁTICOS - ESTA ES LA CLAVE
-        if path.startswith('static/'):
-            static_file_path = os.path.join('/app', 'src', 'build', path)
-            app.logger.info(f"Static file request: {path}")
-            app.logger.info(f"Full path: {static_file_path}")
-            app.logger.info(f"File exists: {os.path.exists(static_file_path)}")
-            
-            if os.path.exists(static_file_path):
-                app.logger.info(f"✓ Serving static file: {path}")
-                return send_file(static_file_path)
-            else:
-                app.logger.error(f"✗ Static file not found: {path}")
-                return jsonify({
-                    "error": "Static file not found", 
-                    "requested": path,
-                    "full_path": static_file_path,
-                    "exists": False
-                }), 404
-        
-        # Manejar otros archivos específicos (favicon, manifest, etc.)
-        if path in ['favicon.ico', 'Favicon.ico', 'manifest.json', 'robots.txt']:
-            file_path = os.path.join('/app', 'src', 'build', path)
-            if os.path.exists(file_path):
-                return send_file(file_path)
-        
-        # Para todas las demás rutas, servir index.html (SPA routing)
-        index_path = os.path.join('/app', 'src', 'build', 'index.html')
-        
+    
+        # Archivos especiales (favicon, manifest.json, robots.txt)
+        special_files = ['favicon.ico', 'manifest.json', 'robots.txt']
+        if path in special_files:
+            special_file_path = os.path.join(REACT_BUILD_DIR, path)
+            if os.path.exists(special_file_path):
+                return send_file(special_file_path)
+    
+        # Para todo lo demás, devolver index.html (SPA)
+        index_path = os.path.join(REACT_BUILD_DIR, 'index.html')
         if os.path.exists(index_path):
-            app.logger.info(f"Serving React app index.html for path: {path}")
             return send_file(index_path)
         else:
-            app.logger.error(f"React index.html not found at: {index_path}")
             return jsonify({
                 "error": "Frontend not available",
                 "message": "React build not found",
