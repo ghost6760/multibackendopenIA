@@ -6,40 +6,46 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { apiService } from './services/api';
 
 // Componentes principales con fallbacks
-CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => (
-  <div style={{ marginBottom: '1.5rem' }}>
-    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>
-      Seleccionar Empresa:
-    </label>
-    <select 
-      value={selectedCompany?.company_id || ''} 
-      onChange={(e) => {
-        console.log('Company selected:', e.target.value); // Debug
-        const company = companies.find(c => c.company_id === e.target.value);
-        console.log('Found company:', company); // Debug
-        if (company) {
-          onCompanyChange(company); // Pasar el objeto completo, no solo el ID
-        }
-      }}
-      style={{
-        display: 'block',
-        width: '100%',
-        padding: '0.75rem',
-        border: '1px solid #d1d5db',
-        borderRadius: '0.375rem',
-        background: 'white',
-        fontSize: '1rem'
-      }}
-    >
-      <option value="">Seleccionar empresa...</option>
-      {companies.map(company => (
-        <option key={company.company_id} value={company.company_id}>
-          {company.company_name}
-        </option>
-      ))}
-    </select>
-  </div>
-);
+let CompanySelector, ChatTester, DocumentManager, AdminPanel;
+
+try {
+  CompanySelector = require('./components/CompanySelector').default;
+} catch {
+  CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>
+        Seleccionar Empresa:
+      </label>
+      <select 
+        value={selectedCompany?.company_id || ''} 
+        onChange={(e) => {
+          console.log('Company selected:', e.target.value); // Debug
+          const company = companies.find(c => c.company_id === e.target.value);
+          console.log('Found company:', company); // Debug
+          if (company) {
+            onCompanyChange(company); // Pasar el objeto completo, no solo el ID
+          }
+        }}
+        style={{
+          display: 'block',
+          width: '100%',
+          padding: '0.75rem',
+          border: '1px solid #d1d5db',
+          borderRadius: '0.375rem',
+          background: 'white',
+          fontSize: '1rem'
+        }}
+      >
+        <option value="">Seleccionar empresa...</option>
+        {companies.map(company => (
+          <option key={company.company_id} value={company.company_id}>
+            {company.company_name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 try {
   ChatTester = require('./components/ChatTester').default;
@@ -622,10 +628,12 @@ function App() {
       if (companiesResponse?.companies) {
         setCompanies(companiesResponse.companies);
         console.log(`✅ Loaded ${companiesResponse.companies.length} companies`);
+        console.log('Companies data:', companiesResponse.companies); // Debug
         
         // Seleccionar primera empresa por defecto
         if (companiesResponse.companies.length > 0) {
           setSelectedCompany(companiesResponse.companies[0]);
+          console.log('Default company selected:', companiesResponse.companies[0]); // Debug
         }
       }
       
@@ -644,14 +652,32 @@ function App() {
     }
   };
 
-  // Manejar cambio de empresa
+  // Manejar cambio de empresa con debugging mejorado
   const handleCompanyChange = useCallback((company) => {
-    setSelectedCompany(company);
-    console.log('🏢 Company changed:', company?.company_name);
-  }, []);
+    console.log('🏢 handleCompanyChange called with:', company);
+    console.log('Type of company parameter:', typeof company);
+    console.log('Company keys:', company ? Object.keys(company) : 'null/undefined');
+    
+    if (company) {
+      console.log('Company ID:', company.company_id);
+      console.log('Company Name:', company.company_name);
+      setSelectedCompany(company);
+      console.log('✅ Company changed successfully to:', company.company_name);
+    } else {
+      console.log('⚠️ Company parameter is null or undefined');
+      setSelectedCompany(null);
+    }
+    
+    // Verificar que el estado se actualizó
+    setTimeout(() => {
+      console.log('Current selectedCompany state after change:', selectedCompany);
+    }, 100);
+  }, [selectedCompany]);
 
   // Renderizar contenido según tab activo
   const renderTabContent = () => {
+    console.log('Rendering tab content for:', activeTab, 'with company:', selectedCompany?.company_name);
+    
     switch (activeTab) {
       case 'chat':
         return <ChatTester company={selectedCompany} />;
@@ -680,105 +706,6 @@ function App() {
             Cargando Multi-Tenant Admin
           </h2>
           <p style={{ color: 'rgba(255, 255, 255, 0.8)' }}>Inicializando sistema...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1rem'
-      }}>
-        <div style={{
-          background: 'white',
-          borderRadius: '0.75rem',
-          padding: '2rem',
-          maxWidth: '28rem',
-          width: '100%',
-          textAlign: 'center'
-        }}>
-          <div style={{
-            color: '#dc2626',
-            marginBottom: '1rem'
-          }}>
-            <div style={{
-              width: '4rem',
-              height: '4rem',
-              margin: '0 auto',
-              background: '#fef2f2',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '1.5rem'
-            }}>
-              ⚠️
-            </div>
-          </div>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1rem' }}>
-            Error de Conexión
-          </h2>
-          <p style={{ color: '#4b5563', marginBottom: '1.5rem' }}>{error}</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <button
-              onClick={initializeApp}
-              style={{
-                width: '100%',
-                padding: '0.75rem 1rem',
-                background: '#dc2626',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '500'
-              }}
-            >
-              🔄 Reintentar
-            </button>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <a
-                href="/api/system/info"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  flex: 1,
-                  padding: '0.5rem 0.75rem',
-                  background: '#4b5563',
-                  color: 'white',
-                  textDecoration: 'none',
-                  borderRadius: '0.5rem',
-                  fontSize: '0.875rem',
-                  textAlign: 'center'
-                }}
-              >
-                📊 System Info
-              </a>
-              <a
-                href="/debug/build-structure"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  flex: 1,
-                  padding: '0.5rem 0.75rem',
-                  background: '#3b82f6',
-                  color: 'white',
-                  textDecoration: 'none',
-                  borderRadius: '0.5rem',
-                  fontSize: '0.875rem',
-                  textAlign: 'center'
-                }}
-              >
-                🔧 Debug
-              </a>
-            </div>
-          </div>
         </div>
       </div>
     );
