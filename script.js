@@ -1811,4 +1811,4 @@ window.stopRealTimeMonitoring = stopRealTimeMonitoring;
 window.clearSystemLog = clearSystemLog;
 
 // Log final de inicialización del script
-addToLog('Script loaded successfully', 'info');
+    addToLog('Script loaded successfully', 'info');
