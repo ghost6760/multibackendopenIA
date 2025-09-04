@@ -336,11 +336,11 @@ def create_app(config_class=Config):
     # ============================================================================
     # SERVIR FRONTEND REACT
     # ============================================================================
-    REACT_BUILD_DIR = os.path.join(os.getcwd(), 'src', 'build')
+    REACT_BUILD_DIR = '/app/src/build'
 
     @app.route('/static/<path:filename>')
     def serve_static_files(filename):
-        """Servir archivos estáticos (CSS, JS, media)"""
+        """Servir cualquier archivo estático (CSS, JS, media)"""
         static_dir = os.path.join(REACT_BUILD_DIR, 'static')
         file_path = os.path.join(static_dir, filename)
     
@@ -349,7 +349,7 @@ def create_app(config_class=Config):
             return send_from_directory(static_dir, filename, cache_timeout=31536000)
         else:
             return jsonify({"error": "Static file not found", "requested": filename}), 404
-    
+
     
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
