@@ -343,33 +343,41 @@ def create_app(config_class=Config):
     def serve_frontend(path):
         """Servir página principal con fallback correcto"""
         
-        # No interferir con rutas de API (más específico)
-        if path.startswith('api/') or path.startswith('debug/'):
-            logger.warning(f"⚠️ API route not found: {path}")
-            return jsonify({"error": f"API endpoint not found: {path}"}), 404
+        # No interferir con rutas de API (más específico y completo)
+        api_prefixes = ['api/', 'debug/']
+        if any(path.startswith(prefix) for prefix in api_prefixes):
+            logger.warning(f"⚠️ API route not found: /{path}")
+            return jsonify({
+                "error": f"API endpoint not found: /{path}",
+                "available_endpoints": [
+                    "/api/companies",
+                    "/api/company/<id>/status", 
+                    "/api/health",
+                    "/api/health/company/<id>",
+                    "/api/admin/status",
+                    "/api/documents",
+                    "/api/conversations",
+                    "/api/multimedia"
+                ]
+            }), 404
         
-        # NUEVO: Rutas específicas que deben redirigir a API
-        api_redirects = {
-            'companies': '/api/companies',
-            'health': '/api/health', 
-            'system/info': '/api/system/info'
-        }
+        # Archivos estáticos directos
+        static_files = ['script.js', 'style.css', 'favicon.ico']
+        if path in static_files:
+            if path == 'script.js':
+                return serve_script()
+            elif path == 'style.css':
+                return serve_style()
+            # Para otros archivos estáticos
+            try:
+                return send_from_directory(STATIC_DIR, path)
+            except:
+                return jsonify({"error": f"Static file not found: {path}"}), 404
         
-        if path in api_redirects:
-            logger.info(f"🔄 Redirecting {path} to {api_redirects[path]}")
-            from flask import redirect
-            return redirect(api_redirects[path])
-        
-        # No interferir con archivos estáticos directos
-        if path in ['script.js', 'style.css']:
-            return globals()[f'serve_{path.split(".")[0]}']()
-        
-        # Servir index.html para todas las rutas de frontend
+        # Servir index.html para todas las rutas de frontend válidas
         index_path = os.path.join(STATIC_DIR, 'index.html')
         
         logger.info(f"🌐 Frontend route request: '{path}'")
-        logger.info(f"📄 Serving index from: {index_path}")
-        logger.info(f"📄 Index exists: {os.path.exists(index_path)}")
         
         if os.path.exists(index_path):
             logger.info("✅ Serving frontend index.html")
@@ -380,6 +388,7 @@ def create_app(config_class=Config):
                 "error": "Frontend not found",
                 "expected_path": index_path,
                 "static_dir": STATIC_DIR,
+                "files_in_static": os.listdir(STATIC_DIR) if os.path.exists(STATIC_DIR) else [],
                 "suggestion": "Check if index.html exists in static directory"
             }), 500
 
