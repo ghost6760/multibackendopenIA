@@ -1708,6 +1708,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Configurar event listeners para tabs
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
+                e.preventDefault();
                 const tabName = e.target.getAttribute('data-tab');
                 if (tabName) {
                     switchTab(tabName);
@@ -1722,6 +1723,9 @@ document.addEventListener('DOMContentLoaded', async function() {
                 handleCompanyChange(e.target.value);
             });
         }
+        
+        // Configurar drag and drop para archivos
+        setupFileUploadHandlers();
         
         // Cargar datos iniciales
         await loadCompanies();
@@ -1739,6 +1743,39 @@ document.addEventListener('DOMContentLoaded', async function() {
         showNotification('Error al inicializar la aplicación', 'error');
     }
 });
+
+/**
+ * Configura los manejadores de drag and drop para archivos
+ */
+function setupFileUploadHandlers() {
+    const fileUploadElements = document.querySelectorAll('.file-upload');
+    
+    fileUploadElements.forEach(element => {
+        element.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            element.classList.add('dragover');
+        });
+        
+        element.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            element.classList.remove('dragover');
+        });
+        
+        element.addEventListener('drop', (e) => {
+            e.preventDefault();
+            element.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const input = element.querySelector('input[type="file"]');
+                if (input) {
+                    input.files = files;
+                    showNotification(`Archivo seleccionado: ${files[0].name}`, 'success', 3000);
+                }
+            }
+        });
+    });
+}
 
 // ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
@@ -1774,4 +1811,6 @@ window.startRealTimeMonitoring = startRealTimeMonitoring;
 window.stopRealTimeMonitoring = stopRealTimeMonitoring;
 window.clearSystemLog = clearSystemLog;
 
+// Log final de inicialización del script
+addToLog('Script loaded successfully', 'info');
 
