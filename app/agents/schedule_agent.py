@@ -934,9 +934,29 @@ Para agendar necesito:
     def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
         """Ejecutar cadena del agente"""
         return self.chain.invoke(inputs)
-    # Alias para compatibilidad con AvailabilityAgent
-    def check_availability(self, question: str, chat_history: list, schedule_context: str = "") -> str:
-        return self._handle_availability_check(question, chat_history, schedule_context)
+
+    
+    def check_availability(self, question: str, chat_history: list, schedule_context: Dict[str, Any]) -> str:
+        """
+        Verifica disponibilidad basándose en la lógica actual o devuelve un mensaje por defecto.
+        """
+        try:
+            company_name = schedule_context.get("company_name", "la empresa")
+            services = schedule_context.get("services", [])
+            formatted_services = self._format_services(services)
+    
+            # Lógica simple: responder con instrucciones
+            return (
+                f"Actualmente no tengo acceso a la agenda en tiempo real para {company_name}, "
+                f"pero puedo ayudarte a programar una cita.\n\n"
+                f"Por favor indícame:\n"
+                f"📅 Fecha deseada (DD-MM-YYYY)\n"
+                f"🩺 Tipo de servicio ({formatted_services})"
+            )
+        except Exception as e:
+            logger.error(f"Error en check_availability para {company_name}: {e}")
+            return f"❌ No pude verificar disponibilidad en {company_name}. ¿Deseas que te conecte con un asesor?"
+
 
     def get_integration_status(self) -> Dict[str, Any]:
         """Obtener estado de la integración de agendamiento"""
