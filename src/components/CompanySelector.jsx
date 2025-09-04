@@ -1,6 +1,7 @@
 // src/components/CompanySelector.jsx
 import React from 'react';
 
+
 const CompanySelector = ({ companies, selectedCompany, onCompanyChange }) => {
   return (
     <div style={{ marginBottom: '1.5rem' }}>
