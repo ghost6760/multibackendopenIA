@@ -30,11 +30,7 @@ app = Flask(__name__)
 # =============================
 # Configuración del directorio React build
 # =============================
-REACT_BUILD_DIR = os.path.abspath(
-    os.getenv("REACT_BUILD_DIR", os.path.join(os.getcwd(), "src/build"))
-)
-
-app.logger.info(f"✅ React build directory set to: {REACT_BUILD_DIR}")
+REACT_BUILD_DIR = os.path.join(os.getcwd(), 'src', 'build')
 
 
 def create_app(config_class=Config):
@@ -280,21 +276,22 @@ def create_app(config_class=Config):
     @app.route('/static/<path:filename>')
     def serve_static(filename):
         static_dir = os.path.join(REACT_BUILD_DIR, 'static')
-    
-        # ✅ Evitar path traversal (por seguridad)
-        if ".." in filename or filename.startswith("/"):
-            app.logger.warning(f"❌ Invalid static file request: {filename}")
-            return jsonify({"error": "Invalid file path"}), 400
-    
         full_path = os.path.join(static_dir, filename)
     
-        # ✅ Verificar si el archivo existe
+        app.logger.info(f"Static request: {filename}")
+        app.logger.info(f"Expected path: {full_path}")
+        app.logger.info(f"Exists: {os.path.exists(full_path)}")
+    
         if os.path.exists(full_path):
-            app.logger.info(f"📄 Serving static file: {filename}")
             return send_from_directory(static_dir, filename)
         else:
-            app.logger.error(f"❌ Static file not found: {filename}")
-            return jsonify({"error": "Static file not found", "requested": filename}), 40
+            # ✅ Si no encuentra, debug response
+            return jsonify({
+                "error": "Static file not found",
+                "requested": filename,
+                "expected_path": full_path,
+                "build_dir": REACT_BUILD_DIR
+            }), 404
 
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
