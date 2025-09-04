@@ -1012,11 +1012,11 @@ function deleteConversationFromList(userId) {
 }
 
 // ============================================================================
-// GESTIÓN DE MULTIMEDIA
+// GESTIÓN DE MULTIMEDIA - FUNCIONES CORREGIDAS Y NUEVAS
 // ============================================================================
 
 /**
- * Procesa un archivo de audio
+ * Procesa un archivo de audio - CORREGIDO
  */
 async function processAudio() {
     if (!validateCompanySelection()) return;
@@ -1058,6 +1058,7 @@ async function processAudio() {
                     <div class="code-block">${escapeHTML(response.bot_response)}</div>
                 ` : ''}
                 <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+                ${response.processing_time ? `<p><strong>Tiempo:</strong> ${response.processing_time}ms</p>` : ''}
             </div>
         `;
         
@@ -1078,7 +1079,7 @@ async function processAudio() {
 }
 
 /**
- * Procesa una imagen
+ * Procesa una imagen - CORREGIDO
  */
 async function processImage() {
     if (!validateCompanySelection()) return;
@@ -1120,6 +1121,7 @@ async function processImage() {
                     <div class="code-block">${escapeHTML(response.bot_response)}</div>
                 ` : ''}
                 <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+                ${response.processing_time ? `<p><strong>Tiempo:</strong> ${response.processing_time}ms</p>` : ''}
             </div>
         `;
         
@@ -1140,7 +1142,266 @@ async function processImage() {
 }
 
 /**
- * Prueba la integración multimedia
+ * NUEVA: Inicializa captura de pantalla
+ */
+async function initScreenCapture() {
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+                mediaSource: 'screen'
+            }
+        });
+        
+        return stream;
+    } catch (error) {
+        console.error('Error accessing screen capture:', error);
+        throw new Error('No se pudo acceder a la captura de pantalla');
+    }
+}
+
+/**
+ * NUEVA: Captura pantalla y la envía
+ */
+async function captureScreen() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('imageUserId').value.trim();
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    try {
+        showNotification('Iniciando captura de pantalla...', 'info');
+        
+        const stream = await initScreenCapture();
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.play();
+        
+        video.addEventListener('loadedmetadata', () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            
+            // Detener el stream
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Convertir a blob
+            canvas.toBlob(async (blob) => {
+                try {
+                    await processImageBlob(blob, userId, 'Captura de pantalla');
+                } catch (error) {
+                    console.error('Error processing screen capture:', error);
+                    showNotification('Error al procesar captura de pantalla', 'error');
+                }
+            }, 'image/png');
+        });
+        
+    } catch (error) {
+        console.error('Error capturing screen:', error);
+        showNotification('Error al capturar pantalla: ' + error.message, 'error');
+    }
+}
+
+/**
+ * NUEVA: Procesa blob de imagen
+ */
+async function processImageBlob(blob, userId, description = 'Imagen') {
+    try {
+        toggleLoadingOverlay(true);
+        
+        const formData = new FormData();
+        formData.append('image', blob, `${description.toLowerCase().replace(/\s+/g, '_')}.png`);
+        formData.append('user_id', userId);
+        formData.append('company_id', currentCompanyId);
+        
+        const response = await apiRequest('/api/multimedia/process-image', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const container = document.getElementById('imageResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>📸 ${description} Procesada</h4>
+                <p><strong>Análisis:</strong></p>
+                <div class="code-block">${escapeHTML(response.analysis || response.description || 'Sin análisis')}</div>
+                ${response.bot_response ? `
+                    <p><strong>Respuesta del Bot:</strong></p>
+                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
+                ` : ''}
+                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+            </div>
+        `;
+        
+        showNotification(`${description} procesada exitosamente`, 'success');
+        
+    } catch (error) {
+        console.error(`Error processing ${description.toLowerCase()}:`, error);
+        showNotification(`Error al procesar ${description.toLowerCase()}: ${error.message}`, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * NUEVA: Variables para grabación de voz
+ */
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+/**
+ * NUEVA: Inicializa grabación de voz
+ */
+async function initVoiceRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
+            }
+        });
+        
+        mediaRecorder = new MediaRecorder(stream, {
+            mimeType: 'audio/webm;codecs=opus'
+        });
+        
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunks.push(event.data);
+            }
+        };
+        
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            audioChunks = [];
+            
+            const userId = document.getElementById('audioUserId').value.trim();
+            if (userId) {
+                await processAudioBlob(audioBlob, userId);
+            } else {
+                showNotification('Por favor ingresa un ID de usuario', 'warning');
+            }
+            
+            // Detener todos los tracks
+            stream.getTracks().forEach(track => track.stop());
+        };
+        
+        return mediaRecorder;
+    } catch (error) {
+        console.error('Error accessing microphone:', error);
+        throw new Error('No se pudo acceder al micrófono');
+    }
+}
+
+/**
+ * NUEVA: Inicia/detiene grabación de voz
+ */
+async function toggleVoiceRecording() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('audioUserId').value.trim();
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    const button = document.getElementById('recordVoiceButton');
+    
+    try {
+        if (!isRecording) {
+            // Iniciar grabación
+            await initVoiceRecording();
+            mediaRecorder.start();
+            isRecording = true;
+            
+            button.textContent = '🛑 Detener Grabación';
+            button.classList.remove('btn-primary');
+            button.classList.add('btn-danger');
+            
+            showNotification('Grabación iniciada...', 'info');
+            
+        } else {
+            // Detener grabación
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            isRecording = false;
+            
+            button.textContent = '🎤 Grabar Voz';
+            button.classList.remove('btn-danger');
+            button.classList.add('btn-primary');
+            
+            showNotification('Procesando grabación...', 'info');
+        }
+        
+    } catch (error) {
+        console.error('Error with voice recording:', error);
+        showNotification('Error con la grabación: ' + error.message, 'error');
+        
+        // Resetear estado
+        isRecording = false;
+        button.textContent = '🎤 Grabar Voz';
+        button.classList.remove('btn-danger');
+        button.classList.add('btn-primary');
+    }
+}
+
+/**
+ * NUEVA: Procesa blob de audio
+ */
+async function processAudioBlob(blob, userId) {
+    try {
+        toggleLoadingOverlay(true);
+        
+        const formData = new FormData();
+        formData.append('audio', blob, 'voice_recording.webm');
+        formData.append('user_id', userId);
+        formData.append('company_id', currentCompanyId);
+        
+        const response = await apiRequest('/api/multimedia/process-voice', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const container = document.getElementById('audioResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>🎵 Grabación de Voz Procesada</h4>
+                <p><strong>Transcripción:</strong></p>
+                <div class="code-block">${escapeHTML(response.transcript || 'Sin transcripción')}</div>
+                ${response.bot_response ? `
+                    <p><strong>Respuesta del Bot:</strong></p>
+                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
+                ` : ''}
+                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+            </div>
+        `;
+        
+        showNotification('Grabación procesada exitosamente', 'success');
+        
+    } catch (error) {
+        console.error('Error processing voice recording:', error);
+        const container = document.getElementById('audioResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al procesar grabación</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Prueba la integración multimedia - MANTENIDO
  */
 async function testMultimediaIntegration() {
     if (!validateCompanySelection()) return;
@@ -1782,6 +2043,8 @@ function setupFileUploadHandlers() {
 // ============================================================================
 
 // Hacer las funciones disponibles globalmente para los onclick del HTML
+window.captureScreen = captureScreen;
+window.toggleVoiceRecording = toggleVoiceRecording;
 window.switchTab = switchTab;
 window.loadSystemInfo = loadSystemInfo;
 window.loadCompaniesStatus = loadCompaniesStatus;
