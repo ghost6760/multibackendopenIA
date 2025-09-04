@@ -355,22 +355,25 @@ async function loadSystemInfo() {
 async function loadCompaniesStatus() {
     try {
         const response = await apiRequest('/api/health/companies');
+        console.log('Companies health response:', response); // Debug
         
         const container = document.getElementById('companiesStatus');
         if (container && response.companies) {
             let statusHTML = '';
             
             Object.entries(response.companies).forEach(([companyId, status]) => {
-                const isHealthy = status.system_healthy;
+                // El API devuelve system_healthy: true/false
+                const isHealthy = status.system_healthy === true;
                 const statusClass = isHealthy ? 'healthy' : 'error';
                 const statusIcon = isHealthy ? '✅' : '❌';
+                const statusText = isHealthy ? 'ONLINE' : 'ERROR';
                 
                 statusHTML += `
                     <div class="health-status ${statusClass}">
                         <span class="status-indicator status-${isHealthy ? 'healthy' : 'error'}"></span>
                         ${statusIcon} <strong>${companyId}</strong>
                         <span class="badge badge-${isHealthy ? 'success' : 'error'}">
-                            ${isHealthy ? 'ONLINE' : 'ERROR'}
+                            ${statusText}
                         </span>
                     </div>
                 `;
