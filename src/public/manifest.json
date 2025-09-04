@@ -1,72 +1,20 @@
 {
-  "short_name": "Chatbot Admin",
-  "name": "Multi-Tenant Chatbot Admin Panel",
-  "description": "Panel de administración para sistema de chatbot multi-tenant con IA",
+  "short_name": "Multi-Tenant Admin",
+  "name": "Multi-Tenant Admin - Sistema de Gestión",
+  "description": "Sistema de gestión multi-tenant con backend Flask y frontend React",
   "icons": [
     {
       "src": "favicon.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
-    },
-    {
-      "src": "logo192.png",
-      "type": "image/png",
-      "sizes": "192x192",
-      "purpose": "maskable"
-    },
-    {
-      "src": "logo512.png",
-      "type": "image/png",
-      "sizes": "512x512",
-      "purpose": "any"
     }
   ],
-  "start_url": ".",
+  "start_url": "./",
   "display": "standalone",
-  "theme_color": "#3b82f6",
-  "background_color": "#667eea",
+  "theme_color": "#667eea",
+  "background_color": "#ffffff",
   "orientation": "portrait-primary",
-  "categories": ["business", "productivity"],
-  "lang": "es",
-  "dir": "ltr",
-  "scope": "/",
-  "screenshots": [],
-  "shortcuts": [
-    {
-      "name": "Chat Tester",
-      "short_name": "Chat",
-      "description": "Probar conversaciones con el chatbot",
-      "url": "/?tab=chat",
-      "icons": [
-        {
-          "src": "logo192.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "Document Manager",
-      "short_name": "Docs",
-      "description": "Gestionar documentos de conocimiento",
-      "url": "/?tab=documents",
-      "icons": [
-        {
-          "src": "logo192.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "System Status",
-      "short_name": "System",
-      "description": "Ver estado del sistema",
-      "url": "/?tab=system",
-      "icons": [
-        {
-          "src": "logo192.png",
-          "sizes": "192x192"
-        }
-      ]
-    }
-  ]
+  "scope": "./",
+  "lang": "es-ES",
+  "categories": ["business", "productivity"]
 }
