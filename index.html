@@ -2,222 +2,337 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Multi-Tenant Chatbot - Panel de Control</title>
-    <link rel="stylesheet" href="style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benova Multi-Tenant Backend - Panel de Administración</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>🏢 Panel de Control Multi-Tenant</h1>
-            <div class="company-selector">
-                <label for="currentCompany">Empresa Activa:</label>
-                <select id="currentCompany">
-                    <option value="">Cargando empresas...</option>
-                </select>
-                <button id="refreshCompanies" class="btn-secondary">🔄</button>
-            </div>
-        </header>
+        <div class="header">
+            <h1>🏥 Benova Multi-Tenant Backend</h1>
+            <p class="subtitle">Panel de Administración - Sistema Multi-Agente</p>
+        </div>
 
-        <!-- Company Status Section -->
-        <section class="company-status-section">
-            <div class="card">
-                <h2>📊 Estado de la Empresa</h2>
-                <div id="companyInfo" class="company-info">
-                    <p>Selecciona una empresa para ver su estado</p>
+        <div class="company-selector">
+            <label for="companySelect">🏢 Empresa Activa:</label>
+            <select id="companySelect">
+                <option value="">Seleccionar empresa...</option>
+                <option value="benova">Benova</option>
+                <option value="medispa">MediSpa Elite</option>
+                <option value="dental">Clínica Dental</option>
+                <option value="wellness">Wellness Spa</option>
+            </select>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="dashboard">📊 Dashboard</button>
+            <button class="tab" data-tab="documents">📄 Documentos</button>
+            <button class="tab" data-tab="conversations">💬 Conversaciones</button>
+            <button class="tab" data-tab="multimedia">🎤 Multimedia</button>
+            <button class="tab" data-tab="admin">🔧 Administración</button>
+            <button class="tab" data-tab="health">🏥 Health Check</button>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div class="tab-content active" id="dashboard">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalCompanies">-</div>
+                    <div class="stat-label">Empresas</div>
                 </div>
-                <div class="company-actions">
-                    <button id="checkHealthBtn" class="btn-secondary">🩺 Health Check</button>
-                    <button id="viewStatsBtn" class="btn-secondary">📈 Estadísticas</button>
-                    <button id="resetCacheBtn" class="btn-danger">🗑️ Limpiar Cache</button>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalDocuments">-</div>
+                    <div class="stat-label">Documentos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalConversations">-</div>
+                    <div class="stat-label">Conversaciones</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="systemStatus">✅</div>
+                    <div class="stat-label">Estado Sistema</div>
                 </div>
             </div>
-        </section>
 
-        <!-- Multi-Company Overview -->
-        <section class="overview-section">
-            <div class="card">
-                <h2>🌐 Vista General del Sistema</h2>
-                <div id="systemOverview" class="system-grid">
-                    <!-- Se llena dinámicamente -->
-                </div>
-                <button id="viewAllCompanies" class="btn-primary">Ver Todas las Empresas</button>
-            </div>
-        </section>
-
-        <!-- Documents Section -->
-        <section class="document-section">
-            <h2>📄 Gestión de Documentos</h2>
-            
-            <!-- Add Document -->
-            <div class="card">
-                <h3>➕ Agregar Documento</h3>
-                <form id="addDocumentForm">
-                    <textarea id="docContent" placeholder="Contenido del documento..." required></textarea>
-                    <input type="text" id="docMetadata" placeholder='Metadata (JSON, ej: {"categoria": "informacion"})'>
-                    <div class="form-actions">
-                        <button type="submit">📄 Agregar Documento</button>
-                        <span class="company-indicator">Para empresa: <strong id="docCompanyIndicator">-</strong></span>
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>📊 Información del Sistema</h3>
+                    <div id="systemInfo">
+                        <p>Cargando información del sistema...</p>
                     </div>
-                </form>
-            </div>
+                    <button class="btn btn-primary" onclick="loadSystemInfo()">
+                        🔄 Actualizar Info
+                    </button>
+                </div>
 
-            <!-- Bulk Upload -->
-            <div class="card">
-                <h3>📁 Subir Múltiples Documentos</h3>
-                <form id="bulkUploadForm">
-                    <input type="file" id="bulkFiles" multiple accept=".txt,.md,.docx">
-                    <div class="form-actions">
-                        <button type="submit">📤 Subir Archivos</button>
-                        <span class="company-indicator">Para empresa: <strong id="bulkCompanyIndicator">-</strong></span>
+                <div class="card">
+                    <h3>🏢 Estado de Empresas</h3>
+                    <div id="companiesStatus">
+                        <p>Cargando estado de empresas...</p>
                     </div>
-                </form>
+                    <button class="btn btn-primary" onclick="loadCompaniesStatus()">
+                        🔄 Actualizar Estado
+                    </button>
+                </div>
             </div>
 
-            <!-- Search Documents -->
             <div class="card">
-                <h3>🔍 Buscar Documentos</h3>
-                <form id="searchDocumentsForm">
-                    <input type="text" id="searchQuery" placeholder="Buscar en documentos..." required>
-                    <input type="number" id="searchK" value="3" min="1" max="20" placeholder="Cantidad de resultados">
-                    <div class="form-actions">
-                        <button type="submit">🔍 Buscar</button>
-                        <span class="company-indicator">En empresa: <strong id="searchCompanyIndicator">-</strong></span>
+                <h3>📝 Log del Sistema</h3>
+                <button class="btn btn-secondary" onclick="clearSystemLog()" style="float: right;">
+                    🗑️ Limpiar Log
+                </button>
+                <div class="log-container" id="systemLog">
+                    <div class="log-entry">
+                        <span class="log-timestamp">[2025-01-15 10:30:45]</span>
+                        <span class="log-level-info">[INFO]</span>
+                        Sistema multi-tenant inicializado correctamente
                     </div>
-                </form>
-                <div id="searchResults" class="search-results"></div>
-            </div>
-
-            <!-- Documents List -->
-            <div class="card">
-                <h3>📋 Documentos Almacenados</h3>
-                <div class="list-actions">
-                    <button id="listDocumentsBtn" class="btn-secondary">📄 Listar Documentos</button>
-                    <button id="cleanupVectorsBtn" class="btn-danger">🧹 Limpiar Vectores Huérfanos</button>
-                    <button id="diagnosticsBtn" class="btn-secondary">🔧 Diagnósticos</button>
-                </div>
-                <div id="documentsList" class="documents-grid"></div>
-            </div>
-        </section>
-
-        <!-- Conversations Section -->
-        <section class="conversations-section">
-            <h2>💬 Gestión de Conversaciones</h2>
-            
-            <div class="card">
-                <h3>📞 Conversaciones Activas</h3>
-                <div class="list-actions">
-                    <button id="listConversationsBtn" class="btn-secondary">💬 Listar Conversaciones</button>
-                    <button id="conversationStatsBtn" class="btn-secondary">📊 Estadísticas</button>
-                </div>
-                <div id="conversationsList" class="conversations-grid"></div>
-            </div>
-        </section>
-
-        <!-- Chat Testing Section -->
-        <section class="chat-section">
-            <h2>🤖 Probar Chatbot</h2>
-            
-            <div class="card">
-                <div class="chat-header">
-                    <h3>💭 Chat de Prueba</h3>
-                    <div class="chat-company-info">
-                        <span>Probando con: <strong id="chatCompanyName">-</strong></span>
-                        <span class="chat-services" id="chatCompanyServices">-</span>
-                    </div>
-                </div>
-                
-                <div id="chatHistory" class="chat-container"></div>
-                
-                <!-- Chat Form -->
-                <form id="chatForm">
-                    <div class="chat-input-container">
-                        <input type="text" id="userMessage" placeholder="Escribe tu mensaje...">
-                        <input type="text" id="testUserId" placeholder="User ID (opcional)" value="test_user">
-                        <button type="submit">📤 Enviar</button>
-                    </div>
-                </form>
-                
-                <!-- Multimedia Controls -->
-                <div class="multimedia-controls">
-                    <div class="multimedia-group">
-                        <h4>🎤 Audio</h4>
-                        <button id="recordVoiceBtn" class="btn-multimedia">🎙️ Grabar Voz</button>
-                        <input type="file" id="voiceFile" accept="audio/*" hidden>
-                        <label for="voiceFile" class="btn-secondary">📁 Subir Audio</label>
-                    </div>
-                    
-                    <div class="multimedia-group">
-                        <h4>📸 Imagen</h4>
-                        <button id="captureImageBtn" class="btn-multimedia">📸 Tomar Foto</button>
-                        <input type="file" id="imageFile" accept="image/*" hidden>
-                        <label for="imageFile" class="btn-secondary">🖼️ Subir Imagen</label>
-                    </div>
-                </div>
-                
-                <!-- Recording Status -->
-                <div id="recordingStatus" class="recording-status" style="display: none;">
-                    <span class="recording-indicator">🔴</span>
-                    <span>Grabando audio para <strong id="recordingCompany">-</strong>...</span>
-                    <button id="stopRecordingBtn" class="btn-stop">⏹️ Parar</button>
-                </div>
-            </div>
-        </section>
-
-        <!-- System Administration -->
-        <section class="admin-section">
-            <h2>⚙️ Administración del Sistema</h2>
-            
-            <div class="card">
-                <h3>🛠️ Herramientas de Sistema</h3>
-                <div class="admin-grid">
-                    <button id="systemHealthBtn" class="admin-btn">🩺 Health Check Global</button>
-                    <button id="reloadConfigBtn" class="admin-btn">🔄 Recargar Configuración</button>
-                    <button id="systemStatsBtn" class="admin-btn">📊 Estadísticas del Sistema</button>
-                    <button id="multimediaTestBtn" class="admin-btn">🎬 Test Multimedia</button>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>🔧 Herramientas Avanzadas</h3>
-                <div class="admin-grid">
-                    <button id="vectorRecoveryBtn" class="admin-btn danger">🛠️ Forzar Recovery Vectorstore</button>
-                    <button id="protectionStatusBtn" class="admin-btn">🛡️ Estado Protección</button>
-                    <button id="exportConfigBtn" class="admin-btn">💾 Exportar Configuración</button>
-                    <button id="migrationToolBtn" class="admin-btn">🔄 Herramienta de Migración</button>
-                </div>
-            </div>
-        </section>
-
-        <!-- Camera Modal -->
-        <div id="cameraModal" class="modal" style="display: none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>📸 Capturar Imagen</h3>
-                    <span class="company-context">Para empresa: <strong id="cameraCompany">-</strong></span>
-                    <button id="closeCameraBtn" class="btn-close">&times;</button>
-                </div>
-                <div class="camera-container">
-                    <video id="cameraVideo" autoplay></video>
-                    <canvas id="cameraCanvas" style="display: none;"></canvas>
-                </div>
-                <div class="camera-controls">
-                    <button id="takePictureBtn" class="btn-primary">📸 Tomar Foto</button>
-                    <button id="cancelCameraBtn" class="btn-secondary">❌ Cancelar</button>
                 </div>
             </div>
         </div>
 
-        <!-- Loading Overlay -->
-        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
-            <div class="loading-content">
-                <div class="spinner"></div>
-                <p id="loadingMessage">Cargando...</p>
+        <!-- Documents Tab -->
+        <div class="tab-content" id="documents">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>📄 Subir Documento</h3>
+                    <div class="form-group">
+                        <label for="documentTitle">Título del Documento</label>
+                        <input type="text" id="documentTitle" placeholder="Ej: Protocolo de tratamientos">
+                    </div>
+                    <div class="form-group">
+                        <label for="documentContent">Contenido</label>
+                        <textarea id="documentContent" placeholder="Contenido del documento..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="documentFile">O subir archivo</label>
+                        <div class="file-upload" onclick="document.getElementById('documentFile').click()">
+                            <input type="file" id="documentFile" style="display: none;" accept=".txt,.md,.pdf,.docx">
+                            📁 Hacer clic o arrastrar archivo aquí
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="uploadDocument()">
+                        📤 Subir Documento
+                    </button>
+                </div>
+
+                <div class="card">
+                    <h3>🔍 Buscar Documentos</h3>
+                    <div class="form-group">
+                        <label for="searchQuery">Buscar en documentos</label>
+                        <input type="text" id="searchQuery" placeholder="Ej: tratamientos faciales">
+                    </div>
+                    <button class="btn btn-primary" onclick="searchDocuments()">
+                        🔍 Buscar
+                    </button>
+                    <div id="searchResults" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📚 Lista de Documentos</h3>
+                <button class="btn btn-secondary" onclick="loadDocuments()">
+                    🔄 Actualizar Lista
+                </button>
+                <div class="data-list" id="documentsList">
+                    <p style="padding: 20px; text-align: center; color: #718096;">
+                        Selecciona una empresa y haz clic en "Actualizar Lista" para ver los documentos
+                    </p>
+                </div>
             </div>
         </div>
 
-        <!-- Toast Notifications -->
-        <div id="toastContainer" class="toast-container"></div>
+        <!-- Conversations Tab -->
+        <div class="tab-content" id="conversations">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>💬 Probar Conversación</h3>
+                    <div class="form-group">
+                        <label for="testUserId">ID de Usuario</label>
+                        <input type="text" id="testUserId" placeholder="user123" value="user123">
+                    </div>
+                    <div class="form-group">
+                        <label for="testMessage">Mensaje de Prueba</label>
+                        <textarea id="testMessage" placeholder="Ej: ¿Cuánto cuesta un tratamiento de botox?"></textarea>
+                    </div>
+                    <button class="btn btn-primary" onclick="testConversation()">
+                        🧪 Probar Conversación
+                    </button>
+                    <div id="conversationResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>👤 Gestión de Conversaciones</h3>
+                    <div class="form-group">
+                        <label for="manageUserId">ID de Usuario</label>
+                        <input type="text" id="manageUserId" placeholder="user123">
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="getConversation()">
+                            📖 Ver Conversación
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteConversation()">
+                            🗑️ Eliminar
+                        </button>
+                    </div>
+                    <div id="conversationDetails" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📋 Lista de Conversaciones</h3>
+                <button class="btn btn-secondary" onclick="loadConversations()">
+                    🔄 Actualizar Lista
+                </button>
+                <div class="data-list" id="conversationsList">
+                    <p style="padding: 20px; text-align: center; color: #718096;">
+                        Selecciona una empresa y haz clic en "Actualizar Lista" para ver las conversaciones
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Multimedia Tab -->
+        <div class="tab-content" id="multimedia">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>🎤 Procesamiento de Audio</h3>
+                    <div class="form-group">
+                        <label for="audioFile">Archivo de Audio</label>
+                        <input type="file" id="audioFile" accept="audio/*">
+                    </div>
+                    <div class="form-group">
+                        <label for="audioUserId">ID de Usuario</label>
+                        <input type="text" id="audioUserId" placeholder="user123" value="user123">
+                    </div>
+                    <button class="btn btn-primary" onclick="processAudio()">
+                        🎵 Procesar Audio
+                    </button>
+                    <div id="audioResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>🖼️ Procesamiento de Imagen</h3>
+                    <div class="form-group">
+                        <label for="imageFile">Archivo de Imagen</label>
+                        <input type="file" id="imageFile" accept="image/*">
+                    </div>
+                    <div class="form-group">
+                        <label for="imageUserId">ID de Usuario</label>
+                        <input type="text" id="imageUserId" placeholder="user123" value="user123">
+                    </div>
+                    <button class="btn btn-primary" onclick="processImage()">
+                        📸 Procesar Imagen
+                    </button>
+                    <div id="imageResult" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>🧪 Test de Integración Multimedia</h3>
+                <button class="btn btn-success" onclick="testMultimediaIntegration()">
+                    ✅ Probar Integración
+                </button>
+                <div id="multimediaTestResult" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+
+        <!-- Admin Tab -->
+        <div class="tab-content" id="admin">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>🔧 Configuración de Google Calendar</h3>
+                    <div class="form-group">
+                        <label for="googleCalendarUrl">URL de Google Calendar</label>
+                        <input type="url" id="googleCalendarUrl" placeholder="https://calendar.google.com/...">
+                    </div>
+                    <button class="btn btn-primary" onclick="updateGoogleCalendarConfig()">
+                        📅 Actualizar Calendar
+                    </button>
+                </div>
+
+                <div class="card">
+                    <h3>⚙️ Configuración de Empresas</h3>
+                    <button class="btn btn-primary" onclick="reloadCompaniesConfig()">
+                        🔄 Recargar Configuración
+                    </button>
+                    <button class="btn btn-success" onclick="runSystemDiagnostics()">
+                        🔍 Ejecutar Diagnósticos
+                    </button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📊 Resultados de Administración</h3>
+                <div id="adminResults">
+                    <p style="text-align: center; color: #718096; padding: 20px;">
+                        Los resultados de las operaciones administrativas aparecerán aquí
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Check Tab -->
+        <div class="tab-content" id="health">
+            <div class="grid grid-3">
+                <div class="card">
+                    <h3>🏥 Health Check General</h3>
+                    <button class="btn btn-primary" onclick="performHealthCheck()">
+                        🔄 Verificar Estado
+                    </button>
+                    <div id="generalHealthResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>🏢 Health por Empresa</h3>
+                    <button class="btn btn-primary" onclick="performCompanyHealthCheck()">
+                        🔄 Verificar Empresas
+                    </button>
+                    <div id="companyHealthResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>⚙️ Estado de Servicios</h3>
+                    <button class="btn btn-primary" onclick="checkServicesStatus()">
+                        🔄 Verificar Servicios
+                    </button>
+                    <div id="servicesStatusResult" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📈 Monitoreo del Sistema</h3>
+                <div class="grid grid-2">
+                    <div>
+                        <h4>🔍 Diagnósticos Automáticos</h4>
+                        <button class="btn btn-success" onclick="runAutoDiagnostics()">
+                            🚀 Ejecutar Auto-Diagnósticos
+                        </button>
+                    </div>
+                    <div>
+                        <h4>📊 Métricas en Tiempo Real</h4>
+                        <button class="btn btn-secondary" onclick="startRealTimeMonitoring()">
+                            ⏰ Iniciar Monitoreo
+                        </button>
+                        <button class="btn btn-danger" onclick="stopRealTimeMonitoring()">
+                            ⏹️ Detener
+                        </button>
+                    </div>
+                </div>
+                <div id="monitoringResults" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Procesando...</p>
+        </div>
     </div>
 
     <script src="script.js"></script>
