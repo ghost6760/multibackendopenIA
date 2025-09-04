@@ -615,7 +615,7 @@ function App() {
   useEffect(() => {
     initializeApp();
   }, []);
-
+  
   const initializeApp = async () => {
     console.log('DEBUG: initializeApp started');
     try {
@@ -624,18 +624,29 @@ function App() {
       
       console.log('🚀 Initializing Multi-Tenant Admin App...');
       
-      // Cargar empresas disponibles
+      // Cargar empresas disponibles con manejo mejorado de formatos
       const companiesResponse = await apiService.getCompanies();
-      if (companiesResponse?.companies) {
-        setCompanies(companiesResponse.companies);
-        console.log(`✅ Loaded ${companiesResponse.companies.length} companies`);
-        console.log('Companies data:', companiesResponse.companies); // Debug
-        
-        // Seleccionar primera empresa por defecto
-        if (companiesResponse.companies.length > 0) {
-          setSelectedCompany(companiesResponse.companies[0]);
-          console.log('Default company selected:', companiesResponse.companies[0]); // Debug
-        }
+      console.log('DEBUG: Raw response:', companiesResponse);
+      
+      // Verificar diferentes formatos posibles
+      let companiesArray = [];
+      if (companiesResponse?.companies && Array.isArray(companiesResponse.companies)) {
+        companiesArray = companiesResponse.companies;
+      } else if (companiesResponse?.data?.companies && Array.isArray(companiesResponse.data.companies)) {
+        companiesArray = companiesResponse.data.companies;
+      } else if (Array.isArray(companiesResponse)) {
+        companiesArray = companiesResponse;
+      } else {
+        console.log('DEBUG: Unexpected companies format:', companiesResponse);
+      }
+      
+      if (companiesArray.length > 0) {
+        setCompanies(companiesArray);
+        setSelectedCompany(companiesArray[0]);
+        console.log('✅ Companies loaded successfully:', companiesArray);
+        console.log('Default company selected:', companiesArray[0]);
+      } else {
+        console.log('❌ No companies found in response');
       }
       
       // Verificar estado del sistema
@@ -652,7 +663,7 @@ function App() {
       setLoading(false);
     }
   };
-
+  
   // Manejar cambio de empresa con debugging mejorado
   const handleCompanyChange = useCallback((company) => {
     console.log('🏢 handleCompanyChange called with:', company);
@@ -674,7 +685,7 @@ function App() {
       console.log('Current selectedCompany state after change:', selectedCompany);
     }, 100);
   }, [selectedCompany]);
-
+  
   // Renderizar contenido según tab activo
   const renderTabContent = () => {
     console.log('Rendering tab content for:', activeTab, 'with company:', selectedCompany?.company_name);
