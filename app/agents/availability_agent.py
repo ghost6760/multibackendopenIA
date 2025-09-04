@@ -1,6 +1,6 @@
 from app.agents.base_agent import BaseAgent
 from langchain.schema.runnable import RunnableLambda
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,17 +9,24 @@ class AvailabilityAgent(BaseAgent):
     """Agente para verificar disponibilidad multi-tenant"""
 
     def _initialize_agent(self):
-        """Inicializa el agente y su cadena de ejecución"""
-        self.schedule_agent = None  # Se inyectará externamente
+        """Inicializa la cadena principal"""
+        self.schedule_agent = None
         self.chain = RunnableLambda(self._process_availability)
 
     def set_schedule_agent(self, schedule_agent):
-        """Inyecta el ScheduleAgent para reutilizar su lógica"""
+        """Permite inyectar el ScheduleAgent"""
         self.schedule_agent = schedule_agent
         logger.debug(f"[{self.company_config.company_id}] ScheduleAgent inyectado en AvailabilityAgent")
 
+    def _create_prompt_template(self):
+        """No necesita prompt, pero debe devolver algo válido"""
+        return None  # No usamos plantillas en este agente
+
+    def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
+        """Ejecuta el flujo de disponibilidad"""
+        return self._process_availability(inputs)
+
     def _process_availability(self, inputs: Dict[str, Any]) -> str:
-        """Procesa la consulta de disponibilidad"""
         question = inputs.get("question", "")
         chat_history = inputs.get("chat_history", [])
 
@@ -33,11 +40,10 @@ class AvailabilityAgent(BaseAgent):
                 return self._basic_availability_response(question)
 
         except Exception as e:
-            logger.error(f"Error verificando disponibilidad para {self.company_config.company_name}: {e}")
-            return f"❌ Hubo un problema al consultar la disponibilidad en {self.company_config.company_name}. Te conectaré con un asesor."
+            logger.error(f"Error verificando disponibilidad en {self.company_config.company_name}: {e}")
+            return f"❌ Ocurrió un problema al consultar disponibilidad en {self.company_config.company_name}. Te conecto con un asesor."
 
     def _build_schedule_context(self, question: str, chat_history: list) -> Dict[str, Any]:
-        """Construye el contexto necesario para la verificación"""
         return {
             "company_id": self.company_config.company_id,
             "company_name": self.company_config.company_name,
@@ -47,10 +53,10 @@ class AvailabilityAgent(BaseAgent):
         }
 
     def _basic_availability_response(self, question: str) -> str:
-        """Respuesta básica cuando no hay ScheduleAgent disponible"""
         return (
-            f"Para consultar disponibilidad en {self.company_config.company_name}, por favor indícame:\n\n"
+            f"Para consultar disponibilidad en {self.company_config.company_name}, indícame:\n\n"
             f"📅 Fecha específica (DD-MM-YYYY)\n"
-            f"🩺 Tipo de servicio que te interesa\n"
+            f"🩺 Tipo de servicio que deseas\n"
         )
+
 
