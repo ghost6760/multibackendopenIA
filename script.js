@@ -226,49 +226,43 @@ function switchTab(tabName) {
 // GESTIÓN DE EMPRESAS
 // ============================================================================
 
+async function loadCompanies
 /**
- * Carga la lista de empresas disponibles
- */
-async function loadCompanies() {
-    try {
-        if (cache.companies) {
-            return cache.companies;
-        }
-        
-        const response = await apiRequest('/api/companies');
-        cache.companies = response.data || response.companies || [];
-        
-        // Actualizar selector de empresas
-        updateCompanySelector();
-        
-        return cache.companies;
-        
-    } catch (error) {
-        console.error('Error loading companies:', error);
-        showNotification('Error al cargar empresas: ' + error.message, 'error');
-        return [];
-    }
-}
-
-/**
- * Actualiza el selector de empresas en la UI
+ * Actualiza el selector de empresas en la UI - CORREGIDO
  */
 function updateCompanySelector() {
     const selector = document.getElementById('companySelect');
-    if (!selector || !cache.companies) return;
+    if (!selector) {
+        console.error('Company selector element not found');
+        return;
+    }
     
-    // Limpiar opciones existentes (excepto la primera)
+    if (!cache.companies || !Array.isArray(cache.companies)) {
+        console.warn('No valid companies data available for selector');
+        return;
+    }
+    
+    console.log('Updating company selector with companies:', cache.companies);
+    
+    // Limpiar opciones existentes (excepto la primera opción "Seleccionar empresa...")
     while (selector.children.length > 1) {
         selector.removeChild(selector.lastChild);
     }
     
-    // Agregar empresas del cache
-    cache.companies.forEach(company => {
-        const option = document.createElement('option');
-        option.value = company.id || company;
-        option.textContent = company.name || company;
-        selector.appendChild(option);
+    // Agregar cada empresa como opción
+    cache.companies.forEach((company, index) => {
+        try {
+            const option = document.createElement('option');
+            option.value = company.id;
+            option.textContent = company.name;
+            selector.appendChild(option);
+            console.log(`Added company option ${index + 1}: ${company.name} (${company.id})`);
+        } catch (error) {
+            console.error('Error adding company option:', company, error);
+        }
     });
+    
+    console.log(`Company selector updated with ${cache.companies.length} companies`);
 }
 
 /**
