@@ -1,725 +1,1580 @@
-// Multi-Tenant Chatbot Frontend - CORREGIDO
-const API_BASE = window.location.origin + '/api/';
 
-// Global state
-let currentCompanyId = 'benova'; // Default
-let companies = {};
-let mediaRecorder;
-let audioChunks = [];
-let cameraStream;
+// script.js - Frontend Multi-Tenant Benova - Funcionalidad Completa
+// ============================================================================
+// CONFIGURACIÓN Y VARIABLES GLOBALES
+// ============================================================================
 
-// Initialize application
-document.addEventListener('DOMContentLoaded', () => {
-    loadCompanies();
-    setupEventListeners();
-    showLoading('Inicializando sistema multi-tenant...');
-});
+// Configuración de la API
+const API_BASE_URL = window.location.origin;
+const DEFAULT_COMPANY_ID = 'benova';
 
-// ==================== COMPANY MANAGEMENT ====================
+// Estado global de la aplicación
+let currentCompanyId = '';
+let monitoringInterval = null;
+let systemLog = [];
 
+// Cache para optimizar requests
+const cache = {
+    companies: null,
+    systemInfo: null,
+    lastUpdate: {}
+};
+
+// ============================================================================
+// UTILIDADES Y HELPERS
+// ============================================================================
+
+/**
+ * Realiza una petición HTTP con manejo de errores y headers multi-tenant
+ */
+async function apiRequest(endpoint, options = {}) {
+    const url = `${API_BASE_URL}${endpoint}`;
+    
+    // Headers por defecto
+    const defaultHeaders = {
+        'Content-Type': 'application/json'
+    };
+    
+    // Agregar company_id si está seleccionado
+    if (currentCompanyId) {
+        defaultHeaders['X-Company-ID'] = currentCompanyId;
+    }
+    
+    // Combinar headers
+    const headers = { ...defaultHeaders, ...(options.headers || {}) };
+    
+    // Configuración de la petición
+    const config = {
+        method: options.method || 'GET',
+        headers,
+        ...options
+    };
+    
+    // Agregar body si existe y no es FormData
+    if (options.body && !(options.body instanceof FormData)) {
+        config.body = JSON.stringify(options.body);
+    } else if (options.body instanceof FormData) {
+        // Para FormData, remover Content-Type para que el browser lo maneje
+        delete config.headers['Content-Type'];
+        config.body = options.body;
+    }
+    
+    try {
+        addToLog(`API Request: ${config.method} ${endpoint}`, 'info');
+        
+        const response = await fetch(url, config);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.message || `HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        addToLog(`API Response: ${endpoint} - Success`, 'info');
+        return data;
+        
+    } catch (error) {
+        addToLog(`API Error: ${endpoint} - ${error.message}`, 'error');
+        throw error;
+    }
+}
+
+/**
+ * Muestra una notificación al usuario
+ */
+function showNotification(message, type = 'info', duration = 5000) {
+    const container = document.getElementById('notificationContainer');
+    
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    
+    container.appendChild(notification);
+    
+    // Mostrar con animación
+    setTimeout(() => {
+        notification.classList.add('show');
+    }, 100);
+    
+    // Ocultar después del tiempo especificado
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => {
+            if (container.contains(notification)) {
+                container.removeChild(notification);
+            }
+        }, 300);
+    }, duration);
+}
+
+/**
+ * Agrega una entrada al log del sistema
+ */
+function addToLog(message, level = 'info') {
+    const timestamp = new Date().toISOString().substring(0, 19).replace('T', ' ');
+    const logEntry = {
+        timestamp,
+        level,
+        message
+    };
+    
+    systemLog.push(logEntry);
+    
+    // Mantener solo los últimos 100 logs
+    if (systemLog.length > 100) {
+        systemLog.shift();
+    }
+    
+    // Actualizar UI del log
+    updateLogDisplay();
+}
+
+/**
+ * Actualiza la visualización del log en la UI
+ */
+function updateLogDisplay() {
+    const logContainer = document.getElementById('systemLog');
+    if (!logContainer) return;
+    
+    const logHTML = systemLog.map(entry => `
+        <div class="log-entry">
+            <span class="log-timestamp">[${entry.timestamp}]</span>
+            <span class="log-level-${entry.level}">[${entry.level.toUpperCase()}]</span>
+            ${entry.message}
+        </div>
+    `).join('');
+    
+    logContainer.innerHTML = logHTML;
+    
+    // Scroll automático al final
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+/**
+ * Muestra/oculta el overlay de carga
+ */
+function toggleLoadingOverlay(show) {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.style.display = show ? 'flex' : 'none';
+    }
+}
+
+/**
+ * Formatea JSON para mostrar en la UI
+ */
+function formatJSON(obj) {
+    return JSON.stringify(obj, null, 2);
+}
+
+/**
+ * Valida si hay una empresa seleccionada
+ */
+function validateCompanySelection() {
+    if (!currentCompanyId) {
+        showNotification('Por favor selecciona una empresa primero', 'warning');
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Escapa HTML para prevenir XSS
+ */
+function escapeHTML(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ============================================================================
+// GESTIÓN DE TABS
+// ============================================================================
+
+/**
+ * Cambia entre tabs
+ */
+function switchTab(tabName) {
+    // Remover clase active de todos los tabs y contenidos
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    
+    // Activar el tab seleccionado
+    const activeTab = document.querySelector(`[data-tab="${tabName}"]`);
+    if (activeTab) {
+        activeTab.classList.add('active');
+    }
+    
+    const activeContent = document.getElementById(tabName);
+    if (activeContent) {
+        activeContent.classList.add('active');
+    }
+    
+    addToLog(`Switched to tab: ${tabName}`, 'info');
+    
+    // Cargar datos específicos del tab si es necesario
+    if (tabName === 'dashboard') {
+        loadDashboardData();
+    }
+}
+
+// ============================================================================
+// GESTIÓN DE EMPRESAS
+// ============================================================================
+
+/**
+ * Carga la lista de empresas disponibles
+ */
 async function loadCompanies() {
     try {
-        showLoading('Cargando empresas configuradas...');
-        const response = await fetch(`${API_BASE}companies`);
-        
-        console.log('Response status:', response.status);
-        console.log('Response headers:', response.headers);
-        
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-            companies = data.companies;
-            populateCompanySelector();
-            updateCompanyIndicators();
-            loadSystemOverview();
-            hideLoading();
-            showToast('✅ Empresas cargadas correctamente', 'success');
-        } else {
-            throw new Error(data.message || 'Error cargando empresas');
+        if (cache.companies) {
+            return cache.companies;
         }
+        
+        const response = await apiRequest('/api/companies');
+        cache.companies = response.data || response.companies || [];
+        
+        // Actualizar selector de empresas
+        updateCompanySelector();
+        
+        return cache.companies;
+        
     } catch (error) {
         console.error('Error loading companies:', error);
-        console.error('Full error details:', {
-            message: error.message,
-            stack: error.stack
-        });
-        hideLoading();
-        showToast('❌ Error cargando empresas: ' + error.message, 'error');
+        showNotification('Error al cargar empresas: ' + error.message, 'error');
+        return [];
     }
 }
 
-function populateCompanySelector() {
-    const selector = document.getElementById('currentCompany');
-    selector.innerHTML = '';
+/**
+ * Actualiza el selector de empresas en la UI
+ */
+function updateCompanySelector() {
+    const selector = document.getElementById('companySelect');
+    if (!selector || !cache.companies) return;
     
-    Object.keys(companies).forEach(companyId => {
+    // Limpiar opciones existentes (excepto la primera)
+    while (selector.children.length > 1) {
+        selector.removeChild(selector.lastChild);
+    }
+    
+    // Agregar empresas del cache
+    cache.companies.forEach(company => {
         const option = document.createElement('option');
-        option.value = companyId;
-        option.textContent = `${companies[companyId].company_name} (${companyId})`;
+        option.value = company.id || company;
+        option.textContent = company.name || company;
         selector.appendChild(option);
     });
-    
-    // Set default
-    if (Object.keys(companies).includes(currentCompanyId)) {
-        selector.value = currentCompanyId;
-    } else {
-        currentCompanyId = Object.keys(companies)[0] || 'benova';
-        selector.value = currentCompanyId;
-    }
-    
-    updateCompanyContext();
 }
 
-function updateCompanyIndicators() {
-    const currentCompany = companies[currentCompanyId];
-    if (!currentCompany) return;
+/**
+ * Maneja el cambio de empresa seleccionada
+ */
+function handleCompanyChange(companyId) {
+    currentCompanyId = companyId;
+    addToLog(`Company changed to: ${companyId}`, 'info');
     
-    // Update all company indicators
-    const indicators = [
-        'docCompanyIndicator', 'bulkCompanyIndicator', 
-        'searchCompanyIndicator', 'chatCompanyName'
-    ];
-    
-    indicators.forEach(id => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.textContent = currentCompany.company_name;
+    if (companyId) {
+        showNotification(`Empresa cambiada a: ${companyId}`, 'success', 3000);
+        
+        // Limpiar cache relacionado con empresas
+        cache.lastUpdate = {};
+        
+        // Recargar datos del dashboard si estamos en él
+        const dashboardTab = document.getElementById('dashboard');
+        if (dashboardTab && dashboardTab.classList.contains('active')) {
+            loadDashboardData();
         }
-    });
-    
-    // Update chat services
-    const servicesElement = document.getElementById('chatCompanyServices');
-    if (servicesElement && currentCompany.services) {
-        servicesElement.textContent = `Servicios: ${currentCompany.services}`;
-    }
-    
-    // Update camera modal
-    const cameraCompany = document.getElementById('cameraCompany');
-    if (cameraCompany) {
-        cameraCompany.textContent = currentCompany.company_name;
-    }
-    
-    // Update recording status
-    const recordingCompany = document.getElementById('recordingCompany');
-    if (recordingCompany) {
-        recordingCompany.textContent = currentCompany.company_name;
     }
 }
 
-async function updateCompanyContext() {
-    updateCompanyIndicators();
-    await loadCompanyInfo();
-    clearPreviousData();
+// ============================================================================
+// DASHBOARD - FUNCIONES PRINCIPALES
+// ============================================================================
+
+/**
+ * Carga todos los datos del dashboard
+ */
+async function loadDashboardData() {
+    await Promise.all([
+        loadSystemInfo(),
+        loadCompaniesStatus(),
+        updateStats()
+    ]);
 }
 
-async function loadCompanyInfo() {
+/**
+ * Carga información del sistema
+ */
+async function loadSystemInfo() {
     try {
-        const response = await fetch(`${API_BASE}company/${currentCompanyId}/status`);
-        const data = await response.json();
+        const response = await apiRequest('/api/system/info');
         
-        const infoDiv = document.getElementById('companyInfo');
+        cache.systemInfo = response;
         
-        if (data.status === 'success') {
-            const info = data.data;
-            infoDiv.innerHTML = `
-                <div class="company-details">
-                    <h3>${info.company_name} (${info.company_id})</h3>
-                    <div class="company-stats">
-                        <span class="stat">📍 Servicios: ${info.services}</span>
-                        <span class="stat ${info.orchestrator_ready ? 'status-healthy' : 'status-error'}">
-                            🤖 Orquestador: ${info.orchestrator_ready ? 'Listo' : 'No disponible'}
-                        </span>
-                        <span class="stat ${info.system_healthy ? 'status-healthy' : 'status-warning'}">
-                            🩺 Estado: ${info.system_healthy ? 'Saludable' : 'Requiere atención'}
-                        </span>
-                    </div>
-                    <div class="technical-info">
-                        <small>📊 Índice: ${info.vectorstore_index}</small>
-                        <small>🔑 Prefijo: ${info.redis_prefix}</small>
-                    </div>
+        const container = document.getElementById('systemInfo');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-success">
+                    <h4>🚀 Sistema Multi-Tenant Activo</h4>
+                    <p><strong>Versión:</strong> ${response.version || '1.0.0'}</p>
+                    <p><strong>Tipo:</strong> ${response.system_type || 'multi-tenant-multi-agent'}</p>
+                    <p><strong>Empresas configuradas:</strong> ${response.companies_configured || 0}</p>
+                    <p><strong>Características:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 5px;">
+                        ${(response.features || []).map(feature => `<li>${feature}</li>`).join('')}
+                    </ul>
                 </div>
             `;
-        } else {
-            infoDiv.innerHTML = `<div class="error-info">❌ Error cargando información de ${currentCompanyId}</div>`;
         }
+        
+        // Actualizar estadísticas
+        document.getElementById('totalCompanies').textContent = response.companies_configured || 0;
+        
     } catch (error) {
-        console.error('Error loading company info:', error);
-        document.getElementById('companyInfo').innerHTML = 
-            `<div class="error-info">❌ Error de conexión</div>`;
+        console.error('Error loading system info:', error);
+        const container = document.getElementById('systemInfo');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al cargar información del sistema</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
     }
 }
 
-async function loadSystemOverview() {
+/**
+ * Carga el estado de todas las empresas
+ */
+async function loadCompaniesStatus() {
     try {
-        const response = await fetch(`${API_BASE}health`);
-        const data = await response.json();
+        const response = await apiRequest('/api/health/companies');
         
-        const overviewDiv = document.getElementById('systemOverview');
-        
-        if (data.companies) {
-            const healthData = data.companies.health || {};
-            const statsData = data.companies.stats || {};
+        const container = document.getElementById('companiesStatus');
+        if (container && response.companies) {
+            let statusHTML = '';
             
-            let overviewHTML = '';
-            Object.keys(companies).forEach(companyId => {
-                const company = companies[companyId];
-                const health = healthData[companyId] || {};
-                const stats = statsData[companyId] || {};
+            Object.entries(response.companies).forEach(([companyId, status]) => {
+                const isHealthy = status.system_healthy;
+                const statusClass = isHealthy ? 'healthy' : 'error';
+                const statusIcon = isHealthy ? '✅' : '❌';
                 
-                const isHealthy = health.system_healthy || false;
-                const conversations = stats.conversations || 0;
-                const documents = stats.documents || 0;
-                
-                overviewHTML += `
-                    <div class="company-overview-card ${companyId === currentCompanyId ? 'active' : ''}" 
-                         data-company="${companyId}">
-                        <h4>${company.company_name}</h4>
-                        <div class="overview-stats">
-                            <span class="${isHealthy ? 'status-healthy' : 'status-error'}">
-                                ${isHealthy ? '✅' : '❌'} ${isHealthy ? 'Saludable' : 'Error'}
-                            </span>
-                            <span>💬 ${conversations} conversaciones</span>
-                            <span>📄 ${documents} documentos</span>
-                        </div>
-                        <button onclick="selectCompany('${companyId}')" class="btn-small">
-                            ${companyId === currentCompanyId ? '✓ Activa' : 'Seleccionar'}
-                        </button>
+                statusHTML += `
+                    <div class="health-status ${statusClass}">
+                        <span class="status-indicator status-${isHealthy ? 'healthy' : 'error'}"></span>
+                        ${statusIcon} <strong>${companyId}</strong>
+                        <span class="badge badge-${isHealthy ? 'success' : 'error'}">
+                            ${isHealthy ? 'ONLINE' : 'ERROR'}
+                        </span>
                     </div>
                 `;
             });
             
-            overviewDiv.innerHTML = overviewHTML;
-        } else {
-            overviewDiv.innerHTML = '<p>No se pudo cargar la vista general del sistema</p>';
-        }
-    } catch (error) {
-        console.error('Error loading system overview:', error);
-        document.getElementById('systemOverview').innerHTML = 
-            '<p>❌ Error cargando vista general</p>';
-    }
-}
-
-function selectCompany(companyId) {
-    if (companies[companyId]) {
-        currentCompanyId = companyId;
-        document.getElementById('currentCompany').value = companyId;
-        updateCompanyContext();
-        loadSystemOverview();
-        showToast(`🏢 Empresa cambiada a: ${companies[companyId].company_name}`, 'info');
-    }
-}
-
-function clearPreviousData() {
-    // Clear documents list
-    document.getElementById('documentsList').innerHTML = '';
-    // Clear conversations list  
-    document.getElementById('conversationsList').innerHTML = '';
-    // Clear search results
-    document.getElementById('searchResults').innerHTML = '';
-    // Clear chat history
-    document.getElementById('chatHistory').innerHTML = '';
-}
-
-// ==================== EVENT LISTENERS ====================
-
-function setupEventListeners() {
-    // Company selector
-    document.getElementById('currentCompany').addEventListener('change', (e) => {
-        currentCompanyId = e.target.value;
-        updateCompanyContext();
-        loadSystemOverview();
-    });
-    
-    // Refresh companies
-    document.getElementById('refreshCompanies').addEventListener('click', loadCompanies);
-    
-    // Company actions
-    document.getElementById('checkHealthBtn').addEventListener('click', checkCompanyHealth);
-    document.getElementById('viewStatsBtn').addEventListener('click', viewCompanyStats);
-    document.getElementById('resetCacheBtn').addEventListener('click', resetCompanyCache);
-    document.getElementById('viewAllCompanies').addEventListener('click', viewAllCompanies);
-    
-    // Document management
-    document.getElementById('addDocumentForm').addEventListener('submit', addDocument);
-    document.getElementById('bulkUploadForm').addEventListener('submit', bulkUploadDocuments);
-    document.getElementById('searchDocumentsForm').addEventListener('submit', searchDocuments);
-    document.getElementById('listDocumentsBtn').addEventListener('click', listDocuments);
-    document.getElementById('cleanupVectorsBtn').addEventListener('click', cleanupVectors);
-    document.getElementById('diagnosticsBtn').addEventListener('click', runDiagnostics);
-    
-    // Conversation management
-    document.getElementById('listConversationsBtn').addEventListener('click', listConversations);
-    document.getElementById('conversationStatsBtn').addEventListener('click', viewConversationStats);
-    
-    // Chat testing
-    document.getElementById('chatForm').addEventListener('submit', sendChatMessage);
-    
-    // Multimedia
-    document.getElementById('recordVoiceBtn').addEventListener('click', startVoiceRecording);
-    document.getElementById('stopRecordingBtn').addEventListener('click', stopVoiceRecording);
-    document.getElementById('captureImageBtn').addEventListener('click', startCameraCapture);
-    document.getElementById('takePictureBtn').addEventListener('click', takePicture);
-    document.getElementById('closeCameraBtn').addEventListener('click', closeCameraModal);
-    document.getElementById('cancelCameraBtn').addEventListener('click', closeCameraModal);
-    
-    // File uploads
-    document.getElementById('voiceFile').addEventListener('change', handleVoiceFile);
-    document.getElementById('imageFile').addEventListener('change', handleImageFile);
-    
-    // System administration
-    document.getElementById('systemHealthBtn').addEventListener('click', checkSystemHealth);
-    document.getElementById('reloadConfigBtn').addEventListener('click', reloadConfiguration);
-    document.getElementById('systemStatsBtn').addEventListener('click', viewSystemStats);
-    document.getElementById('multimediaTestBtn').addEventListener('click', testMultimedia);
-    document.getElementById('vectorRecoveryBtn').addEventListener('click', forceVectorRecovery);
-    document.getElementById('protectionStatusBtn').addEventListener('click', checkProtectionStatus);
-    document.getElementById('exportConfigBtn').addEventListener('click', exportConfiguration);
-    document.getElementById('migrationToolBtn').addEventListener('click', showMigrationTool);
-}
-
-// ==================== COMPANY ACTIONS ====================
-
-async function checkCompanyHealth() {
-    try {
-        showLoading(`Verificando salud de ${companies[currentCompanyId].company_name}...`);
-        
-        const response = await fetch(`${API_BASE}health/company/${currentCompanyId}`);
-        const data = await response.json();
-        
-        hideLoading();
-        
-        const isHealthy = data.system_healthy;
-        const statusText = isHealthy ? '✅ Sistema saludable' : '❌ Sistema con problemas';
-        
-        let detailsHTML = `
-            <h3>${statusText}</h3>
-            <div class="health-details">
-                <p><strong>Empresa:</strong> ${data.company_name} (${data.company_id})</p>
-                <p><strong>Vectorstore:</strong> ${data.vectorstore_connected ? '✅ Conectado' : '❌ Desconectado'}</p>
-        `;
-        
-        if (data.agents_available) {
-            detailsHTML += `<p><strong>Agentes disponibles:</strong> ${data.agents_available.join(', ')}</p>`;
+            container.innerHTML = statusHTML;
         }
         
-        detailsHTML += '</div>';
-        
-        showModal('🩺 Health Check - ' + companies[currentCompanyId].company_name, detailsHTML);
-        
     } catch (error) {
-        hideLoading();
-        showToast('❌ Error verificando salud: ' + error.message, 'error');
-    }
-}
-
-async function viewCompanyStats() {
-    try {
-        showLoading('Cargando estadísticas...');
-        
-        const response = await fetch(`${API_BASE}admin/status?company_id=${currentCompanyId}`);
-        const data = await response.json();
-        
-        hideLoading();
-        
-        if (data.status === 'success') {
-            const stats = data.statistics || {};
-            let statsHTML = `
-                <h3>📊 Estadísticas de ${data.company_name}</h3>
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <span class="stat-value">${stats.conversations || 0}</span>
-                        <span class="stat-label">Conversaciones</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-value">${stats.documents || 0}</span>
-                        <span class="stat-label">Documentos</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-value">${stats.bot_statuses || 0}</span>
-                        <span class="stat-label">Estados Bot</span>
-                    </div>
+        console.error('Error loading companies status:', error);
+        const container = document.getElementById('companiesStatus');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al cargar estado de empresas</p>
+                    <p>${escapeHTML(error.message)}</p>
                 </div>
             `;
-            
-            if (data.configuration) {
-                statsHTML += `
-                    <div class="config-section">
-                        <h4>⚙️ Configuración</h4>
-                        <p><strong>Servicios:</strong> ${data.configuration.services}</p>
-                        <p><strong>Índice Vectorstore:</strong> ${data.configuration.vectorstore_index}</p>
-                        <p><strong>URL Agendamiento:</strong> ${data.configuration.schedule_service_url}</p>
-                    </div>
-                `;
-            }
-            
-            showModal('📊 Estadísticas', statsHTML);
-        } else {
-            throw new Error(data.message || 'Error cargando estadísticas');
         }
-    } catch (error) {
-        hideLoading();
-        showToast('❌ Error cargando estadísticas: ' + error.message, 'error');
     }
 }
 
-async function resetCompanyCache() {
-    if (!confirm(`¿Estás seguro de que quieres limpiar el cache de ${companies[currentCompanyId].company_name}?`)) {
+/**
+ * Actualiza las estadísticas del dashboard
+ */
+async function updateStats() {
+    if (!validateCompanySelection()) return;
+    
+    try {
+        // Cargar estadísticas básicas
+        const [documentsResponse, conversationsResponse] = await Promise.all([
+            apiRequest('/api/documents').catch(() => ({ data: [] })),
+            apiRequest('/api/conversations').catch(() => ({ data: [] }))
+        ]);
+        
+        // Actualizar contadores
+        document.getElementById('totalDocuments').textContent = 
+            documentsResponse.data?.length || documentsResponse.total || 0;
+        
+        document.getElementById('totalConversations').textContent = 
+            conversationsResponse.data?.length || conversationsResponse.total || 0;
+        
+        document.getElementById('systemStatus').textContent = '🟢';
+        
+    } catch (error) {
+        console.error('Error updating stats:', error);
+        document.getElementById('systemStatus').textContent = '🔴';
+    }
+}
+
+// ============================================================================
+// GESTIÓN DE DOCUMENTOS
+// ============================================================================
+
+/**
+ * Sube un documento al sistema
+ */
+async function uploadDocument() {
+    if (!validateCompanySelection()) return;
+    
+    const title = document.getElementById('documentTitle').value.trim();
+    const content = document.getElementById('documentContent').value.trim();
+    const fileInput = document.getElementById('documentFile');
+    
+    if (!title) {
+        showNotification('Por favor ingresa un título para el documento', 'warning');
+        return;
+    }
+    
+    if (!content && !fileInput.files[0]) {
+        showNotification('Por favor ingresa contenido o selecciona un archivo', 'warning');
         return;
     }
     
     try {
-        showLoading('Limpiando cache...');
+        toggleLoadingOverlay(true);
         
-        const response = await fetch(`${API_BASE}admin/system/reset`, {
+        let documentData = {
+            title: title,
+            company_id: currentCompanyId
+        };
+        
+        if (content) {
+            documentData.content = content;
+        }
+        
+        if (fileInput.files[0]) {
+            // Si hay archivo, leer su contenido
+            const fileContent = await readFileContent(fileInput.files[0]);
+            documentData.content = fileContent;
+            documentData.file_name = fileInput.files[0].name;
+        }
+        
+        const response = await apiRequest('/api/documents', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Company-ID': currentCompanyId
-            },
-            body: JSON.stringify({
-                reset_all: false
-            })
+            body: documentData
         });
         
-        const data = await response.json();
+        showNotification('Documento subido exitosamente', 'success');
         
-        hideLoading();
+        // Limpiar formulario
+        document.getElementById('documentTitle').value = '';
+        document.getElementById('documentContent').value = '';
+        document.getElementById('documentFile').value = '';
         
-        if (data.status === 'success') {
-            showToast(`✅ Cache limpiado: ${data.keys_cleared} claves eliminadas`, 'success');
-        } else {
-            throw new Error(data.message || 'Error limpiando cache');
-        }
+        // Recargar lista de documentos
+        await loadDocuments();
+        
     } catch (error) {
-        hideLoading();
-        showToast('❌ Error limpiando cache: ' + error.message, 'error');
+        console.error('Error uploading document:', error);
+        showNotification('Error al subir documento: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
     }
 }
 
-// ==================== DOCUMENT MANAGEMENT ====================
+/**
+ * Lee el contenido de un archivo
+ */
+function readFileContent(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsText(file);
+    });
+}
 
-async function addDocument(e) {
-    e.preventDefault();
+/**
+ * Carga la lista de documentos
+ */
+async function loadDocuments() {
+    if (!validateCompanySelection()) return;
     
-    const content = document.getElementById('docContent').value.trim();
-    const metadataStr = document.getElementById('docMetadata').value.trim();
-    
-    if (!content) {
-        showToast('❌ El contenido es requerido', 'error');
-        return;
-    }
-    
-    let metadata = {};
-    if (metadataStr) {
-        try {
-            metadata = JSON.parse(metadataStr);
-        } catch (error) {
-            showToast('❌ Metadata debe ser JSON válido', 'error');
+    try {
+        const response = await apiRequest('/api/documents');
+        const documents = response.data || response.documents || [];
+        
+        const container = document.getElementById('documentsList');
+        if (!container) return;
+        
+        if (documents.length === 0) {
+            container.innerHTML = `
+                <p style="padding: 20px; text-align: center; color: #718096;">
+                    No hay documentos para la empresa ${currentCompanyId}
+                </p>
+            `;
             return;
         }
-    }
-    
-    try {
-        showLoading(`Agregando documento a ${companies[currentCompanyId].company_name}...`);
         
-        const response = await fetch(`${API_BASE}documents`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Company-ID': currentCompanyId
-            },
-            body: JSON.stringify({
-                content: content,
-                metadata: metadata
-            })
-        });
+        const documentsHTML = documents.map(doc => `
+            <div class="data-item">
+                <div class="data-item-header">
+                    <div class="data-item-title">📄 ${escapeHTML(doc.title || doc.name || 'Sin título')}</div>
+                    <div class="data-item-meta">
+                        ${doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'Fecha desconocida'}
+                    </div>
+                </div>
+                <div class="data-item-content">
+                    ${doc.content ? escapeHTML(doc.content.substring(0, 150)) + '...' : 'Sin contenido'}
+                </div>
+                <div class="data-item-actions">
+                    <button class="btn btn-secondary" onclick="viewDocument('${doc.id}')">
+                        👁️ Ver
+                    </button>
+                    <button class="btn btn-danger" onclick="deleteDocument('${doc.id}')">
+                        🗑️ Eliminar
+                    </button>
+                </div>
+            </div>
+        `).join('');
         
-        const data = await response.json();
+        container.innerHTML = documentsHTML;
         
-        hideLoading();
-        
-        if (data.status === 'success') {
-            showToast(`✅ Documento agregado: ${data.chunk_count} chunks creados`, 'success');
-            document.getElementById('addDocumentForm').reset();
-            // Refresh documents list if visible
-            if (document.getElementById('documentsList').children.length > 0) {
-                listDocuments();
-            }
-        } else {
-            throw new Error(data.message || 'Error agregando documento');
-        }
     } catch (error) {
-        hideLoading();
-        showToast('❌ Error agregando documento: ' + error.message, 'error');
+        console.error('Error loading documents:', error);
+        const container = document.getElementById('documentsList');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al cargar documentos</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
     }
 }
 
-async function listDocuments() {
-    try {
-        showLoading(`Cargando documentos de ${companies[currentCompanyId].company_name}...`);
-        
-        const response = await fetch(`${API_BASE}documents?company_id=${currentCompanyId}&page=1&page_size=20`);
-        const data = await response.json();
-        
-        hideLoading();
-        
-        if (data.status === 'success') {
-            displayDocumentsList(data);
-            showToast(`📄 ${data.total_documents} documentos encontrados`, 'info');
-        } else {
-            throw new Error(data.message || 'Error listando documentos');
-        }
-    } catch (error) {
-        hideLoading();
-        showToast('❌ Error listando documentos: ' + error.message, 'error');
-    }
-}
-
-async function cleanupVectors() {
-    if (!confirm('¿Limpiar vectores huérfanos? Esta acción no se puede deshacer.')) return;
+/**
+ * Busca documentos
+ */
+async function searchDocuments() {
+    if (!validateCompanySelection()) return;
     
-    try {
-        showLoading('Limpiando vectores huérfanos...');
-        const response = await fetch(`${API_BASE}documents/cleanup`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'X-Company-ID': currentCompanyId
-            },
-            body: JSON.stringify({ dry_run: false })
-        });
-        const data = await response.json();
-        hideLoading();
-        
-        if (data.status === 'success') {
-            showToast(`✅ ${data.orphaned_vectors_deleted} vectores eliminados`, 'success');
-        } else {
-            throw new Error(data.message);
-        }
-    } catch (error) {
-        hideLoading();
-        showToast('❌ Error: ' + error.message, 'error');
-    }
-}
-
-// ==================== CONVERSATION MANAGEMENT ====================
-
-async function listConversations() {
-    try {
-        showLoading(`Cargando conversaciones de ${companies[currentCompanyId].company_name}...`);
-        
-        const response = await fetch(`${API_BASE}conversations?company_id=${currentCompanyId}&page=1&page_size=20`);
-        const data = await response.json();
-        
-        hideLoading();
-        
-        if (data.status === 'success') {
-            displayConversationsList(data);
-            showToast(`💬 ${data.total_conversations} conversaciones encontradas`, 'info');
-        } else {
-            throw new Error(data.message || 'Error listando conversaciones');
-        }
-    } catch (error) {
-        hideLoading();
-        showToast('❌ Error listando conversaciones: ' + error.message, 'error');
-    }
-}
-
-// ==================== CHAT TESTING ====================
-
-async function sendChatMessage(e) {
-    e.preventDefault();
-    
-    const message = document.getElementById('userMessage').value.trim();
-    const userId = document.getElementById('testUserId').value.trim() || 'test_user';
-    
-    if (!message) {
-        showToast('❌ Ingresa un mensaje', 'error');
+    const query = document.getElementById('searchQuery').value.trim();
+    if (!query) {
+        showNotification('Por favor ingresa una consulta de búsqueda', 'warning');
         return;
     }
     
-    // Display user message
-    displayChatMessage('user', message);
-    document.getElementById('userMessage').value = '';
-    
     try {
-        const response = await fetch(`${API_BASE}conversations/${userId}/test?company_id=${currentCompanyId}`, {
+        const response = await apiRequest('/api/documents/search', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                message: message
-            })
+            body: {
+                query: query,
+                company_id: currentCompanyId
+            }
         });
         
-        const data = await response.json();
+        const results = response.data || response.results || [];
+        const container = document.getElementById('searchResults');
         
-        if (data.status === 'success') {
-            displayChatMessage('assistant', data.bot_response);
-            // Show agent used in a subtle way
-            displayChatMessage('system', `Agente usado: ${data.agent_used}`);
-        } else {
-            throw new Error(data.message || 'Error obteniendo respuesta');
+        if (results.length === 0) {
+            container.innerHTML = `
+                <div class="result-container result-warning">
+                    <p>🔍 No se encontraron resultados para "${escapeHTML(query)}"</p>
+                </div>
+            `;
+            return;
         }
-    } catch (error) {
-        displayChatMessage('error', 'Error: ' + error.message);
-        showToast('❌ Error en chat: ' + error.message, 'error');
-    }
-}
-
-function displayChatMessage(role, message) {
-    const chatContainer = document.getElementById('chatHistory');
-    const messageElement = document.createElement('div');
-    messageElement.className = `message ${role}-message`;
-    
-    if (role === 'system') {
-        messageElement.innerHTML = `<small><em>${message}</em></small>`;
-    } else if (role === 'error') {
-        messageElement.innerHTML = `<span class="error-text">${message}</span>`;
-    } else {
-        messageElement.textContent = message;
-    }
-    
-    chatContainer.appendChild(messageElement);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-// ==================== SYSTEM ADMINISTRATION ====================
-
-async function checkSystemHealth() {
-    try {
-        showLoading('Verificando salud del sistema...');
         
-        const response = await fetch(`${API_BASE}health`);
-        const data = await response.json();
-        
-        hideLoading();
-        
-        const isHealthy = data.status === 'healthy';
-        let healthHTML = `
-            <h3>${isHealthy ? '✅ Sistema Saludable' : '❌ Sistema con Problemas'}</h3>
-            <div class="system-health">
-                <p><strong>Tipo:</strong> ${data.system_type}</p>
-                <p><strong>Empresas configuradas:</strong> ${data.companies?.total || 0}</p>
+        const resultsHTML = `
+            <div class="result-container result-success">
+                <h4>🔍 Resultados de búsqueda (${results.length})</h4>
+                ${results.map(result => `
+                    <div class="search-result" style="border-left: 3px solid #667eea; padding-left: 15px; margin: 10px 0;">
+                        <h5>${escapeHTML(result.title || result.document_title || 'Sin título')}</h5>
+                        <p>${escapeHTML(result.content || result.text || 'Sin contenido').substring(0, 200)}...</p>
+                        ${result.score ? `<small>Relevancia: ${Math.round(result.score * 100)}%</small>` : ''}
+                    </div>
+                `).join('')}
+            </div>
         `;
         
-        if (data.companies?.configured) {
-            healthHTML += `<p><strong>Empresas disponibles:</strong> ${data.companies.configured.join(', ')}</p>`;
-        }
-        
-        if (data.basic_components) {
-            healthHTML += '<h4>🔧 Componentes Básicos:</h4><ul>';
-            Object.entries(data.basic_components).forEach(([component, status]) => {
-                const icon = status === 'connected' ? '✅' : '❌';
-                healthHTML += `<li>${icon} ${component}: ${status}</li>`;
-            });
-            healthHTML += '</ul>';
-        }
-        
-        healthHTML += '</div>';
-        
-        showModal('🩺 Health Check del Sistema', healthHTML);
+        container.innerHTML = resultsHTML;
         
     } catch (error) {
-        hideLoading();
-        showToast('❌ Error verificando salud del sistema: ' + error.message, 'error');
+        console.error('Error searching documents:', error);
+        const container = document.getElementById('searchResults');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error en la búsqueda</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
     }
 }
 
-// ==================== UTILITY FUNCTIONS ====================
-
-function showLoading(message = 'Cargando...') {
-    document.getElementById('loadingMessage').textContent = message;
-    document.getElementById('loadingOverlay').style.display = 'flex';
-}
-
-function hideLoading() {
-    document.getElementById('loadingOverlay').style.display = 'none';
-}
-
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    
-    const container = document.getElementById('toastContainer');
-    container.appendChild(toast);
-    
-    // Auto remove after 5 seconds
-    setTimeout(() => {
-        if (container.contains(toast)) {
-            container.removeChild(toast);
-        }
-    }, 5000);
-    
-    // Remove on click
-    toast.addEventListener('click', () => {
-        if (container.contains(toast)) {
-            container.removeChild(toast);
-        }
-    });
-}
-
-function showModal(title, content) {
-    // Create modal dynamically
-    const modal = document.createElement('div');
-    modal.className = 'modal modal-info';
-    modal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>${title}</h3>
-                <button class="btn-close" onclick="this.closest('.modal').remove()">&times;</button>
-            </div>
-            <div class="modal-body">
-                ${content}
-            </div>
-            <div class="modal-footer">
-                <button onclick="this.closest('.modal').remove()" class="btn-secondary">Cerrar</button>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    modal.style.display = 'block';
-    
-    // Remove on background click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.remove();
-        }
-    });
-}
-
-function formatDate(dateString) {
-    if (!dateString) return 'N/A';
+/**
+ * Ve un documento específico
+ */
+async function viewDocument(docId) {
     try {
-        return new Date(dateString).toLocaleDateString('es-ES');
-    } catch {
-        return dateString;
+        const response = await apiRequest(`/api/documents/${docId}`);
+        const doc = response.data || response;
+        
+        // Crear modal para mostrar el documento
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-width: 80%; max-height: 80%; overflow-y: auto; z-index: 10000;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px;">
+                    <h3>📄 ${escapeHTML(doc.title || 'Documento')}</h3>
+                    <button class="btn btn-secondary" onclick="closeModal()" style="padding: 8px 12px;">✕</button>
+                </div>
+                <div class="modal-body">
+                    <pre style="white-space: pre-wrap; word-wrap: break-word; font-family: 'Segoe UI', sans-serif; line-height: 1.6;">${escapeHTML(doc.content || 'Sin contenido')}</pre>
+                </div>
+            </div>
+            <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999;" onclick="closeModal()"></div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+    } catch (error) {
+        console.error('Error viewing document:', error);
+        showNotification('Error al ver documento: ' + error.message, 'error');
     }
 }
 
+/**
+ * Cierra el modal
+ */
+function closeModal() {
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) {
+        document.body.removeChild(modal);
+    }
+}
 
-// Placeholder functions for features not fully implemented
-async function bulkUploadDocuments(e) { showToast('🚧 Función en desarrollo', 'info'); }
-async function searchDocuments(e) { showToast('🚧 Función en desarrollo', 'info'); }
-async function displayDocumentsList(data) { showToast('🚧 Función en desarrollo', 'info'); }
-async function displayConversationsList(data) { showToast('🚧 Función en desarrollo', 'info'); }
-async function startVoiceRecording() { showToast('🚧 Función en desarrollo', 'info'); }
-async function stopVoiceRecording() { showToast('🚧 Función en desarrollo', 'info'); }
-async function startCameraCapture() { showToast('🚧 Función en desarrollo', 'info'); }
-async function takePicture() { showToast('🚧 Función en desarrollo', 'info'); }
-async function closeCameraModal() { showToast('🚧 Función en desarrollo', 'info'); }
-async function handleVoiceFile(e) { showToast('🚧 Función en desarrollo', 'info'); }
-async function handleImageFile(e) { showToast('🚧 Función en desarrollo', 'info'); }
-async function reloadConfiguration() { showToast('🚧 Función en desarrollo', 'info'); }
-async function viewSystemStats() { showToast('🚧 Función en desarrollo', 'info'); }
-async function testMultimedia() { showToast('🚧 Función en desarrollo', 'info'); }
-async function forceVectorRecovery() { showToast('🚧 Función en desarrollo', 'info'); }
-async function checkProtectionStatus() { showToast('🚧 Función en desarrollo', 'info'); }
-async function exportConfiguration() { showToast('🚧 Función en desarrollo', 'info'); }
-async function showMigrationTool() { showToast('🚧 Función en desarrollo', 'info'); }
-async function viewAllCompanies() { showModal('🏢 Todas las Empresas', JSON.stringify(companies, null, 2)); }
-async function viewConversationStats() { showToast('🚧 Función en desarrollo', 'info'); }
-async function runDiagnostics() { showToast('🚧 Función en desarrollo', 'info'); }
+/**
+ * Elimina un documento
+ */
+async function deleteDocument(docId) {
+    if (!confirm('¿Estás seguro de que quieres eliminar este documento?')) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/documents/${docId}`, {
+            method: 'DELETE'
+        });
+        
+        showNotification('Documento eliminado exitosamente', 'success');
+        await loadDocuments();
+        
+    } catch (error) {
+        console.error('Error deleting document:', error);
+        showNotification('Error al eliminar documento: ' + error.message, 'error');
+    }
+}
+
+// ============================================================================
+// GESTIÓN DE CONVERSACIONES
+// ============================================================================
+
+/**
+ * Prueba una conversación
+ */
+async function testConversation() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('testUserId').value.trim();
+    const message = document.getElementById('testMessage').value.trim();
+    
+    if (!userId || !message) {
+        showNotification('Por favor completa todos los campos', 'warning');
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest(`/api/conversations/${userId}/test`, {
+            method: 'POST',
+            body: {
+                message: message,
+                company_id: currentCompanyId
+            }
+        });
+        
+        const container = document.getElementById('conversationResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>💬 Respuesta del Bot</h4>
+                <p><strong>Usuario:</strong> ${escapeHTML(message)}</p>
+                <p><strong>Bot:</strong> ${escapeHTML(response.bot_response || response.response || 'Sin respuesta')}</p>
+                <p><strong>Agente usado:</strong> ${response.agent_used || 'Desconocido'}</p>
+                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+            </div>
+        `;
+        
+        showNotification('Conversación probada exitosamente', 'success');
+        
+    } catch (error) {
+        console.error('Error testing conversation:', error);
+        const container = document.getElementById('conversationResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al probar conversación</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Obtiene una conversación específica
+ */
+async function getConversation() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('manageUserId').value.trim();
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest(`/api/conversations/${userId}`);
+        const conversation = response.data || response;
+        
+        const container = document.getElementById('conversationDetails');
+        container.innerHTML = `
+            <div class="result-container result-info">
+                <h4>👤 Conversación de ${escapeHTML(userId)}</h4>
+                <div class="conversation-history" style="max-height: 300px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px;">
+                    ${conversation.history ? conversation.history.map(msg => `
+                        <div class="message" style="margin-bottom: 15px; padding: 10px; border-radius: 8px; background: ${msg.role === 'user' ? '#f0fff4' : '#ebf8ff'};">
+                            <strong>${msg.role === 'user' ? '👤 Usuario' : '🤖 Bot'}:</strong> ${escapeHTML(msg.content)}
+                            <br><small style="color: #718096;">${msg.timestamp || 'Sin fecha'}</small>
+                        </div>
+                    `).join('') : '<p>No hay historial disponible</p>'}
+                </div>
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Error getting conversation:', error);
+        const container = document.getElementById('conversationDetails');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al obtener conversación</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Elimina una conversación
+ */
+async function deleteConversation() {
+    if (!validateCompanySelection()) return;
+    
+    const userId = document.getElementById('manageUserId').value.trim();
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    if (!confirm(`¿Estás seguro de que quieres eliminar la conversación de ${userId}?`)) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/conversations/${userId}`, {
+            method: 'DELETE'
+        });
+        
+        showNotification('Conversación eliminada exitosamente', 'success');
+        
+        // Limpiar detalles mostrados
+        const container = document.getElementById('conversationDetails');
+        container.innerHTML = '';
+        
+        // Recargar lista
+        await loadConversations();
+        
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+        showNotification('Error al eliminar conversación: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Carga la lista de conversaciones
+ */
+async function loadConversations() {
+    if (!validateCompanySelection()) return;
+    
+    try {
+        const response = await apiRequest('/api/conversations');
+        const conversations = response.data || response.conversations || [];
+        
+        const container = document.getElementById('conversationsList');
+        if (!container) return;
+        
+        if (conversations.length === 0) {
+            container.innerHTML = `
+                <p style="padding: 20px; text-align: center; color: #718096;">
+                    No hay conversaciones para la empresa ${currentCompanyId}
+                </p>
+            `;
+            return;
+        }
+        
+        const conversationsHTML = conversations.map(conv => `
+            <div class="data-item">
+                <div class="data-item-header">
+                    <div class="data-item-title">👤 ${escapeHTML(conv.user_id || conv.id)}</div>
+                    <div class="data-item-meta">
+                        ${conv.last_message_at ? new Date(conv.last_message_at).toLocaleDateString() : 'Sin fecha'}
+                    </div>
+                </div>
+                <div class="data-item-content">
+                    Mensajes: ${conv.message_count || 0} | 
+                    Estado: ${conv.status || 'Activo'}
+                </div>
+                <div class="data-item-actions">
+                    <button class="btn btn-primary" onclick="viewConversationDetail('${conv.user_id || conv.id}')">
+                        👁️ Ver
+                    </button>
+                    <button class="btn btn-danger" onclick="deleteConversationFromList('${conv.user_id || conv.id}')">
+                        🗑️ Eliminar
+                    </button>
+                </div>
+            </div>
+        `).join('');
+        
+        container.innerHTML = conversationsHTML;
+        
+    } catch (error) {
+        console.error('Error loading conversations:', error);
+        const container = document.getElementById('conversationsList');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al cargar conversaciones</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Ve detalles de una conversación desde la lista
+ */
+function viewConversationDetail(userId) {
+    document.getElementById('manageUserId').value = userId;
+    getConversation();
+}
+
+/**
+ * Elimina una conversación desde la lista
+ */
+function deleteConversationFromList(userId) {
+    document.getElementById('manageUserId').value = userId;
+    deleteConversation();
+}
+
+// ============================================================================
+// GESTIÓN DE MULTIMEDIA
+// ============================================================================
+
+/**
+ * Procesa un archivo de audio
+ */
+async function processAudio() {
+    if (!validateCompanySelection()) return;
+    
+    const audioFile = document.getElementById('audioFile').files[0];
+    const userId = document.getElementById('audioUserId').value.trim();
+    
+    if (!audioFile) {
+        showNotification('Por favor selecciona un archivo de audio', 'warning');
+        return;
+    }
+    
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const formData = new FormData();
+        formData.append('audio', audioFile);
+        formData.append('user_id', userId);
+        formData.append('company_id', currentCompanyId);
+        
+        const response = await apiRequest('/api/multimedia/process-voice', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const container = document.getElementById('audioResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>🎵 Procesamiento de Audio Completado</h4>
+                <p><strong>Transcripción:</strong></p>
+                <div class="code-block">${escapeHTML(response.transcript || 'Sin transcripción')}</div>
+                ${response.bot_response ? `
+                    <p><strong>Respuesta del Bot:</strong></p>
+                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
+                ` : ''}
+                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+            </div>
+        `;
+        
+        showNotification('Audio procesado exitosamente', 'success');
+        
+    } catch (error) {
+        console.error('Error processing audio:', error);
+        const container = document.getElementById('audioResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al procesar audio</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Procesa una imagen
+ */
+async function processImage() {
+    if (!validateCompanySelection()) return;
+    
+    const imageFile = document.getElementById('imageFile').files[0];
+    const userId = document.getElementById('imageUserId').value.trim();
+    
+    if (!imageFile) {
+        showNotification('Por favor selecciona una imagen', 'warning');
+        return;
+    }
+    
+    if (!userId) {
+        showNotification('Por favor ingresa un ID de usuario', 'warning');
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const formData = new FormData();
+        formData.append('image', imageFile);
+        formData.append('user_id', userId);
+        formData.append('company_id', currentCompanyId);
+        
+        const response = await apiRequest('/api/multimedia/process-image', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const container = document.getElementById('imageResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>📸 Procesamiento de Imagen Completado</h4>
+                <p><strong>Análisis:</strong></p>
+                <div class="code-block">${escapeHTML(response.analysis || response.description || 'Sin análisis')}</div>
+                ${response.bot_response ? `
+                    <p><strong>Respuesta del Bot:</strong></p>
+                    <div class="code-block">${escapeHTML(response.bot_response)}</div>
+                ` : ''}
+                <p><strong>Empresa:</strong> ${response.company_id || currentCompanyId}</p>
+            </div>
+        `;
+        
+        showNotification('Imagen procesada exitosamente', 'success');
+        
+    } catch (error) {
+        console.error('Error processing image:', error);
+        const container = document.getElementById('imageResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al procesar imagen</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Prueba la integración multimedia
+ */
+async function testMultimediaIntegration() {
+    if (!validateCompanySelection()) return;
+    
+    try {
+        const response = await apiRequest('/api/admin/multimedia/test', {
+            method: 'POST',
+            body: {
+                company_id: currentCompanyId
+            }
+        });
+        
+        const container = document.getElementById('multimediaTestResult');
+        const integration = response.multimedia_integration || {};
+        
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>🧪 Test de Integración Multimedia</h4>
+                <div class="health-status ${integration.fully_integrated ? 'healthy' : 'warning'}">
+                    <span class="status-indicator status-${integration.fully_integrated ? 'healthy' : 'warning'}"></span>
+                    Integración completa: ${integration.fully_integrated ? '✅' : '❌'}
+                </div>
+                <div class="health-status ${integration.transcribe_audio_from_url ? 'healthy' : 'error'}">
+                    <span class="status-indicator status-${integration.transcribe_audio_from_url ? 'healthy' : 'error'}"></span>
+                    Transcripción de audio: ${integration.transcribe_audio_from_url ? '✅' : '❌'}
+                </div>
+                <div class="health-status ${integration.analyze_image_from_url ? 'healthy' : 'error'}">
+                    <span class="status-indicator status-${integration.analyze_image_from_url ? 'healthy' : 'error'}"></span>
+                    Análisis de imagen: ${integration.analyze_image_from_url ? '✅' : '❌'}
+                </div>
+                <div class="health-status ${integration.process_attachment ? 'healthy' : 'error'}">
+                    <span class="status-indicator status-${integration.process_attachment ? 'healthy' : 'error'}"></span>
+                    Procesamiento de archivos: ${integration.process_attachment ? '✅' : '❌'}
+                </div>
+                <p><strong>OpenAI disponible:</strong> ${response.openai_service_available ? '✅' : '❌'}</p>
+                <p><strong>Empresa:</strong> ${response.company_id}</p>
+            </div>
+        `;
+        
+        showNotification('Test de integración completado', 'success');
+        
+    } catch (error) {
+        console.error('Error testing multimedia integration:', error);
+        const container = document.getElementById('multimediaTestResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error en test de integración</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+// ============================================================================
+// ADMINISTRACIÓN
+// ============================================================================
+
+/**
+ * Actualiza la configuración de Google Calendar
+ */
+async function updateGoogleCalendarConfig() {
+    if (!validateCompanySelection()) return;
+    
+    const url = document.getElementById('googleCalendarUrl').value.trim();
+    if (!url) {
+        showNotification('Por favor ingresa una URL de Google Calendar', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await apiRequest('/api/admin/config/google-calendar', {
+            method: 'POST',
+            body: {
+                company_id: currentCompanyId,
+                google_calendar_url: url
+            }
+        });
+        
+        showNotification('Configuración de Google Calendar actualizada', 'success');
+        
+        // Mostrar resultado en la sección de administración
+        const container = document.getElementById('adminResults');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>📅 Google Calendar Configurado</h4>
+                <p><strong>Empresa:</strong> ${response.company_id}</p>
+                <p><strong>URL:</strong> ${escapeHTML(url)}</p>
+                <p><strong>Estado:</strong> Configurado exitosamente</p>
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Error updating Google Calendar config:', error);
+        showNotification('Error al actualizar Google Calendar: ' + error.message, 'error');
+        
+        const container = document.getElementById('adminResults');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al configurar Google Calendar</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Recarga la configuración de empresas
+ */
+async function reloadCompaniesConfig() {
+    try {
+        const response = await apiRequest('/api/admin/companies/reload-config', {
+            method: 'POST'
+        });
+        
+        showNotification('Configuración de empresas recargada', 'success');
+        
+        // Limpiar cache de empresas
+        cache.companies = null;
+        
+        // Recargar empresas
+        await loadCompanies();
+        
+        const container = document.getElementById('adminResults');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>🔄 Configuración Recargada</h4>
+                <p><strong>Empresas cargadas:</strong> ${response.companies_loaded}</p>
+                <p><strong>Empresas:</strong> ${response.companies.join(', ')}</p>
+                <p><strong>Timestamp:</strong> ${new Date(response.timestamp * 1000).toLocaleString()}</p>
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Error reloading companies config:', error);
+        showNotification('Error al recargar configuración: ' + error.message, 'error');
+        
+        const container = document.getElementById('adminResults');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al recargar configuración</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Ejecuta diagnósticos del sistema
+ */
+async function runSystemDiagnostics() {
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest('/api/admin/diagnostics');
+        
+        const container = document.getElementById('adminResults');
+        container.innerHTML = `
+            <div class="result-container result-info">
+                <h4>🔍 Diagnósticos del Sistema</h4>
+                <div class="json-container">
+                    <pre>${formatJSON(response)}</pre>
+                </div>
+            </div>
+        `;
+        
+        showNotification('Diagnósticos ejecutados exitosamente', 'success');
+        
+    } catch (error) {
+        console.error('Error running diagnostics:', error);
+        showNotification('Error al ejecutar diagnósticos: ' + error.message, 'error');
+        
+        const container = document.getElementById('adminResults');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al ejecutar diagnósticos</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+// ============================================================================
+// HEALTH CHECK Y MONITOREO
+// ============================================================================
+
+/**
+ * Realiza un health check general
+ */
+async function performHealthCheck() {
+    try {
+        const response = await apiRequest('/api/health');
+        
+        const container = document.getElementById('generalHealthResult');
+        const status = response.status;
+        const statusClass = status === 'healthy' ? 'success' : 
+                           status === 'partial' ? 'warning' : 'error';
+        
+        container.innerHTML = `
+            <div class="result-container result-${statusClass}">
+                <h4>🏥 Health Check General</h4>
+                <div class="health-status ${status === 'healthy' ? 'healthy' : 'warning'}">
+                    <span class="status-indicator status-${status === 'healthy' ? 'healthy' : 'warning'}"></span>
+                    Estado: ${status.toUpperCase()}
+                </div>
+                <p><strong>Timestamp:</strong> ${response.timestamp}</p>
+                <p><strong>Ambiente:</strong> ${response.environment || 'Desconocido'}</p>
+                
+                ${response.services ? `
+                    <h5>Servicios:</h5>
+                    ${Object.entries(response.services).map(([service, healthy]) => `
+                        <div class="health-status ${healthy ? 'healthy' : 'error'}">
+                            <span class="status-indicator status-${healthy ? 'healthy' : 'error'}"></span>
+                            ${service}: ${healthy ? '✅' : '❌'}
+                        </div>
+                    `).join('')}
+                ` : ''}
+                
+                ${response.companies ? `
+                    <p><strong>Empresas configuradas:</strong> ${response.companies.total}</p>
+                ` : ''}
+            </div>
+        `;
+        
+        showNotification(`Health check completado: ${status}`, status === 'healthy' ? 'success' : 'warning');
+        
+    } catch (error) {
+        console.error('Error performing health check:', error);
+        const container = document.getElementById('generalHealthResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error en health check</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Realiza health check por empresa
+ */
+async function performCompanyHealthCheck() {
+    try {
+        const response = await apiRequest('/api/health/companies');
+        
+        const container = document.getElementById('companyHealthResult');
+        
+        if (!response.companies) {
+            container.innerHTML = `
+                <div class="result-container result-warning">
+                    <p>⚠️ No se encontró información de health por empresa</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let healthHTML = '<div class="result-container result-info"><h4>🏢 Health por Empresa</h4>';
+        
+        Object.entries(response.companies).forEach(([companyId, health]) => {
+            const isHealthy = health.system_healthy;
+            healthHTML += `
+                <div class="health-status ${isHealthy ? 'healthy' : 'error'}">
+                    <span class="status-indicator status-${isHealthy ? 'healthy' : 'error'}"></span>
+                    <strong>${companyId}:</strong> ${isHealthy ? 'HEALTHY' : 'UNHEALTHY'}
+                    ${health.orchestrator ? `(Agentes: ${health.orchestrator.agents_available?.length || 0})` : ''}
+                </div>
+            `;
+        });
+        
+        healthHTML += '</div>';
+        container.innerHTML = healthHTML;
+        
+        showNotification('Health check por empresa completado', 'success');
+        
+    } catch (error) {
+        console.error('Error performing company health check:', error);
+        const container = document.getElementById('companyHealthResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error en health check de empresas</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+/**
+ * Verifica el estado de los servicios
+ */
+async function checkServicesStatus() {
+    try {
+        const response = await apiRequest('/api/health/status/services');
+        
+        const container = document.getElementById('servicesStatusResult');
+        
+        if (!response.services) {
+            container.innerHTML = `
+                <div class="result-container result-warning">
+                    <p>⚠️ No se encontró información de servicios</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let servicesHTML = '<div class="result-container result-info"><h4>⚙️ Estado de Servicios</h4>';
+        
+        Object.entries(response.services).forEach(([serviceName, serviceInfo]) => {
+            const status = serviceInfo.status;
+            const isHealthy = status === 'healthy';
+            const isAvailable = status !== 'unavailable';
+            
+            servicesHTML += `
+                <div class="health-status ${isHealthy ? 'healthy' : isAvailable ? 'warning' : 'error'}">
+                    <span class="status-indicator status-${isHealthy ? 'healthy' : isAvailable ? 'warning' : 'error'}"></span>
+                    <strong>${serviceName}:</strong> ${status.toUpperCase()}
+                    ${serviceInfo.endpoint ? `<br><small>Endpoint: ${serviceInfo.endpoint}</small>` : ''}
+                    ${serviceInfo.description ? `<br><small>${serviceInfo.description}</small>` : ''}
+                </div>
+            `;
+        });
+        
+        servicesHTML += `<p><strong>Timestamp:</strong> ${response.timestamp}</p></div>`;
+        container.innerHTML = servicesHTML;
+        
+        showNotification('Verificación de servicios completada', 'success');
+        
+    } catch (error) {
+        console.error('Error checking services status:', error);
+        const container = document.getElementById('servicesStatusResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al verificar servicios</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Ejecuta diagnósticos automáticos
+ */
+async function runAutoDiagnostics() {
+    try {
+        toggleLoadingOverlay(true);
+        
+        // Ejecutar múltiples diagnósticos en paralelo
+        const [healthResponse, companiesResponse, servicesResponse] = await Promise.all([
+            apiRequest('/api/health').catch(e => ({ error: e.message })),
+            apiRequest('/api/health/companies').catch(e => ({ error: e.message })),
+            apiRequest('/api/health/status/services').catch(e => ({ error: e.message }))
+        ]);
+        
+        const container = document.getElementById('monitoringResults');
+        
+        let diagnosticsHTML = '<div class="result-container result-info"><h4>🚀 Auto-Diagnósticos del Sistema</h4>';
+        
+        // Health general
+        if (healthResponse.error) {
+            diagnosticsHTML += `
+                <div class="health-status error">
+                    <span class="status-indicator status-error"></span>
+                    <strong>Health General:</strong> ERROR - ${escapeHTML(healthResponse.error)}
+                </div>
+            `;
+        } else {
+            const status = healthResponse.status;
+            diagnosticsHTML += `
+                <div class="health-status ${status === 'healthy' ? 'healthy' : 'warning'}">
+                    <span class="status-indicator status-${status === 'healthy' ? 'healthy' : 'warning'}"></span>
+                    <strong>Health General:</strong> ${status.toUpperCase()}
+                </div>
+            `;
+        }
+        
+        // Companies health
+        if (companiesResponse.error) {
+            diagnosticsHTML += `
+                <div class="health-status error">
+                    <span class="status-indicator status-error"></span>
+                    <strong>Health Empresas:</strong> ERROR - ${escapeHTML(companiesResponse.error)}
+                </div>
+            `;
+        } else if (companiesResponse.companies) {
+            const healthyCompanies = Object.values(companiesResponse.companies).filter(c => c.system_healthy).length;
+            const totalCompanies = Object.keys(companiesResponse.companies).length;
+            diagnosticsHTML += `
+                <div class="health-status ${healthyCompanies === totalCompanies ? 'healthy' : 'warning'}">
+                    <span class="status-indicator status-${healthyCompanies === totalCompanies ? 'healthy' : 'warning'}"></span>
+                    <strong>Empresas Saludables:</strong> ${healthyCompanies}/${totalCompanies}
+                </div>
+            `;
+        }
+        
+        // Services status
+        if (servicesResponse.error) {
+            diagnosticsHTML += `
+                <div class="health-status error">
+                    <span class="status-indicator status-error"></span>
+                    <strong>Estado Servicios:</strong> ERROR - ${escapeHTML(servicesResponse.error)}
+                </div>
+            `;
+        } else if (servicesResponse.services) {
+            const healthyServices = Object.values(servicesResponse.services).filter(s => s.status === 'healthy').length;
+            const totalServices = Object.keys(servicesResponse.services).length;
+            diagnosticsHTML += `
+                <div class="health-status ${healthyServices === totalServices ? 'healthy' : 'warning'}">
+                    <span class="status-indicator status-${healthyServices === totalServices ? 'healthy' : 'warning'}"></span>
+                    <strong>Servicios Saludables:</strong> ${healthyServices}/${totalServices}
+                </div>
+            `;
+        }
+        
+        diagnosticsHTML += `
+            <p><strong>Diagnóstico completado:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+        `;
+        
+        container.innerHTML = diagnosticsHTML;
+        showNotification('Auto-diagnósticos completados', 'success');
+        
+    } catch (error) {
+        console.error('Error running auto diagnostics:', error);
+        const container = document.getElementById('monitoringResults');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error en auto-diagnósticos</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Inicia monitoreo en tiempo real
+ */
+function startRealTimeMonitoring() {
+    if (monitoringInterval) {
+        showNotification('El monitoreo ya está activo', 'warning');
+        return;
+    }
+    
+    showNotification('Iniciando monitoreo en tiempo real...', 'info');
+    addToLog('Real-time monitoring started', 'info');
+    
+    // Ejecutar monitoreo cada 30 segundos
+    monitoringInterval = setInterval(async () => {
+        try {
+            const container = document.getElementById('monitoringResults');
+            if (!container) return;
+            
+            // Obtener métricas básicas
+            const healthResponse = await apiRequest('/api/health').catch(() => null);
+            
+            let monitoringHTML = `
+                <div class="result-container result-info">
+                    <h4>📊 Monitoreo en Tiempo Real</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 100%;">
+                            Monitoreando... ${new Date().toLocaleTimeString()}
+                        </div>
+                    </div>
+            `;
+            
+            if (healthResponse) {
+                const status = healthResponse.status;
+                monitoringHTML += `
+                    <div class="health-status ${status === 'healthy' ? 'healthy' : 'warning'}">
+                        <span class="status-indicator status-${status === 'healthy' ? 'healthy' : 'warning'}"></span>
+                        Sistema: ${status.toUpperCase()}
+                    </div>
+                `;
+            } else {
+                monitoringHTML += `
+                    <div class="health-status error">
+                        <span class="status-indicator status-error"></span>
+                        Sistema: DESCONECTADO
+                    </div>
+                `;
+            }
+            
+            // Actualizar estadísticas si hay empresa seleccionada
+            if (currentCompanyId) {
+                const statsResponse = await Promise.all([
+                    apiRequest('/api/documents').catch(() => ({ data: [] })),
+                    apiRequest('/api/conversations').catch(() => ({ data: [] }))
+                ]);
+                
+                const docs = statsResponse[0].data?.length || 0;
+                const convs = statsResponse[1].data?.length || 0;
+                
+                monitoringHTML += `
+                    <p><strong>Empresa Activa:</strong> ${currentCompanyId}</p>
+                    <p><strong>Documentos:</strong> ${docs} | <strong>Conversaciones:</strong> ${convs}</p>
+                `;
+            }
+            
+            monitoringHTML += `
+                <p><strong>Última actualización:</strong> ${new Date().toLocaleString()}</p>
+                </div>
+            `;
+            
+            container.innerHTML = monitoringHTML;
+            
+        } catch (error) {
+            console.error('Error in monitoring:', error);
+            addToLog(`Monitoring error: ${error.message}`, 'error');
+        }
+    }, 30000);
+    
+    // Ejecutar inmediatamente la primera vez
+    runAutoDiagnostics();
+}
+
+/**
+ * Detiene el monitoreo en tiempo real
+ */
+function stopRealTimeMonitoring() {
+    if (!monitoringInterval) {
+        showNotification('El monitoreo no está activo', 'warning');
+        return;
+    }
+    
+    clearInterval(monitoringInterval);
+    monitoringInterval = null;
+    
+    showNotification('Monitoreo en tiempo real detenido', 'success');
+    addToLog('Real-time monitoring stopped', 'info');
+    
+    const container = document.getElementById('monitoringResults');
+    if (container) {
+        container.innerHTML = `
+            <div class="result-container result-warning">
+                <h4>⏹️ Monitoreo Detenido</h4>
+                <p>El monitoreo en tiempo real ha sido detenido.</p>
+                <p><strong>Detenido en:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Limpia el log del sistema
+ */
+function clearSystemLog() {
+    systemLog = [];
+    updateLogDisplay();
+    addToLog('System log cleared', 'info');
+    showNotification('Log del sistema limpiado', 'success');
+}
