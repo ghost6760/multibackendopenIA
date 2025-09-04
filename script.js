@@ -403,7 +403,6 @@ async function loadCompaniesStatus() {
         }
     }
 }
-
 /**
  * Actualiza las estadísticas del dashboard
  */
