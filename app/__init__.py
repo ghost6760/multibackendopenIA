@@ -343,10 +343,22 @@ def create_app(config_class=Config):
     def serve_frontend(path):
         """Servir página principal con fallback correcto"""
         
-        # No interferir con rutas de API
+        # No interferir con rutas de API (más específico)
         if path.startswith('api/') or path.startswith('debug/'):
             logger.warning(f"⚠️ API route not found: {path}")
             return jsonify({"error": f"API endpoint not found: {path}"}), 404
+        
+        # NUEVO: Rutas específicas que deben redirigir a API
+        api_redirects = {
+            'companies': '/api/companies',
+            'health': '/api/health', 
+            'system/info': '/api/system/info'
+        }
+        
+        if path in api_redirects:
+            logger.info(f"🔄 Redirecting {path} to {api_redirects[path]}")
+            from flask import redirect
+            return redirect(api_redirects[path])
         
         # No interferir con archivos estáticos directos
         if path in ['script.js', 'style.css']:
