@@ -1,22 +1,24 @@
+# Dockerfile optimizado para Railway - Frontend React + Backend Flask
+
 # ============================================================================
-# STAGE 1: Frontend Builder (React + Tailwind)
+# STAGE 1: Frontend Builder (React)
 # ============================================================================
 FROM node:18-alpine AS frontend-builder
 
 WORKDIR /frontend
 
-# Copiar package.json y lock para cache de dependencias
-COPY src/package.json ./package.json
+# Copiar package.json
+COPY src/package.json ./
 
-# Instalar dependencias sin auditoría (rápido y seguro)
-RUN npm install --no-audit --prefer-offline --silent
+# Instalar dependencias
+RUN npm install --no-audit --prefer-offline
 
-# Crear estructura de carpetas esperada
+# Crear estructura necesaria para React
 RUN mkdir -p src public
 
-# Copiar configuración de Tailwind y PostCSS
-COPY src/tailwind.config.js ./tailwind.config.js
-COPY src/postcss.config.js ./postcss.config.js
+# Copiar archivos de configuración
+COPY src/tailwind.config.js ./
+COPY src/postcss.config.js ./
 
 # Copiar archivos del frontend
 COPY src/index.js ./src/
@@ -29,23 +31,22 @@ COPY src/hooks/ ./src/hooks/
 COPY src/styles/ ./src/styles/
 COPY src/public/ ./public/
 
-# Debug: verificar estructura
-RUN echo "📂 Frontend structure:" && find src -type f | head -20
+# Debug: Verificar estructura
+RUN echo "📂 Frontend structure:" && find . -type f | head -20
 
-# Build optimizado para producción
+# Build de producción
 ENV NODE_ENV=production
-ENV GENERATE_SOURCEMAP=false
 RUN npm run build
 
-# Validar build
-RUN test -f build/index.html || (echo "❌ Build failed" && exit 1)
+# Verificar que el build se creó correctamente
+RUN ls -la build/ && test -f build/index.html && echo "✅ Build successful"
 
 # ============================================================================
-# STAGE 2: Backend (Flask + Gunicorn)
+# STAGE 2: Backend Python + Frontend Integration
 # ============================================================================
-FROM python:3.11-slim AS backend
+FROM python:3.11-slim
 
-# Variables Python
+# Variables de entorno
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PIP_NO_CACHE_DIR=1
@@ -54,38 +55,50 @@ WORKDIR /app
 
 # Instalar dependencias del sistema
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc g++ curl ca-certificates && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        curl \
+        ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Instalar dependencias Python
+# Copiar e instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar backend
+# Copiar código del backend
 COPY app/ ./app/
-COPY wsgi.py run.py ./ 
-COPY companies_config.json ./ 
-COPY extended_companies_config.json ./ 
+COPY wsgi.py run.py ./
+COPY companies_config.json ./
+COPY extended_companies_config.json ./
 
-# Copiar build del frontend desde el Stage 1
+# ✅ CLAVE: Copiar build de React a la ubicación correcta
 COPY --from=frontend-builder /frontend/build ./src/build
 
-# Validar build en backend
-RUN test -f src/build/index.html || (echo "❌ Build not copied" && exit 1)
+# Debug: Verificar que se copió correctamente
+RUN echo "📂 Backend structure:" && \
+    ls -la . && \
+    echo "📂 React build:" && \
+    ls -la src/build/ && \
+    echo "📂 Static files:" && \
+    ls -la src/build/static/ && \
+    test -f src/build/index.html && \
+    echo "✅ All files copied successfully"
 
-# Crear usuario seguro
-RUN useradd --create-home --shell /bin/bash --uid 1000 appuser && chown -R appuser:appuser /app
+# Crear usuario no root
+RUN useradd --create-home --shell /bin/bash --uid 1000 appuser && \
+    chown -R appuser:appuser /app
+
 USER appuser
 
 # Exponer puerto
-ENV PORT=8080
 EXPOSE 8080
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# Iniciar servidor con Gunicorn
+# Comando optimizado para Railway
 CMD ["gunicorn", \
      "--bind", "0.0.0.0:8080", \
      "--workers", "2", \
@@ -98,6 +111,5 @@ CMD ["gunicorn", \
      "--log-level", "info", \
      "--access-logfile", "-", \
      "--error-logfile", "-", \
-     "--capture-output", \
      "wsgi:app"]
 
