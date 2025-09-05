@@ -35,8 +35,8 @@ class SupportAgent(BaseAgent):
             | StrOutputParser()
         )
     
-    def _create_prompt_template(self) -> ChatPromptTemplate:
-        """Template de soporte personalizado"""
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """Template por defecto de soporte"""
         return ChatPromptTemplate.from_messages([
             ("system", f"""Eres un especialista en soporte al cliente de {self.company_config.company_name}.
 
