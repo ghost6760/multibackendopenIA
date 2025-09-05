@@ -27,13 +27,14 @@
       "procede", "proceder", "confirmar cita", "appointment"
     ],
     "emergency_keywords": [
-      "dolor de muela", "dolor intenso", "sangrado", "emergencia",
-      "infección", "hinchazón", "urgencia dental", "trauma dental"
+      "dolor intenso", "sangrado", "emergencia", "infección", 
+      "hinchazón", "urgencia", "trauma", "reacción alérgica",
+      "mareo", "náuseas", "dolor severo"
     ],
     "sales_keywords": [
       "precio", "costo", "valor", "promoción", "paquete",
-      "tratamiento", "procedimiento", "blanqueamiento", "ortodoncia",
-      "implante", "corona", "limpieza", "consulta"
+      "tratamiento", "procedimiento", "botox", "rellenos",
+      "limpieza", "consulta", "facial", "corporal"
     ]
   },
   "spa_wellness": {
@@ -65,7 +66,7 @@
     ],
     "emergency_keywords": [
       "malestar", "mareo", "reacción", "alergia",
-      "dolor", "molestia", "urgencia"
+      "dolor", "molestia", "urgencia", "náuseas"
     ],
     "sales_keywords": [
       "precio", "costo", "inversión", "paquete", "promoción",
@@ -86,63 +87,67 @@
     "treatment_durations": {
       "consulta dermatológica": 45,
       "tratamiento láser": 90,
-      "hidrafacial premium": 75,
+      "hidrafacial": 75,
       "mesoterapia": 60,
-      "plasma rico en plaquetas": 120,
-      "lifting no quirúrgico": 150,
-      "rejuvenecimiento facial": 90,
-      "tratamiento corporal": 120,
-      "consulta general": 30
+      "plasma rico": 120,
+      "botox": 30,
+      "rellenos": 45,
+      "peeling profesional": 60,
+      "radiofrecuencia": 75,
+      "criolipolisis": 60
     },
     "schedule_keywords": [
       "agendar", "reservar", "programar", "cita", "consulta",
       "agenda", "disponibilidad", "horario", "fecha", "hora",
-      "procede", "proceder", "confirmar", "appointment"
+      "procede", "proceder", "confirmar cita"
     ],
     "emergency_keywords": [
-      "dolor intenso", "sangrado", "emergencia", "urgencia",
-      "reacción adversa", "inflamación severa", "complicación"
+      "reacción adversa", "dolor intenso", "sangrado", "infección",
+      "hinchazón excesiva", "emergencia", "urgencia", "complicación",
+      "alergia", "mareo severo"
     ],
     "sales_keywords": [
-      "precio", "costo", "inversión", "paquete", "promoción",
-      "tratamiento", "procedimiento", "beneficio", "resultado",
-      "láser", "plasma", "rejuvenecimiento", "lifting"
+      "precio", "costo", "inversión", "promoción", "paquete",
+      "tratamiento láser", "botox", "rellenos", "consulta",
+      "hidrafacial", "mesoterapia", "plasma", "peeling"
     ]
   },
-  "clinica_dental": {
-    "company_name": "Clínica Dental Sonrisa",
+  "dental_clinic": {
+    "company_name": "Clínica Dental Sonríe",
     "redis_prefix": "dental:",
     "vectorstore_index": "dental_documents",
     "schedule_service_url": "http://127.0.0.1:4042",
-    "sales_agent_name": "Dra. García, odontóloga de Clínica Dental Sonrisa",
-    "services": "odontología integral y estética dental",
+    "sales_agent_name": "Dr. Martínez, odontólogo especialista",
+    "services": "odontología general y especializada",
     "model_name": "gpt-4o-mini",
     "max_tokens": 1500,
-    "temperature": 0.7,
+    "temperature": 0.6,
     "treatment_durations": {
-      "consulta odontológica": 30,
-      "limpieza dental": 45,
+      "consulta general": 30,
+      "limpieza dental": 60,
       "blanqueamiento": 90,
       "ortodoncia consulta": 45,
       "implante dental": 120,
       "endodoncia": 90,
       "extracción": 45,
       "corona dental": 60,
-      "tratamiento general": 45
+      "relleno dental": 45,
+      "cirugía oral": 90
     },
     "schedule_keywords": [
-      "agendar", "reservar", "programar", "cita", "consulta",
+      "agendar", "reservar", "programar", "cita dental", "consulta",
       "agenda", "disponibilidad", "horario", "fecha", "hora",
-      "procede", "proceder", "confirmar cita", "appointment"
+      "procede", "proceder", "confirmar cita"
     ],
     "emergency_keywords": [
-      "dolor de muela", "dolor intenso", "sangrado", "emergencia",
-      "infección", "hinchazón", "urgencia dental", "trauma dental"
+      "dolor de muela", "dolor intenso", "sangrado", "emergencia dental",
+      "infección", "hinchazón", "urgencia dental", "trauma dental",
+      "diente roto", "absceso"
     ],
     "sales_keywords": [
-      "precio", "costo", "inversión", "promoción", "oferta",
-      "tratamiento", "procedimiento", "beneficio", "servicio",
-      "limpieza", "blanqueamiento", "ortodoncia", "implante"
+      "precio", "costo", "valor", "promoción", "paquete",
+      "blanqueamiento", "ortodoncia", "implante", "corona",
+      "limpieza", "consulta", "endodoncia", "relleno"
     ]
   }
 }
