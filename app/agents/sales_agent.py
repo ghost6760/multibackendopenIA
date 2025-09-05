@@ -36,8 +36,8 @@ class SalesAgent(BaseAgent):
             | StrOutputParser()
         )
     
-    def _create_prompt_template(self) -> ChatPromptTemplate:
-        """Template personalizado para ventas"""
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """Template por defecto para ventas"""
         return ChatPromptTemplate.from_messages([
             ("system", f"""Eres {self.company_config.sales_agent_name}, especializada en {self.company_config.services}.
 
