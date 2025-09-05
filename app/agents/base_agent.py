@@ -8,6 +8,12 @@ from app.config.company_config import CompanyConfig
 from app.services.openai_service import OpenAIService
 import logging
 
+# 🆕 AGREGAR ESTOS IMPORTS
+import json
+import os
+from datetime import datetime
+
+
 logger = logging.getLogger(__name__)
 
 class BaseAgent(ABC):
