@@ -15,8 +15,8 @@ class RouterAgent(BaseAgent):
         self.prompt_template = self._create_prompt_template()
         self.chain = self.prompt_template | self.chat_model | StrOutputParser()
     
-    def _create_prompt_template(self) -> ChatPromptTemplate:
-        """Crear template de prompts personalizado por empresa"""
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """Crear template de prompts por defecto por empresa"""
         return ChatPromptTemplate.from_messages([
             ("system", f"""Eres un clasificador de intenciones para {self.company_config.company_name}.
             
