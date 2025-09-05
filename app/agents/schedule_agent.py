@@ -67,8 +67,8 @@ class ScheduleAgent(BaseAgent):
             | RunnableLambda(self._process_schedule_request)
         )
     
-    def _create_prompt_template(self):
-        """No se usa directamente, se procesa en _process_schedule_request"""
+    def _create_default_prompt_template(self):
+        """Template por defecto para agendamiento"""
         pass
     
     def _get_schedule_status(self, inputs):
