@@ -243,9 +243,9 @@ async function loadCompanies() {
             const response = await apiRequest('/api/companies');
             console.log('Response from /api/companies:', response);
             
-            // El endpoint devuelve: { status: "success", data: { companies: {...}, total_companies: N } }
-            if (response.data && response.data.companies) {
-                const companiesObj = response.data.companies;
+            // Verificar si las empresas están directamente en response.companies
+            if (response.companies && typeof response.companies === 'object') {
+                const companiesObj = response.companies;
                 
                 // Convertir objeto de empresas a array
                 cache.companies = Object.keys(companiesObj).map(companyId => {
@@ -257,6 +257,23 @@ async function loadCompanies() {
                 });
                 
                 console.log('Converted companies from /api/companies:', cache.companies);
+                updateCompanySelector();
+                return cache.companies;
+            }
+            // Fallback: verificar si están en response.data.companies (formato alternativo)
+            else if (response.data && response.data.companies) {
+                const companiesObj = response.data.companies;
+                
+                // Convertir objeto de empresas a array
+                cache.companies = Object.keys(companiesObj).map(companyId => {
+                    const companyData = companiesObj[companyId];
+                    return {
+                        id: companyId,
+                        name: companyData.company_name || companyId
+                    };
+                });
+                
+                console.log('Converted companies from /api/companies (data format):', cache.companies);
                 updateCompanySelector();
                 return cache.companies;
             }
