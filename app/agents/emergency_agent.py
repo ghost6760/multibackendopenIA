@@ -34,8 +34,8 @@ class EmergencyAgent(BaseAgent):
             | StrOutputParser()
         )
     
-    def _create_prompt_template(self) -> ChatPromptTemplate:
-        """Template personalizado para emergencias con RAG"""
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """Template por defecto para emergencias con RAG"""
         return ChatPromptTemplate.from_messages([
             ("system", f"""Eres un especialista en emergencias médicas de {self.company_config.company_name}.
 
