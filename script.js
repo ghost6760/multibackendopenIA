@@ -220,6 +220,10 @@ function switchTab(tabName) {
     if (tabName === 'dashboard') {
         loadDashboardData();
     }
+
+    if (tabName === 'prompts') {
+        loadPromptsTab();
+    }
 }
 
 // ============================================================================
@@ -2123,6 +2127,177 @@ function setupFileUploadHandlers() {
     });
 }
 
+
+// ============================================================================
+// GESTIÓN DE PROMPTS PERSONALIZADOS
+// ============================================================================
+// En script.js
+async function loadPromptsTab() {
+    const container = document.getElementById('promptsTabContent');
+    
+    const agentNames = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent'];
+    
+    let html = `
+        <div class="prompts-management">
+            <h3>🤖 Gestión de Prompts - ${currentCompanyId}</h3>
+            <div class="prompts-grid">
+    `;
+    
+    for (const agentName of agentNames) {
+        html += `
+            <div class="prompt-card" data-agent="${agentName}">
+                <h4>${agentName.replace('_', ' ').toUpperCase()}</h4>
+                <div class="prompt-status" id="status-${agentName}">Cargando...</div>
+                <textarea class="prompt-editor" id="prompt-${agentName}" rows="8"></textarea>
+                <div class="prompt-actions">
+                    <button onclick="updatePrompt('${agentName}')" class="btn-primary">Actualizar</button>
+                    <button onclick="resetPrompt('${agentName}')" class="btn-secondary">Restaurar</button>
+                    <button onclick="previewPrompt('${agentName}')" class="btn-info">Vista Previa</button>
+                </div>
+            </div>
+        `;
+    }
+    
+    html += `
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    // Cargar prompts actuales
+    await loadCurrentPrompts();
+}
+
+async function loadCurrentPrompts() {
+    try {
+        const response = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId}`);
+        
+        for (const [agentName, promptData] of Object.entries(response.agents)) {
+            const textarea = document.getElementById(`prompt-${agentName}`);
+            const status = document.getElementById(`status-${agentName}`);
+            
+            textarea.value = promptData.current_prompt;
+            status.innerHTML = promptData.is_custom 
+                ? `<span class="custom">✏️ Personalizado</span>`
+                : `<span class="default">🔧 Por defecto</span>`;
+        }
+        
+        showNotification('Prompts cargados exitosamente', 'success');
+        
+    } catch (error) {
+        showNotification('Error al cargar prompts: ' + error.message, 'error');
+    }
+}
+
+async function updatePrompt(agentName) {
+    const textarea = document.getElementById(`prompt-${agentName}`);
+    const promptTemplate = textarea.value.trim();
+    
+    if (!promptTemplate) {
+        showNotification('El prompt no puede estar vacío', 'error');
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        await apiRequest(`/api/admin/prompts/${agentName}`, {
+            method: 'PUT',
+            body: {
+                company_id: currentCompanyId,
+                prompt_template: promptTemplate
+            }
+        });
+        
+        showNotification(`Prompt de ${agentName} actualizado exitosamente`, 'success');
+        await loadCurrentPrompts(); // Recargar estado
+        
+    } catch (error) {
+        showNotification('Error al actualizar prompt: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+async function resetPrompt(agentName) {
+    if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId}`, {
+            method: 'DELETE'
+        });
+        
+        showNotification(`Prompt de ${agentName} restaurado al valor por defecto`, 'success');
+        await loadCurrentPrompts();
+        
+    } catch (error) {
+        showNotification('Error al restaurar prompt: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+async function previewPrompt(agentName) {
+    const textarea = document.getElementById(`prompt-${agentName}`);
+    const promptTemplate = textarea.value.trim();
+    
+    const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?');
+    if (!testMessage) return;
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest('/api/admin/prompts/preview', {
+            method: 'POST',
+            body: {
+                company_id: currentCompanyId,
+                agent_name: agentName,
+                prompt_template: promptTemplate,
+                test_message: testMessage
+            }
+        });
+        
+        // Mostrar preview en modal
+        showPreviewModal(agentName, testMessage, response.preview_response);
+        
+    } catch (error) {
+        showNotification('Error en vista previa: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+function showPreviewModal(agentName, testMessage, previewResponse) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <h3>🔍 Vista Previa - ${agentName}</h3>
+            <div class="preview-content">
+                <p><strong>Mensaje de prueba:</strong></p>
+                <div class="test-message">${escapeHTML(testMessage)}</div>
+                
+                <p><strong>Respuesta simulada:</strong></p>
+                <div class="preview-response">${escapeHTML(previewResponse)}</div>
+            </div>
+            <button onclick="closeModal()" class="btn-primary">Cerrar</button>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+}
+
+function closeModal() {
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) modal.remove();
+}
+
 // ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
 // ============================================================================
@@ -2158,6 +2333,15 @@ window.runAutoDiagnostics = runAutoDiagnostics;
 window.startRealTimeMonitoring = startRealTimeMonitoring;
 window.stopRealTimeMonitoring = stopRealTimeMonitoring;
 window.clearSystemLog = clearSystemLog;
+
+// 🆕 AGREGAR ESTAS LÍNEAS PARA GESTIÓN DE PROMPTS
+window.loadPromptsTab = loadPromptsTab;
+window.loadCurrentPrompts = loadCurrentPrompts;
+window.updatePrompt = updatePrompt;
+window.resetPrompt = resetPrompt;
+window.previewPrompt = previewPrompt;
+window.showPreviewModal = showPreviewModal;
+window.closeModal = closeModal; // Ya existe, pero importante para el modal de prompts
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
