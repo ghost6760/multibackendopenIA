@@ -2293,10 +2293,6 @@ function showPreviewModal(agentName, testMessage, previewResponse) {
     modal.onclick = (e) => { if (e.target === modal) closeModal(); };
 }
 
-function closeModal() {
-    const modal = document.querySelector('.modal-overlay');
-    if (modal) modal.remove();
-}
 
 // ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
