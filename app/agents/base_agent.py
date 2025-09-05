@@ -25,7 +25,7 @@ class BaseAgent(ABC):
         self.chat_model = openai_service.get_chat_model()
         self.agent_name = self.__class__.__name__
         
-        # Inicializar el agente específico
+        # Inicializar el agente específico con soporte para prompts personalizados
         self._initialize_agent()
     
     @abstractmethod
@@ -33,9 +33,20 @@ class BaseAgent(ABC):
         """Inicializar configuración específica del agente"""
         pass
     
-    @abstractmethod
     def _create_prompt_template(self) -> ChatPromptTemplate:
-        """Crear el template de prompts para el agente"""
+        """Crear template con soporte para prompts personalizados"""
+        
+        # 1. Intentar cargar prompt personalizado
+        custom_template = self._load_custom_prompt()
+        if custom_template:
+            return self._build_custom_prompt_template(custom_template)
+        
+        # 2. Usar prompt por defecto del agente
+        return self._create_default_prompt_template()
+    
+    @abstractmethod
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """Crear el template de prompts por defecto del agente - DEBE ser implementado por cada agente"""
         pass
     
     def invoke(self, inputs: Dict[str, Any]) -> str:
