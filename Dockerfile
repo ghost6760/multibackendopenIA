@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código del backend
 COPY app/ ./app/
 COPY wsgi.py run.py ./
-COPY companies_config.json extended_companies_config.json custom_prompts.json ./v
+COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 
 # Crear directorio static y copiar archivos estáticos desde la raíz del proyecto
 RUN mkdir -p ./static
