@@ -9,6 +9,11 @@ from app.utils.helpers import create_success_response, create_error_response
 import logging
 import time
 
+import json
+import os
+from datetime import datetime
+from app.services.openai_service import OpenAIService
+
 logger = logging.getLogger(__name__)
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -602,3 +607,349 @@ def export_system_configuration():
     except Exception as e:
         logger.error(f"Configuration export failed: {e}")
         return create_error_response(f"Failed to export configuration: {e}", 500)
+
+
+# ============================================================================
+# ENDPOINTS PARA GESTIÓN DE PROMPTS PERSONALIZADOS
+# ============================================================================
+
+@bp.route('/prompts', methods=['GET'])
+@handle_errors
+def get_agent_prompts():
+    """Obtener prompts actuales de todos los agentes"""
+    try:
+        company_id = _get_company_id_from_request()
+        agent_name = request.args.get('agent_name')
+        
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Obtener factory y agentes
+        factory = get_multi_agent_factory()
+        orchestrator = factory.get_orchestrator(company_id)
+        
+        if not orchestrator:
+            return create_error_response("Orchestrator not available", 503)
+        
+        prompts_data = {}
+        agents_to_check = [agent_name] if agent_name else ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
+        
+        for agent_key in agents_to_check:
+            agent_instance = getattr(orchestrator, agent_key, None)
+            if agent_instance:
+                try:
+                    # Obtener el prompt actual del agente
+                    current_prompt = str(agent_instance.prompt_template.messages[0].prompt.template)
+                    prompts_data[agent_key] = {
+                        "current_prompt": current_prompt,
+                        "is_custom": _has_custom_prompt(company_id, agent_key),
+                        "last_modified": _get_prompt_modification_date(company_id, agent_key)
+                    }
+                except Exception as e:
+                    logger.warning(f"Error getting prompt for {agent_key}: {e}")
+                    prompts_data[agent_key] = {
+                        "current_prompt": "Error loading prompt",
+                        "is_custom": False,
+                        "last_modified": None,
+                        "error": str(e)
+                    }
+        
+        return create_success_response({
+            "company_id": company_id,
+            "agents": prompts_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting prompts: {e}")
+        return create_error_response("Failed to get prompts", 500)
+
+@bp.route('/prompts/<agent_name>', methods=['PUT'])
+@handle_errors
+def update_agent_prompt(agent_name):
+    """Actualizar prompt de un agente específico"""
+    try:
+        data = request.get_json()
+        company_id = data.get('company_id') or _get_company_id_from_request()
+        prompt_template = data.get('prompt_template')
+        modified_by = data.get('modified_by', 'admin')
+        
+        if not prompt_template:
+            return create_error_response("prompt_template is required", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Guardar prompt personalizado
+        success = _save_custom_prompt(company_id, agent_name, prompt_template, modified_by)
+        
+        if not success:
+            return create_error_response("Failed to save custom prompt", 500)
+        
+        # Limpiar cache para forzar recreación
+        factory = get_multi_agent_factory()
+        factory.clear_company_cache(company_id)
+        
+        return create_success_response({
+            "message": f"Prompt updated successfully for {agent_name}",
+            "company_id": company_id,
+            "agent_name": agent_name,
+            "updated_at": time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating prompt: {e}")
+        return create_error_response("Failed to update prompt", 500)
+
+@bp.route('/prompts/<agent_name>', methods=['DELETE'])
+@handle_errors
+def reset_agent_prompt(agent_name):
+    """Restaurar prompt por defecto de un agente"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Eliminar prompt personalizado
+        success = _remove_custom_prompt(company_id, agent_name)
+        
+        if not success:
+            return create_error_response("Failed to reset prompt", 500)
+        
+        # Limpiar cache
+        factory = get_multi_agent_factory()
+        factory.clear_company_cache(company_id)
+        
+        return create_success_response({
+            "message": f"Prompt reset to default for {agent_name}",
+            "company_id": company_id,
+            "agent_name": agent_name
+        })
+        
+    except Exception as e:
+        logger.error(f"Error resetting prompt: {e}")
+        return create_error_response("Failed to reset prompt", 500)
+
+@bp.route('/prompts/preview', methods=['POST'])
+@handle_errors
+def preview_prompt():
+    """Previsualizar cómo funcionaría un prompt modificado"""
+    try:
+        data = request.get_json()
+        company_id = data.get('company_id')
+        agent_name = data.get('agent_name')
+        prompt_template = data.get('prompt_template')
+        test_message = data.get('test_message', "Hola, ¿cómo puedo ayudarte?")
+        
+        # Validaciones
+        if not all([company_id, agent_name, prompt_template]):
+            return create_error_response("company_id, agent_name and prompt_template are required", 400)
+        
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Crear instancia temporal del agente con el nuevo prompt
+        config = company_manager.get_company_config(company_id)
+        openai_service = OpenAIService()
+        
+        # Simular respuesta (sin guardar cambios)
+        preview_result = _simulate_agent_response(
+            agent_name=agent_name,
+            company_config=config,
+            custom_prompt=prompt_template,
+            test_message=test_message,
+            openai_service=openai_service
+        )
+        
+        return create_success_response({
+            "company_id": company_id,
+            "agent_name": agent_name,
+            "test_message": test_message,
+            "preview_response": preview_result,
+            "prompt_preview": prompt_template[:200] + "..." if len(prompt_template) > 200 else prompt_template
+        })
+        
+    except Exception as e:
+        logger.error(f"Error previewing prompt: {e}")
+        return create_error_response("Failed to preview prompt", 500)
+
+# ============================================================================
+# FUNCIONES AUXILIARES PARA GESTIÓN DE PROMPTS
+# ============================================================================
+
+def _has_custom_prompt(company_id: str, agent_name: str) -> bool:
+    """Verificar si un agente tiene prompt personalizado"""
+    try:
+        custom_prompts_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+            'custom_prompts.json'
+        )
+        
+        if not os.path.exists(custom_prompts_file):
+            return False
+        
+        with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+            custom_prompts = json.load(f)
+        
+        company_prompts = custom_prompts.get(company_id, {})
+        agent_data = company_prompts.get(agent_name, {})
+        
+        return agent_data.get('is_custom', False)
+        
+    except Exception as e:
+        logger.warning(f"Error checking custom prompt: {e}")
+        return False
+
+def _get_prompt_modification_date(company_id: str, agent_name: str) -> Optional[str]:
+    """Obtener fecha de modificación del prompt"""
+    try:
+        custom_prompts_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+            'custom_prompts.json'
+        )
+        
+        if not os.path.exists(custom_prompts_file):
+            return None
+        
+        with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+            custom_prompts = json.load(f)
+        
+        company_prompts = custom_prompts.get(company_id, {})
+        agent_data = company_prompts.get(agent_name, {})
+        
+        return agent_data.get('modified_at')
+        
+    except Exception as e:
+        logger.warning(f"Error getting modification date: {e}")
+        return None
+
+def _save_custom_prompt(company_id: str, agent_name: str, prompt_template: str, modified_by: str = "admin") -> bool:
+    """Guardar prompt personalizado"""
+    try:
+        custom_prompts_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+            'custom_prompts.json'
+        )
+        
+        # Cargar prompts existentes o crear estructura vacía
+        if os.path.exists(custom_prompts_file):
+            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+                custom_prompts = json.load(f)
+        else:
+            custom_prompts = {}
+        
+        # Asegurar que existe la estructura para la empresa
+        if company_id not in custom_prompts:
+            custom_prompts[company_id] = {}
+        
+        # Asegurar que existe la estructura para el agente
+        if agent_name not in custom_prompts[company_id]:
+            custom_prompts[company_id][agent_name] = {
+                "template": None,
+                "is_custom": False,
+                "modified_at": None,
+                "modified_by": None,
+                "default_template": None
+            }
+        
+        # Actualizar con el nuevo prompt personalizado
+        custom_prompts[company_id][agent_name].update({
+            "template": prompt_template,
+            "is_custom": True,
+            "modified_at": datetime.utcnow().isoformat() + "Z",
+            "modified_by": modified_by
+        })
+        
+        # Guardar archivo actualizado
+        with open(custom_prompts_file, 'w', encoding='utf-8') as f:
+            json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"[{company_id}] Custom prompt saved for {agent_name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving custom prompt: {e}")
+        return False
+
+def _remove_custom_prompt(company_id: str, agent_name: str) -> bool:
+    """Remover prompt personalizado (volver a default)"""
+    try:
+        custom_prompts_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+            'custom_prompts.json'
+        )
+        
+        if not os.path.exists(custom_prompts_file):
+            return True  # No hay archivo, ya está "limpio"
+        
+        # Cargar prompts
+        with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+            custom_prompts = json.load(f)
+        
+        # Limpiar prompt personalizado
+        if (company_id in custom_prompts and 
+            agent_name in custom_prompts[company_id]):
+            custom_prompts[company_id][agent_name].update({
+                "template": None,
+                "is_custom": False,
+                "modified_at": datetime.utcnow().isoformat() + "Z",
+                "modified_by": "system_reset"
+            })
+        
+        # Guardar archivo actualizado
+        with open(custom_prompts_file, 'w', encoding='utf-8') as f:
+            json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"[{company_id}] Custom prompt removed for {agent_name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error removing custom prompt: {e}")
+        return False
+
+def _simulate_agent_response(agent_name: str, company_config, custom_prompt: str, 
+                           test_message: str, openai_service) -> str:
+    """Simular respuesta de agente con prompt personalizado (sin guardar)"""
+    try:
+        from langchain.prompts import ChatPromptTemplate
+        from langchain.schema.output_parser import StrOutputParser
+        
+        # Crear template temporal con el prompt personalizado
+        if '{chat_history}' in custom_prompt:
+            template = ChatPromptTemplate.from_messages([
+                ("system", custom_prompt),
+                ("human", "{question}")
+            ])
+        else:
+            template = ChatPromptTemplate.from_messages([
+                ("system", custom_prompt),
+                ("human", "{question}")
+            ])
+        
+        # Crear cadena temporal
+        chat_model = openai_service.get_chat_model()
+        chain = template | chat_model | StrOutputParser()
+        
+        # Inputs con contexto de empresa
+        inputs = {
+            "question": test_message,
+            "company_name": company_config.company_name,
+            "services": company_config.services,
+            "agent_name": getattr(company_config, 'sales_agent_name', 'Asistente'),
+            "company_id": company_config.company_id,
+            "context": "Esta es una vista previa del prompt personalizado.",
+            "chat_history": []
+        }
+        
+        # Ejecutar y retornar respuesta
+        response = chain.invoke(inputs)
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error simulating agent response: {e}")
+        return f"Error en la simulación: {str(e)}"
