@@ -2502,35 +2502,57 @@ async function loadCurrentPrompts() {
         addToLog(`Loading prompts for company: ${currentCompanyId}`, 'info');
         const response = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId}`);
         
+        console.log('Prompts response:', response); // Debug
+        
         if (!response || !response.agents) {
-            throw new Error('Invalid response format');
+            throw new Error('Invalid response format - no agents data');
         }
+        
+        // Verificar si hay prompts vacíos
+        let hasAnyPrompt = false;
         
         for (const [agentName, promptData] of Object.entries(response.agents)) {
             const textarea = document.getElementById(`prompt-${agentName}`);
             const status = document.getElementById(`status-${agentName}`);
             
             if (textarea && promptData) {
-                textarea.value = promptData.current_prompt || '';
+                // Verificar si el prompt está vacío o es genérico
+                const promptText = promptData.current_prompt || '';
+                
+                if (promptText && !promptText.startsWith('Default prompt for')) {
+                    textarea.value = promptText;
+                    hasAnyPrompt = true;
+                    textarea.disabled = false;
+                } else {
+                    // Si está vacío, mostrar mensaje informativo
+                    textarea.value = `[Prompt por defecto no configurado]\n\nPuedes crear un prompt personalizado para ${agentName.replace(/_/g, ' ')} escribiendo aquí y haciendo clic en "Actualizar".`;
+                    textarea.disabled = false;
+                }
                 
                 if (status) {
-                    status.innerHTML = promptData.is_custom 
-                        ? `<span class="custom">✏️ Personalizado</span>`
-                        : `<span class="default">🔧 Por defecto</span>`;
+                    if (promptData.is_custom) {
+                        status.innerHTML = `<span class="custom">✏️ Personalizado</span>`;
+                    } else {
+                        status.innerHTML = `<span class="default">🔧 Por defecto</span>`;
+                    }
                 }
             }
         }
         
-        showNotification('Prompts cargados exitosamente', 'success');
+        if (hasAnyPrompt) {
+            showNotification('Prompts cargados exitosamente', 'success');
+        } else {
+            showNotification('No hay prompts configurados. Puedes crear prompts personalizados.', 'info');
+        }
         
     } catch (error) {
         console.error('Error loading prompts:', error);
         showNotification('Error al cargar prompts: ' + error.message, 'error');
         
-        // Mostrar mensaje de error en cada textarea
+        // Habilitar textareas para permitir crear nuevos prompts
         document.querySelectorAll('.prompt-editor').forEach(textarea => {
-            textarea.value = 'Error al cargar el prompt. Por favor, verifica la conexión.';
-            textarea.disabled = true;
+            textarea.value = 'Error al cargar el prompt. Puedes escribir uno nuevo aquí.';
+            textarea.disabled = false; // Mantener habilitado para permitir edición
         });
     }
 }
