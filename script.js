@@ -2651,6 +2651,28 @@ function showPreviewModal(agentName, testMessage, previewResponse) {
     modal.onclick = (e) => { if (e.target === modal) closeModal(); };
 }
 
+document.addEventListener('DOMContentLoaded', function() {
+    // Configurar el selector de empresas
+    const companySelect = document.getElementById('companySelect');
+    if (companySelect) {
+        // Establecer valor por defecto si existe
+        if (DEFAULT_COMPANY_ID) {
+            companySelect.value = DEFAULT_COMPANY_ID;
+            currentCompanyId = DEFAULT_COMPANY_ID;
+        }
+        
+        // Escuchar cambios
+        companySelect.addEventListener('change', (e) => {
+            handleCompanyChange(e.target.value);
+        });
+    }
+    
+    // Cargar empresas disponibles
+    loadCompanies();
+    
+    // Cargar dashboard inicial
+    loadDashboardData();
+});
 
 // ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
@@ -2706,25 +2728,4 @@ window.closeModal = closeModal; // Ya existe, pero importante para el modal de p
 addToLog('Script loaded successfully', 'info');
 
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Configurar el selector de empresas
-    const companySelect = document.getElementById('companySelect');
-    if (companySelect) {
-        // Establecer valor por defecto si existe
-        if (DEFAULT_COMPANY_ID) {
-            companySelect.value = DEFAULT_COMPANY_ID;
-            currentCompanyId = DEFAULT_COMPANY_ID;
-        }
-        
-        // Escuchar cambios
-        companySelect.addEventListener('change', (e) => {
-            handleCompanyChange(e.target.value);
-        });
-    }
-    
-    // Cargar empresas disponibles
-    loadCompanies();
-    
-    // Cargar dashboard inicial
-    loadDashboardData();
-});
+
