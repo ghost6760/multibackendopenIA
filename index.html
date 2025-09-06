@@ -15,9 +15,9 @@
 
         <div class="company-selector">
             <label for="companySelect">🏢 Empresa Activa:</label>
-            <select id="companySelect">
+            <select id="companySelect" onchange="handleCompanyChange(this.value)">
                 <option value="">Seleccionar empresa...</option>
-                <option value="benova">Benova</option>
+                <option value="benova" selected>Benova</option>
                 <option value="medispa">MediSpa Elite</option>
                 <option value="dental_clinic">Clínica Dental Sonríe</option>
                 <option value="spa_wellness">Wellness Spa & Relax</option>
