@@ -931,6 +931,46 @@ def _save_custom_prompt(company_id: str, agent_name: str, prompt_template: str, 
         logger.error(f"Error saving custom prompt: {e}")
         return False
 
+
+def _delete_custom_prompt(company_id: str, agent_name: str) -> bool:
+    """Eliminar prompt personalizado y restaurar al default"""
+    try:
+        custom_prompts_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+            'custom_prompts.json'
+        )
+        
+        if not os.path.exists(custom_prompts_file):
+            return True  # No hay archivo, consideramos exitoso
+        
+        # Cargar prompts existentes
+        with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+            custom_prompts = json.load(f)
+        
+        # Verificar si existe la empresa y el agente
+        if company_id in custom_prompts and agent_name in custom_prompts[company_id]:
+            # Restaurar a valores por defecto
+            custom_prompts[company_id][agent_name].update({
+                "template": None,
+                "is_custom": False,
+                "modified_at": datetime.utcnow().isoformat() + "Z",
+                "modified_by": "system_reset"
+            })
+            
+            # Guardar archivo actualizado
+            with open(custom_prompts_file, 'w', encoding='utf-8') as f:
+                json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"[{company_id}] Custom prompt deleted for {agent_name}, restored to default")
+            return True
+        else:
+            # No había prompt personalizado, no hay nada que eliminar
+            logger.info(f"[{company_id}] No custom prompt found for {agent_name}")
+            return True
+        
+    except Exception as e:
+        logger.error(f"Error deleting custom prompt: {e}")
+        return False
 def _remove_custom_prompt(company_id: str, agent_name: str) -> bool:
     """Remover prompt personalizado (volver a default)"""
     try:
