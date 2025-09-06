@@ -640,6 +640,11 @@ function updateCompanySelector() {
  * Maneja el cambio de empresa seleccionada
  */
 function handleCompanyChange(companyId) {
+    // Evitar cambios múltiples si es el mismo valor
+    if (currentCompanyId === companyId) {
+        return;
+    }
+    
     currentCompanyId = companyId;
     addToLog(`Company changed to: ${companyId}`, 'info');
     
@@ -654,24 +659,27 @@ function handleCompanyChange(companyId) {
         if (activeTab) {
             const tabId = activeTab.id;
             
-            // Recargar contenido según la pestaña activa
-            switch(tabId) {
-                case 'dashboard':
-                    loadDashboardData();
-                    break;
-                case 'prompts':
-                    loadPromptsTab();
-                    break;
-                case 'documents':
-                    loadDocuments();
-                    break;
-                case 'conversations':
-                    loadConversations();
-                    break;
-            }
+            // Usar un setTimeout para evitar múltiples llamadas simultáneas
+            setTimeout(() => {
+                switch(tabId) {
+                    case 'dashboard':
+                        loadDashboardData();
+                        break;
+                    case 'prompts':
+                        loadPromptsTab();
+                        break;
+                    case 'documents':
+                        loadDocuments();
+                        break;
+                    case 'conversations':
+                        loadConversations();
+                        break;
+                }
+            }, 100);
         }
     }
 }
+
 // ============================================================================
 // DASHBOARD - FUNCIONES PRINCIPALES
 // ============================================================================
@@ -2365,7 +2373,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Configurar event listener para selector de empresa
         const companySelect = document.getElementById('companySelect');
         if (companySelect) {
-            companySelect.addEventListener('change', (e) => {
+            // Establecer valor por defecto
+            if (DEFAULT_COMPANY_ID) {
+                companySelect.value = DEFAULT_COMPANY_ID;
+                currentCompanyId = DEFAULT_COMPANY_ID;
+            }
+            
+            // IMPORTANTE: Solo un listener, no duplicar
+            companySelect.addEventListener('change', function(e) {
                 handleCompanyChange(e.target.value);
             });
         }
@@ -2650,28 +2665,6 @@ function showPreviewModal(agentName, testMessage, previewResponse) {
     modal.onclick = (e) => { if (e.target === modal) closeModal(); };
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Configurar el selector de empresas
-    const companySelect = document.getElementById('companySelect');
-    if (companySelect) {
-        // Establecer valor por defecto si existe
-        if (DEFAULT_COMPANY_ID) {
-            companySelect.value = DEFAULT_COMPANY_ID;
-            currentCompanyId = DEFAULT_COMPANY_ID;
-        }
-        
-        // Escuchar cambios
-        companySelect.addEventListener('change', (e) => {
-            handleCompanyChange(e.target.value);
-        });
-    }
-    
-    // Cargar empresas disponibles
-    loadCompanies();
-    
-    // Cargar dashboard inicial
-    loadDashboardData();
-});
 
 // ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
