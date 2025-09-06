@@ -19,17 +19,31 @@ logger = logging.getLogger(__name__)
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
-def _get_company_id_from_request() -> str:
-    """Extraer company_id de headers o usar por defecto"""
-    company_id = request.headers.get('X-Company-ID')
-    if not company_id:
+def _get_company_id_from_request():
+    """Obtener company_id de múltiples fuentes con validación"""
+    company_id = None
+    
+    # Prioridad 1: Header
+    if request.headers.get('X-Company-ID'):
+        company_id = request.headers.get('X-Company-ID')
+        logger.debug(f"Company ID from header: {company_id}")
+    
+    # Prioridad 2: Query parameter
+    elif request.args.get('company_id'):
         company_id = request.args.get('company_id')
-    if not company_id and request.is_json:
-        data = request.get_json()
-        company_id = data.get('company_id') if data else None
-    if not company_id:
-        company_id = 'benova'  # Default para retrocompatibilidad
-    return company_id
+        logger.debug(f"Company ID from query: {company_id}")
+    
+    # Prioridad 3: JSON body
+    elif request.is_json and request.get_json().get('company_id'):
+        company_id = request.get_json().get('company_id')
+        logger.debug(f"Company ID from body: {company_id}")
+    
+    # Validar que no esté vacío
+    if company_id and company_id.strip():
+        return company_id.strip()
+    
+    # Si no hay company_id, retornar None (no string vacío)
+    return None
 
 # ============================================================================
 # NUEVOS ENDPOINTS PARA FRONTEND REACT
@@ -616,11 +630,17 @@ def export_system_configuration():
 
 @bp.route('/prompts', methods=['GET'])
 @handle_errors
-def get_agent_prompts():
-    """Obtener prompts actuales de todos los agentes"""
+def get_prompts():
+    """Obtener prompts actuales de los agentes para una empresa"""
     try:
         company_id = _get_company_id_from_request()
-        agent_name = request.args.get('agent_name')
+        
+        # Validación estricta
+        if not company_id:
+            logger.error("No company_id provided in request")
+            return create_error_response("company_id is required", 400)
+        
+        logger.info(f"Getting prompts for company: {company_id}")
         
         company_manager = get_company_manager()
         if not company_manager.validate_company_id(company_id):
@@ -631,10 +651,10 @@ def get_agent_prompts():
         orchestrator = factory.get_orchestrator(company_id)
         
         if not orchestrator:
-            return create_error_response("Orchestrator not available", 503)
+            return create_error_response(f"Orchestrator not available for {company_id}", 503)
         
         prompts_data = {}
-        agents_to_check = [agent_name] if agent_name else ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
+        agents_to_check = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
         
         for agent_key in agents_to_check:
             agent_instance = getattr(orchestrator, agent_key, None)
@@ -647,14 +667,18 @@ def get_agent_prompts():
                         "is_custom": _has_custom_prompt(company_id, agent_key),
                         "last_modified": _get_prompt_modification_date(company_id, agent_key)
                     }
+                    logger.debug(f"Loaded prompt for {agent_key}")
                 except Exception as e:
                     logger.warning(f"Error getting prompt for {agent_key}: {e}")
+                    # Proveer un prompt por defecto si hay error
                     prompts_data[agent_key] = {
-                        "current_prompt": "Error loading prompt",
+                        "current_prompt": f"Default prompt for {agent_key}",
                         "is_custom": False,
                         "last_modified": None,
                         "error": str(e)
                     }
+        
+        logger.info(f"Successfully loaded {len(prompts_data)} prompts for {company_id}")
         
         return create_success_response({
             "company_id": company_id,
@@ -662,8 +686,9 @@ def get_agent_prompts():
         })
         
     except Exception as e:
-        logger.error(f"Error getting prompts: {e}")
-        return create_error_response("Failed to get prompts", 500)
+        logger.error(f"Error getting prompts: {e}", exc_info=True)
+        return create_error_response(f"Failed to get prompts: {str(e)}", 500)
+
 
 @bp.route('/prompts/<agent_name>', methods=['PUT'])
 @handle_errors
@@ -711,44 +736,66 @@ def reset_agent_prompt(agent_name):
     try:
         company_id = _get_company_id_from_request()
         
+        if not company_id:
+            logger.error("No company_id provided for reset")
+            return create_error_response("company_id is required", 400)
+        
+        logger.info(f"Resetting prompt for {agent_name} in company {company_id}")
+        
         company_manager = get_company_manager()
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
         # Eliminar prompt personalizado
-        success = _remove_custom_prompt(company_id, agent_name)
+        result = _delete_custom_prompt(company_id, agent_name)
         
-        if not success:
-            return create_error_response("Failed to reset prompt", 500)
-        
-        # Limpiar cache
-        factory = get_multi_agent_factory()
-        factory.clear_company_cache(company_id)
-        
-        return create_success_response({
-            "message": f"Prompt reset to default for {agent_name}",
-            "company_id": company_id,
-            "agent_name": agent_name
-        })
+        if result:
+            # Reinicializar el orchestrator para recargar prompts
+            factory = get_multi_agent_factory()
+            factory.reset_orchestrator(company_id)
+            
+            logger.info(f"Successfully reset prompt for {agent_name} in {company_id}")
+            
+            return create_success_response({
+                "message": f"Prompt restored to default for {agent_name}",
+                "company_id": company_id,
+                "agent_name": agent_name
+            })
+        else:
+            return create_error_response(f"Failed to reset prompt for {agent_name}", 500)
         
     except Exception as e:
-        logger.error(f"Error resetting prompt: {e}")
-        return create_error_response("Failed to reset prompt", 500)
+        logger.error(f"Error resetting prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
+
 
 @bp.route('/prompts/preview', methods=['POST'])
 @handle_errors
 def preview_prompt():
-    """Previsualizar cómo funcionaría un prompt modificado"""
+    """Vista previa de un prompt con mensaje de prueba"""
     try:
         data = request.get_json()
+        
+        # Obtener parámetros con validación
         company_id = data.get('company_id')
         agent_name = data.get('agent_name')
         prompt_template = data.get('prompt_template')
-        test_message = data.get('test_message', "Hola, ¿cómo puedo ayudarte?")
+        test_message = data.get('test_message', '¿Cuánto cuesta un tratamiento?')
         
-        # Validaciones
-        if not all([company_id, agent_name, prompt_template]):
-            return create_error_response("company_id, agent_name and prompt_template are required", 400)
+        # Validaciones estrictas
+        if not company_id or not company_id.strip():
+            logger.error("Missing or empty company_id in preview request")
+            return create_error_response("company_id is required and cannot be empty", 400)
+            
+        if not agent_name or not agent_name.strip():
+            logger.error("Missing or empty agent_name in preview request")
+            return create_error_response("agent_name is required and cannot be empty", 400)
+            
+        if not prompt_template or not prompt_template.strip():
+            logger.error("Missing or empty prompt_template in preview request")
+            return create_error_response("prompt_template is required and cannot be empty", 400)
+        
+        logger.info(f"Preview request for {agent_name} in {company_id}")
         
         company_manager = get_company_manager()
         if not company_manager.validate_company_id(company_id):
@@ -759,13 +806,20 @@ def preview_prompt():
         openai_service = OpenAIService()
         
         # Simular respuesta (sin guardar cambios)
-        preview_result = _simulate_agent_response(
-            agent_name=agent_name,
-            company_config=config,
-            custom_prompt=prompt_template,
-            test_message=test_message,
-            openai_service=openai_service
-        )
+        try:
+            preview_result = _simulate_agent_response(
+                agent_name=agent_name,
+                company_config=config,
+                custom_prompt=prompt_template,
+                test_message=test_message,
+                openai_service=openai_service
+            )
+            
+            logger.info(f"Preview generated successfully for {agent_name}")
+            
+        except Exception as sim_error:
+            logger.error(f"Error simulating response: {sim_error}")
+            preview_result = f"Error generando preview: {str(sim_error)}"
         
         return create_success_response({
             "company_id": company_id,
@@ -776,9 +830,9 @@ def preview_prompt():
         })
         
     except Exception as e:
-        logger.error(f"Error previewing prompt: {e}")
-        return create_error_response("Failed to preview prompt", 500)
-
+        logger.error(f"Error previewing prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
+        
 # ============================================================================
 # FUNCIONES AUXILIARES PARA GESTIÓN DE PROMPTS
 # ============================================================================
