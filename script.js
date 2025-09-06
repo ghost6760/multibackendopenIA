@@ -10,6 +10,7 @@ const DEFAULT_COMPANY_ID = 'benova';
 
 // Estado global de la aplicación
 let currentCompanyId = '';
+let currentCompanyId = DEFAULT_COMPANY_ID; // Cambiar de '' a DEFAULT_COMPANY_ID
 let monitoringInterval = null;
 let systemLog = [];
 
@@ -191,9 +192,31 @@ function escapeHTML(text) {
 // ============================================================================
 
 /**
- * Cambia entre tabs
+ * Cambia entre tabs con validaciones y carga de datos específicos
+ * @param {string} tabName - Nombre del tab a activar
+ * @returns {void}
  */
 function switchTab(tabName) {
+    // Validación especial para tabs que requieren empresa seleccionada
+    const requiresCompany = ['prompts', 'documents', 'conversations'];
+    
+    if (requiresCompany.includes(tabName) && !currentCompanyId) {
+        showNotification('⚠️ Por favor selecciona una empresa primero', 'warning');
+        
+        // Hacer focus en el selector de empresas
+        const companySelect = document.getElementById('companySelect');
+        if (companySelect) {
+            companySelect.focus();
+            // Añadir clase temporal para resaltar
+            companySelect.classList.add('highlight');
+            setTimeout(() => companySelect.classList.remove('highlight'), 2000);
+        }
+        
+        // Log del intento
+        addToLog(`Tab switch blocked: ${tabName} requires company selection`, 'warning');
+        return;
+    }
+    
     // Remover clase active de todos los tabs y contenidos
     document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.remove('active');
@@ -214,15 +237,273 @@ function switchTab(tabName) {
         activeContent.classList.add('active');
     }
     
+    // Log del cambio de tab
     addToLog(`Switched to tab: ${tabName}`, 'info');
     
-    // Cargar datos específicos del tab si es necesario
-    if (tabName === 'dashboard') {
-        loadDashboardData();
-    }
+    // Cargar datos específicos del tab según el caso
+    loadTabContent(tabName);
+}
 
-    if (tabName === 'prompts') {
-        loadPromptsTab();
+/**
+ * Carga el contenido específico de cada tab
+ * @param {string} tabName - Nombre del tab activo
+ */
+async function loadTabContent(tabName) {
+    try {
+        // Mostrar indicador de carga si es necesario
+        const shouldShowLoader = ['dashboard', 'prompts', 'documents', 'conversations', 'health'].includes(tabName);
+        
+        if (shouldShowLoader) {
+            toggleLoadingOverlay(true);
+        }
+        
+        switch(tabName) {
+            case 'dashboard':
+                await loadDashboardData();
+                break;
+                
+            case 'prompts':
+                await loadPromptsTab();
+                break;
+                
+            case 'documents':
+                await loadDocumentsTab();
+                break;
+                
+            case 'conversations':
+                await loadConversationsTab();
+                break;
+                
+            case 'multimedia':
+                await loadMultimediaTab();
+                break;
+                
+            case 'admin':
+                await loadAdminTab();
+                break;
+                
+            case 'health':
+                await loadHealthCheckTab();
+                break;
+                
+            default:
+                console.log(`No specific loader for tab: ${tabName}`);
+        }
+        
+    } catch (error) {
+        console.error(`Error loading tab content for ${tabName}:`, error);
+        showNotification(`Error al cargar ${tabName}: ${error.message}`, 'error');
+        addToLog(`Error loading tab ${tabName}: ${error.message}`, 'error');
+        
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Carga el contenido del tab de documentos
+ */
+async function loadDocumentsTab() {
+    if (!currentCompanyId) {
+        const container = document.getElementById('documentsTabContent');
+        if (container) {
+            container.innerHTML = `
+                <div class="warning-message">
+                    <h3>⚠️ Empresa no seleccionada</h3>
+                    <p>Selecciona una empresa para gestionar sus documentos.</p>
+                </div>
+            `;
+        }
+        return;
+    }
+    
+    addToLog(`Loading documents for company: ${currentCompanyId}`, 'info');
+    await loadDocuments();
+}
+
+/**
+ * Carga el contenido del tab de conversaciones
+ */
+async function loadConversationsTab() {
+    if (!currentCompanyId) {
+        const container = document.getElementById('conversationsTabContent');
+        if (container) {
+            container.innerHTML = `
+                <div class="warning-message">
+                    <h3>⚠️ Empresa no seleccionada</h3>
+                    <p>Selecciona una empresa para ver sus conversaciones.</p>
+                </div>
+            `;
+        }
+        return;
+    }
+    
+    addToLog(`Loading conversations for company: ${currentCompanyId}`, 'info');
+    await loadConversations();
+}
+
+/**
+ * Carga el contenido del tab multimedia
+ */
+async function loadMultimediaTab() {
+    const container = document.getElementById('multimediaTabContent');
+    if (container && !container.hasChildNodes()) {
+        // Solo cargar si el contenido no existe ya
+        container.innerHTML = `
+            <div class="multimedia-section">
+                <h3>🎤 Procesamiento Multimedia</h3>
+                <p>Funciones de audio e imagen disponibles para ${currentCompanyId || 'todas las empresas'}</p>
+                <!-- Aquí va el contenido multimedia -->
+            </div>
+        `;
+    }
+    
+    addToLog('Multimedia tab loaded', 'info');
+}
+
+/**
+ * Carga el contenido del tab de administración
+ */
+async function loadAdminTab() {
+    const container = document.getElementById('adminTabContent');
+    if (container) {
+        try {
+            // Cargar configuración actual
+            const config = await apiRequest('/api/admin/config');
+            
+            container.innerHTML = `
+                <div class="admin-section">
+                    <h3>🔧 Panel de Administración</h3>
+                    <div class="admin-info">
+                        <p><strong>Empresa activa:</strong> ${currentCompanyId || 'Ninguna'}</p>
+                        <p><strong>Total empresas:</strong> ${config.total_companies || 0}</p>
+                        <p><strong>Modo:</strong> ${config.mode || 'Multi-tenant'}</p>
+                    </div>
+                    <div class="admin-actions">
+                        <button onclick="reloadCompaniesConfig()" class="btn-primary">
+                            🔄 Recargar Configuración
+                        </button>
+                        <button onclick="runSystemDiagnostics()" class="btn-secondary">
+                            🔍 Ejecutar Diagnóstico
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+        } catch (error) {
+            container.innerHTML = `
+                <div class="error-message">
+                    <h3>❌ Error al cargar administración</h3>
+                    <p>${error.message}</p>
+                </div>
+            `;
+        }
+    }
+    
+    addToLog('Admin tab loaded', 'info');
+}
+
+/**
+ * Carga el contenido del tab de health check
+ */
+async function loadHealthCheckTab() {
+    const container = document.getElementById('healthTabContent');
+    if (container) {
+        container.innerHTML = `
+            <div class="health-section">
+                <h3>🏥 Health Check del Sistema</h3>
+                <div id="healthStatus">
+                    <div class="loading">Verificando estado del sistema...</div>
+                </div>
+            </div>
+        `;
+        
+        // Ejecutar health check
+        await performHealthCheck();
+    }
+    
+    addToLog('Health check tab loaded', 'info');
+}
+
+/**
+ * Inicializa los event listeners para los tabs
+ */
+function initializeTabs() {
+    // Agregar event listeners a todos los botones de tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            const tabName = this.getAttribute('data-tab');
+            if (tabName) {
+                switchTab(tabName);
+            }
+        });
+    });
+    
+    // Verificar si hay un tab por defecto en la URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const defaultTab = urlParams.get('tab');
+    
+    if (defaultTab && document.querySelector(`[data-tab="${defaultTab}"]`)) {
+        switchTab(defaultTab);
+    } else {
+        // Cargar dashboard por defecto
+        switchTab('dashboard');
+    }
+    
+    addToLog('Tabs initialized', 'info');
+}
+
+/**
+ * Actualiza el contador de notificaciones en un tab
+ * @param {string} tabName - Nombre del tab
+ * @param {number} count - Número de notificaciones
+ */
+function updateTabNotificationCount(tabName, count) {
+    const tab = document.querySelector(`[data-tab="${tabName}"]`);
+    if (!tab) return;
+    
+    // Remover badge existente
+    const existingBadge = tab.querySelector('.tab-badge');
+    if (existingBadge) {
+        existingBadge.remove();
+    }
+    
+    // Agregar nuevo badge si count > 0
+    if (count > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'tab-badge';
+        badge.textContent = count > 99 ? '99+' : count;
+        tab.appendChild(badge);
+    }
+}
+
+/**
+ * Verifica si un tab requiere empresa seleccionada
+ * @param {string} tabName - Nombre del tab
+ * @returns {boolean}
+ */
+function tabRequiresCompany(tabName) {
+    const requiresCompany = ['prompts', 'documents', 'conversations'];
+    return requiresCompany.includes(tabName);
+}
+
+/**
+ * Obtiene el tab activo actual
+ * @returns {string|null} Nombre del tab activo o null
+ */
+function getActiveTab() {
+    const activeTab = document.querySelector('.tab.active');
+    return activeTab ? activeTab.getAttribute('data-tab') : null;
+}
+
+/**
+ * Recarga el contenido del tab activo actual
+ */
+async function refreshActiveTab() {
+    const activeTab = getActiveTab();
+    if (activeTab) {
+        addToLog(`Refreshing active tab: ${activeTab}`, 'info');
+        await loadTabContent(activeTab);
     }
 }
 
@@ -369,10 +650,26 @@ function handleCompanyChange(companyId) {
         // Limpiar cache relacionado con empresas
         cache.lastUpdate = {};
         
-        // Recargar datos del dashboard si estamos en él
-        const dashboardTab = document.getElementById('dashboard');
-        if (dashboardTab && dashboardTab.classList.contains('active')) {
-            loadDashboardData();
+        // Recargar la pestaña activa actual
+        const activeTab = document.querySelector('.tab-content.active');
+        if (activeTab) {
+            const tabId = activeTab.id;
+            
+            // Recargar contenido según la pestaña activa
+            switch(tabId) {
+                case 'dashboard':
+                    loadDashboardData();
+                    break;
+                case 'prompts':
+                    loadPromptsTab();
+                    break;
+                case 'documents':
+                    loadDocuments();
+                    break;
+                case 'conversations':
+                    loadConversations();
+                    break;
+            }
         }
     }
 }
@@ -2131,9 +2428,19 @@ function setupFileUploadHandlers() {
 // ============================================================================
 // GESTIÓN DE PROMPTS PERSONALIZADOS
 // ============================================================================
-// En script.js
 async function loadPromptsTab() {
     const container = document.getElementById('promptsTabContent');
+    
+    // Validar que hay una empresa seleccionada
+    if (!currentCompanyId) {
+        container.innerHTML = `
+            <div class="warning-message">
+                <h3>⚠️ Selecciona una empresa</h3>
+                <p>Por favor, selecciona una empresa del menú desplegable superior para gestionar sus prompts.</p>
+            </div>
+        `;
+        return;
+    }
     
     const agentNames = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent'];
     
@@ -2144,11 +2451,12 @@ async function loadPromptsTab() {
     `;
     
     for (const agentName of agentNames) {
+        const displayName = agentName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         html += `
             <div class="prompt-card" data-agent="${agentName}">
-                <h4>${agentName.replace('_', ' ').toUpperCase()}</h4>
+                <h4>${displayName}</h4>
                 <div class="prompt-status" id="status-${agentName}">Cargando...</div>
-                <textarea class="prompt-editor" id="prompt-${agentName}" rows="8"></textarea>
+                <textarea class="prompt-editor" id="prompt-${agentName}" rows="8" placeholder="Cargando prompt..."></textarea>
                 <div class="prompt-actions">
                     <button onclick="updatePrompt('${agentName}')" class="btn-primary">Actualizar</button>
                     <button onclick="resetPrompt('${agentName}')" class="btn-secondary">Restaurar</button>
@@ -2170,27 +2478,55 @@ async function loadPromptsTab() {
 }
 
 async function loadCurrentPrompts() {
+    // Validar empresa seleccionada
+    if (!currentCompanyId) {
+        showNotification('Por favor selecciona una empresa primero', 'warning');
+        return;
+    }
+    
     try {
+        addToLog(`Loading prompts for company: ${currentCompanyId}`, 'info');
         const response = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId}`);
+        
+        if (!response || !response.agents) {
+            throw new Error('Invalid response format');
+        }
         
         for (const [agentName, promptData] of Object.entries(response.agents)) {
             const textarea = document.getElementById(`prompt-${agentName}`);
             const status = document.getElementById(`status-${agentName}`);
             
-            textarea.value = promptData.current_prompt;
-            status.innerHTML = promptData.is_custom 
-                ? `<span class="custom">✏️ Personalizado</span>`
-                : `<span class="default">🔧 Por defecto</span>`;
+            if (textarea && promptData) {
+                textarea.value = promptData.current_prompt || '';
+                
+                if (status) {
+                    status.innerHTML = promptData.is_custom 
+                        ? `<span class="custom">✏️ Personalizado</span>`
+                        : `<span class="default">🔧 Por defecto</span>`;
+                }
+            }
         }
         
         showNotification('Prompts cargados exitosamente', 'success');
         
     } catch (error) {
+        console.error('Error loading prompts:', error);
         showNotification('Error al cargar prompts: ' + error.message, 'error');
+        
+        // Mostrar mensaje de error en cada textarea
+        document.querySelectorAll('.prompt-editor').forEach(textarea => {
+            textarea.value = 'Error al cargar el prompt. Por favor, verifica la conexión.';
+            textarea.disabled = true;
+        });
     }
 }
 
 async function updatePrompt(agentName) {
+    if (!currentCompanyId) {
+        showNotification('Por favor selecciona una empresa primero', 'warning');
+        return;
+    }
+    
     const textarea = document.getElementById(`prompt-${agentName}`);
     const promptTemplate = textarea.value.trim();
     
@@ -2201,19 +2537,21 @@ async function updatePrompt(agentName) {
     
     try {
         toggleLoadingOverlay(true);
+        addToLog(`Updating prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
-        await apiRequest(`/api/admin/prompts/${agentName}`, {
+        const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
             method: 'PUT',
-            body: {
+            body: JSON.stringify({
                 company_id: currentCompanyId,
                 prompt_template: promptTemplate
-            }
+            })
         });
         
         showNotification(`Prompt de ${agentName} actualizado exitosamente`, 'success');
         await loadCurrentPrompts(); // Recargar estado
         
     } catch (error) {
+        console.error('Error updating prompt:', error);
         showNotification('Error al actualizar prompt: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
@@ -2221,14 +2559,20 @@ async function updatePrompt(agentName) {
 }
 
 async function resetPrompt(agentName) {
+    if (!currentCompanyId) {
+        showNotification('Por favor selecciona una empresa primero', 'warning');
+        return;
+    }
+    
     if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
         return;
     }
     
     try {
         toggleLoadingOverlay(true);
+        addToLog(`Resetting prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
-        await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId}`, {
+        const response = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId}`, {
             method: 'DELETE'
         });
         
@@ -2236,36 +2580,50 @@ async function resetPrompt(agentName) {
         await loadCurrentPrompts();
         
     } catch (error) {
+        console.error('Error resetting prompt:', error);
         showNotification('Error al restaurar prompt: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
     }
 }
 
+
 async function previewPrompt(agentName) {
+    if (!currentCompanyId) {
+        showNotification('Por favor selecciona una empresa primero', 'warning');
+        return;
+    }
+    
     const textarea = document.getElementById(`prompt-${agentName}`);
     const promptTemplate = textarea.value.trim();
+    
+    if (!promptTemplate) {
+        showNotification('El prompt no puede estar vacío', 'error');
+        return;
+    }
     
     const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?');
     if (!testMessage) return;
     
     try {
         toggleLoadingOverlay(true);
+        addToLog(`Previewing prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
         const response = await apiRequest('/api/admin/prompts/preview', {
             method: 'POST',
-            body: {
+            body: JSON.stringify({
                 company_id: currentCompanyId,
                 agent_name: agentName,
                 prompt_template: promptTemplate,
                 test_message: testMessage
-            }
+            })
         });
         
         // Mostrar preview en modal
         showPreviewModal(agentName, testMessage, response.preview_response);
         
     } catch (error) {
+        console.error('Error in preview:', error);
         showNotification('Error en vista previa: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
@@ -2302,6 +2660,11 @@ function showPreviewModal(agentName, testMessage, previewResponse) {
 window.captureScreen = captureScreen;
 window.toggleVoiceRecording = toggleVoiceRecording;
 window.switchTab = switchTab;
+window.loadTabContent = loadTabContent;
+window.initializeTabs = initializeTabs;
+window.updateTabNotificationCount = updateTabNotificationCount;
+window.refreshActiveTab = refreshActiveTab;
+window.getActiveTab = getActiveTab;
 window.loadSystemInfo = loadSystemInfo;
 window.loadCompaniesStatus = loadCompaniesStatus;
 window.uploadDocument = uploadDocument;
@@ -2341,3 +2704,27 @@ window.closeModal = closeModal; // Ya existe, pero importante para el modal de p
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
+
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Configurar el selector de empresas
+    const companySelect = document.getElementById('companySelect');
+    if (companySelect) {
+        // Establecer valor por defecto si existe
+        if (DEFAULT_COMPANY_ID) {
+            companySelect.value = DEFAULT_COMPANY_ID;
+            currentCompanyId = DEFAULT_COMPANY_ID;
+        }
+        
+        // Escuchar cambios
+        companySelect.addEventListener('change', (e) => {
+            handleCompanyChange(e.target.value);
+        });
+    }
+    
+    // Cargar empresas disponibles
+    loadCompanies();
+    
+    // Cargar dashboard inicial
+    loadDashboardData();
+});
