@@ -635,7 +635,6 @@ def get_prompts():
     try:
         company_id = _get_company_id_from_request()
         
-        # Validación estricta
         if not company_id:
             logger.error("No company_id provided in request")
             return create_error_response("company_id is required", 400)
@@ -651,32 +650,51 @@ def get_prompts():
         orchestrator = factory.get_orchestrator(company_id)
         
         if not orchestrator:
+            logger.error(f"Orchestrator not available for {company_id}")
             return create_error_response(f"Orchestrator not available for {company_id}", 503)
         
         prompts_data = {}
         agents_to_check = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
         
+        # Cargar prompts por defecto desde custom_prompts.json si existe
+        default_prompts = _load_default_prompts(company_id)
+        
         for agent_key in agents_to_check:
             agent_instance = getattr(orchestrator, agent_key, None)
             if agent_instance:
                 try:
-                    # Obtener el prompt actual del agente
-                    current_prompt = str(agent_instance.prompt_template.messages[0].prompt.template)
+                    # Intentar obtener el prompt actual del agente
+                    if hasattr(agent_instance, 'prompt_template') and agent_instance.prompt_template:
+                        if hasattr(agent_instance.prompt_template, 'messages'):
+                            current_prompt = str(agent_instance.prompt_template.messages[0].prompt.template)
+                        else:
+                            current_prompt = str(agent_instance.prompt_template)
+                    else:
+                        # Si no hay prompt en el agente, usar el default
+                        current_prompt = default_prompts.get(agent_key, f"Default prompt for {agent_key}")
+                    
                     prompts_data[agent_key] = {
                         "current_prompt": current_prompt,
                         "is_custom": _has_custom_prompt(company_id, agent_key),
                         "last_modified": _get_prompt_modification_date(company_id, agent_key)
                     }
                     logger.debug(f"Loaded prompt for {agent_key}")
+                    
                 except Exception as e:
                     logger.warning(f"Error getting prompt for {agent_key}: {e}")
-                    # Proveer un prompt por defecto si hay error
+                    # Usar prompt por defecto si hay error
                     prompts_data[agent_key] = {
-                        "current_prompt": f"Default prompt for {agent_key}",
+                        "current_prompt": default_prompts.get(agent_key, f"Default prompt for {agent_key}"),
                         "is_custom": False,
-                        "last_modified": None,
-                        "error": str(e)
+                        "last_modified": None
                     }
+            else:
+                # Si el agente no existe, proporcionar prompt por defecto
+                prompts_data[agent_key] = {
+                    "current_prompt": default_prompts.get(agent_key, f"Default prompt for {agent_key}"),
+                    "is_custom": False,
+                    "last_modified": None
+                }
         
         logger.info(f"Successfully loaded {len(prompts_data)} prompts for {company_id}")
         
@@ -688,7 +706,6 @@ def get_prompts():
     except Exception as e:
         logger.error(f"Error getting prompts: {e}", exc_info=True)
         return create_error_response(f"Failed to get prompts: {str(e)}", 500)
-
 
 @bp.route('/prompts/<agent_name>', methods=['PUT'])
 @handle_errors
@@ -750,9 +767,9 @@ def reset_agent_prompt(agent_name):
         result = _delete_custom_prompt(company_id, agent_name)
         
         if result:
-            # Reinicializar el orchestrator para recargar prompts
+            # En lugar de reset_orchestrator, usar clear_company_cache
             factory = get_multi_agent_factory()
-            factory.reset_orchestrator(company_id)
+            factory.clear_company_cache(company_id)  # Este método SÍ existe
             
             logger.info(f"Successfully reset prompt for {agent_name} in {company_id}")
             
@@ -767,7 +784,6 @@ def reset_agent_prompt(agent_name):
     except Exception as e:
         logger.error(f"Error resetting prompt: {e}", exc_info=True)
         return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
-
 
 @bp.route('/prompts/preview', methods=['POST'])
 @handle_errors
@@ -1048,3 +1064,36 @@ def _simulate_agent_response(agent_name: str, company_config, custom_prompt: str
     except Exception as e:
         logger.error(f"Error simulating agent response: {e}")
         return f"Error en la simulación: {str(e)}"
+
+
+def _load_default_prompts(company_id: str) -> dict:
+    """Cargar prompts por defecto desde custom_prompts.json"""
+    try:
+        custom_prompts_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+            'custom_prompts.json'
+        )
+        
+        if not os.path.exists(custom_prompts_file):
+            logger.warning(f"custom_prompts.json not found")
+            return {}
+        
+        with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+            custom_prompts = json.load(f)
+        
+        company_prompts = custom_prompts.get(company_id, {})
+        default_prompts = {}
+        
+        for agent_name, agent_data in company_prompts.items():
+            if isinstance(agent_data, dict):
+                # Usar el template personalizado si existe, sino el default
+                template = agent_data.get('template')
+                if not template or template == "null" or template == None:
+                    template = agent_data.get('default_template', f"Default prompt for {agent_name}")
+                default_prompts[agent_name] = template
+        
+        return default_prompts
+        
+    except Exception as e:
+        logger.error(f"Error loading default prompts: {e}")
+        return {}
