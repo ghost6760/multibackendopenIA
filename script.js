@@ -9,7 +9,6 @@ const API_BASE_URL = window.location.origin;
 const DEFAULT_COMPANY_ID = 'benova';
 
 // Estado global de la aplicación
-let currentCompanyId = '';
 let currentCompanyId = DEFAULT_COMPANY_ID; // Cambiar de '' a DEFAULT_COMPANY_ID
 let monitoringInterval = null;
 let systemLog = [];
