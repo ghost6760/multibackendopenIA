@@ -660,7 +660,14 @@ def get_prompts():
         default_prompts = _load_default_prompts(company_id)
         
         for agent_key in agents_to_check:
-            agent_instance = getattr(orchestrator, agent_key, None)
+            # Mapear nombres correctamente
+            agent_name = agent_key.replace('_agent', '')  # router_agent -> router
+            
+            # Intentar obtener el agente desde orchestrator.agents
+            agent_instance = None
+            if hasattr(orchestrator, 'agents') and agent_name in orchestrator.agents:
+                agent_instance = orchestrator.agents[agent_name]
+            
             if agent_instance:
                 try:
                     # Intentar obtener el prompt actual del agente
@@ -712,11 +719,21 @@ def get_prompts():
 def update_agent_prompt(agent_name):
     """Actualizar prompt de un agente específico"""
     try:
+        # ACTUALIZACIÓN: Verificar que hay datos JSON válidos
+        if not request.is_json:
+            return create_error_response("Request must be JSON", 400)
+            
         data = request.get_json()
+        if not data:
+            return create_error_response("Invalid JSON data", 400)
+            
         company_id = data.get('company_id') or _get_company_id_from_request()
         prompt_template = data.get('prompt_template')
         modified_by = data.get('modified_by', 'admin')
         
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+            
         if not prompt_template:
             return create_error_response("prompt_template is required", 400)
         
@@ -731,9 +748,11 @@ def update_agent_prompt(agent_name):
         if not success:
             return create_error_response("Failed to save custom prompt", 500)
         
-        # Limpiar cache para forzar recreación
+        # ACTUALIZACIÓN: Usar clear_company_cache en lugar de reset_orchestrator
         factory = get_multi_agent_factory()
         factory.clear_company_cache(company_id)
+        
+        logger.info(f"Prompt updated successfully for {agent_name} in {company_id}")
         
         return create_success_response({
             "message": f"Prompt updated successfully for {agent_name}",
@@ -743,8 +762,8 @@ def update_agent_prompt(agent_name):
         })
         
     except Exception as e:
-        logger.error(f"Error updating prompt: {e}")
-        return create_error_response("Failed to update prompt", 500)
+        logger.error(f"Error updating prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to update prompt: {str(e)}", 500)
 
 @bp.route('/prompts/<agent_name>', methods=['DELETE'])
 @handle_errors
@@ -790,7 +809,13 @@ def reset_agent_prompt(agent_name):
 def preview_prompt():
     """Vista previa de un prompt con mensaje de prueba"""
     try:
+        # ACTUALIZACIÓN: Verificar que hay datos JSON válidos
+        if not request.is_json:
+            return create_error_response("Request must be JSON", 400)
+            
         data = request.get_json()
+        if not data:
+            return create_error_response("Invalid JSON data", 400)
         
         # Obtener parámetros con validación
         company_id = data.get('company_id')
@@ -834,7 +859,7 @@ def preview_prompt():
             logger.info(f"Preview generated successfully for {agent_name}")
             
         except Exception as sim_error:
-            logger.error(f"Error simulating response: {sim_error}")
+            logger.error(f"Error simulating response: {sim_error}", exc_info=True)
             preview_result = f"Error generando preview: {str(sim_error)}"
         
         return create_success_response({
