@@ -625,7 +625,7 @@ def export_system_configuration():
 
 
 # ============================================================================
-# ENDPOINTS PARA GESTIÓN DE PROMPTS PERSONALIZADOS
+# ENDPOINTS PARA GESTIÓN DE PROMPTS PERSONALIZADOS - VERSIÓN CORREGIDA
 # ============================================================================
 
 @bp.route('/prompts', methods=['GET'])
@@ -719,13 +719,23 @@ def get_prompts():
 def update_agent_prompt(agent_name):
     """Actualizar prompt de un agente específico"""
     try:
-        # ACTUALIZACIÓN: Verificar que hay datos JSON válidos
-        if not request.is_json:
-            return create_error_response("Request must be JSON", 400)
-            
-        data = request.get_json()
-        if not data:
-            return create_error_response("Invalid JSON data", 400)
+        # CORRECCIÓN: Manejar el body correctamente
+        raw_data = request.get_data(as_text=True)
+        logger.debug(f"Raw data received: {raw_data[:200]}")  # Log para debug
+        
+        # Intentar parsear JSON
+        try:
+            if raw_data:
+                import json
+                data = json.loads(raw_data)
+            else:
+                data = request.get_json(force=True)
+        except json.JSONDecodeError as je:
+            logger.error(f"JSON decode error: {je}")
+            return create_error_response("Invalid JSON format", 400)
+        
+        if not isinstance(data, dict):
+            return create_error_response("Request body must be a JSON object", 400)
             
         company_id = data.get('company_id') or _get_company_id_from_request()
         prompt_template = data.get('prompt_template')
@@ -736,6 +746,8 @@ def update_agent_prompt(agent_name):
             
         if not prompt_template:
             return create_error_response("prompt_template is required", 400)
+        
+        logger.info(f"Updating prompt for {agent_name} in company {company_id}")
         
         # Validar empresa
         company_manager = get_company_manager()
@@ -748,7 +760,7 @@ def update_agent_prompt(agent_name):
         if not success:
             return create_error_response("Failed to save custom prompt", 500)
         
-        # ACTUALIZACIÓN: Usar clear_company_cache en lugar de reset_orchestrator
+        # Limpiar cache para forzar recreación
         factory = get_multi_agent_factory()
         factory.clear_company_cache(company_id)
         
@@ -788,7 +800,7 @@ def reset_agent_prompt(agent_name):
         if result:
             # En lugar de reset_orchestrator, usar clear_company_cache
             factory = get_multi_agent_factory()
-            factory.clear_company_cache(company_id)  # Este método SÍ existe
+            factory.clear_company_cache(company_id)
             
             logger.info(f"Successfully reset prompt for {agent_name} in {company_id}")
             
@@ -809,13 +821,23 @@ def reset_agent_prompt(agent_name):
 def preview_prompt():
     """Vista previa de un prompt con mensaje de prueba"""
     try:
-        # ACTUALIZACIÓN: Verificar que hay datos JSON válidos
-        if not request.is_json:
-            return create_error_response("Request must be JSON", 400)
-            
-        data = request.get_json()
-        if not data:
-            return create_error_response("Invalid JSON data", 400)
+        # CORRECCIÓN: Manejar el body correctamente
+        raw_data = request.get_data(as_text=True)
+        logger.debug(f"Preview raw data: {raw_data[:200]}")  # Log para debug
+        
+        # Intentar parsear JSON
+        try:
+            if raw_data:
+                import json
+                data = json.loads(raw_data)
+            else:
+                data = request.get_json(force=True)
+        except json.JSONDecodeError as je:
+            logger.error(f"JSON decode error in preview: {je}")
+            return create_error_response("Invalid JSON format", 400)
+        
+        if not isinstance(data, dict):
+            return create_error_response("Request body must be a JSON object", 400)
         
         # Obtener parámetros con validación
         company_id = data.get('company_id')
