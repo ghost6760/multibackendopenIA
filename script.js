@@ -50,13 +50,18 @@ async function apiRequest(endpoint, options = {}) {
         ...options
     };
     
-    // Agregar body si existe y no es FormData
-    if (options.body && !(options.body instanceof FormData)) {
-        config.body = JSON.stringify(options.body);
-    } else if (options.body instanceof FormData) {
-        // Para FormData, remover Content-Type para que el browser lo maneje
-        delete config.headers['Content-Type'];
-        config.body = options.body;
+    // CORRECCIÓN IMPORTANTE: Asegurar que el body se stringifique correctamente
+    if (options.body) {
+        if (options.body instanceof FormData) {
+            // Para FormData, remover Content-Type para que el browser lo maneje
+            delete config.headers['Content-Type'];
+            config.body = options.body;
+        } else {
+            // Para objetos JSON, asegurar stringify
+            config.body = typeof options.body === 'string' 
+                ? options.body 
+                : JSON.stringify(options.body);
+        }
     }
     
     try {
@@ -2575,12 +2580,13 @@ async function updatePrompt(agentName) {
         toggleLoadingOverlay(true);
         addToLog(`Updating prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
+        // CORRECCIÓN: Asegurar que se envía como objeto
         const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
             method: 'PUT',
-            body: JSON.stringify({
+            body: {
                 company_id: currentCompanyId,
                 prompt_template: promptTemplate
-            })
+            }
         });
         
         showNotification(`Prompt de ${agentName} actualizado exitosamente`, 'success');
@@ -2645,14 +2651,15 @@ async function previewPrompt(agentName) {
         toggleLoadingOverlay(true);
         addToLog(`Previewing prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
+        // CORRECCIÓN: Asegurar que se envía como objeto
         const response = await apiRequest('/api/admin/prompts/preview', {
             method: 'POST',
-            body: JSON.stringify({
+            body: {
                 company_id: currentCompanyId,
                 agent_name: agentName,
                 prompt_template: promptTemplate,
                 test_message: testMessage
-            })
+            }
         });
         
         // Mostrar preview en modal
