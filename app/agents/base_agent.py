@@ -7,6 +7,7 @@ from langchain.schema.output_parser import StrOutputParser
 from app.config.company_config import CompanyConfig
 from app.services.openai_service import OpenAIService
 from app.services.prompt_redis_manager import get_prompt_redis_manager
+from app.services.prompt_manager import PromptManager
 import logging
 import json
 import os
@@ -23,8 +24,16 @@ class BaseAgent(ABC):
         self.chat_model = openai_service.get_chat_model()
         self.agent_name = self.__class__.__name__
         
-        # Inicializar manager de prompts de Redis
-        self.prompt_manager = get_prompt_redis_manager()
+        # Inicializar manager de prompts de Redis (sistema existente)
+        self.prompt_redis_manager = get_prompt_redis_manager()
+        
+        # Inicializar el nuevo PromptManager para gestión mejorada
+        redis_client = self.prompt_redis_manager.redis_client if hasattr(self.prompt_redis_manager, 'redis_client') else None
+        if redis_client:
+            self.prompt_manager = PromptManager(redis_client)
+        else:
+            # Si no hay redis_client disponible, usar el prompt_redis_manager existente
+            self.prompt_manager = self.prompt_redis_manager
         
         # Inicializar el agente específico con soporte para prompts personalizados
         self._initialize_agent()
@@ -73,7 +82,11 @@ class BaseAgent(ABC):
             "company_name": self.company_config.company_name,
             "services": self.company_config.services,
             "agent_name": self.company_config.sales_agent_name,
-            "company_id": self.company_config.company_id
+            "company_id": self.company_config.company_id,
+            # Agregar más contexto si está disponible
+            "business_hours": getattr(self.company_config, 'business_hours', 'Lun-Vie 9:00-18:00'),
+            "contact_email": getattr(self.company_config, 'contact_email', 'info@empresa.com'),
+            "contact_phone": getattr(self.company_config, 'contact_phone', '+57 300 000 0000')
         })
         return enhanced_inputs
     
@@ -99,8 +112,18 @@ class BaseAgent(ABC):
         try:
             agent_key = self._get_agent_key()
             
-            # Primero intentar cargar desde Redis usando el manager
-            custom_template = self.prompt_manager.load_custom_prompt(
+            # Primero intentar con el nuevo PromptManager
+            if hasattr(self, 'prompt_manager') and isinstance(self.prompt_manager, PromptManager):
+                custom_template = self.prompt_manager.get_prompt(
+                    self.company_config.company_id,
+                    agent_key
+                )
+                if custom_template:
+                    logger.info(f"[{self.company_config.company_id}] Loaded prompt for {agent_key}")
+                    return custom_template
+            
+            # Si no funciona, usar el prompt_redis_manager original
+            custom_template = self.prompt_redis_manager.load_custom_prompt(
                 self.company_config.company_id, 
                 agent_key
             )
@@ -120,10 +143,19 @@ class BaseAgent(ABC):
     def _load_custom_prompt_from_file(self) -> Optional[str]:
         """Cargar prompt personalizado desde archivo JSON (método legacy para compatibilidad)"""
         try:
+            # Primero intentar en la carpeta config (nueva ubicación)
             custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                os.path.dirname(os.path.dirname(__file__)), 
+                'config',
                 'custom_prompts.json'
             )
+            
+            # Si no existe en config, intentar en la raíz (ubicación legacy)
+            if not os.path.exists(custom_prompts_file):
+                custom_prompts_file = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                    'custom_prompts.json'
+                )
             
             if not os.path.exists(custom_prompts_file):
                 return None
@@ -135,16 +167,31 @@ class BaseAgent(ABC):
             agent_key = self._get_agent_key()
             agent_data = company_prompts.get(agent_key, {})
             
-            custom_template = agent_data.get('template')
+            # Manejar tanto el formato nuevo como el antiguo
+            if isinstance(agent_data, dict):
+                custom_template = agent_data.get('default_template') or agent_data.get('template')
+            else:
+                custom_template = agent_data  # String directo (formato muy antiguo)
+            
             if custom_template:
                 # Si encontramos en archivo, migrar automáticamente a Redis
                 logger.info(f"Migrating prompt from file to Redis: {self.company_config.company_id}/{agent_key}")
-                self.prompt_manager.save_custom_prompt(
-                    self.company_config.company_id,
-                    agent_key,
-                    custom_template,
-                    agent_data.get('modified_by', 'migration')
-                )
+                
+                # Usar el nuevo PromptManager si está disponible
+                if hasattr(self, 'prompt_manager') and isinstance(self.prompt_manager, PromptManager):
+                    self.prompt_manager.save_custom_prompt(
+                        self.company_config.company_id,
+                        agent_key,
+                        custom_template,
+                        'migration'
+                    )
+                else:
+                    self.prompt_redis_manager.save_custom_prompt(
+                        self.company_config.company_id,
+                        agent_key,
+                        custom_template,
+                        agent_data.get('modified_by', 'migration') if isinstance(agent_data, dict) else 'migration'
+                    )
                 return custom_template
             
             return None
@@ -165,6 +212,9 @@ class BaseAgent(ABC):
     def _build_custom_prompt_template(self, custom_template: str) -> ChatPromptTemplate:
         """Construir ChatPromptTemplate desde template personalizado"""
         try:
+            # Procesar variables del template
+            custom_template = self.process_prompt_variables(custom_template)
+            
             # Determinar si el template necesita MessagesPlaceholder para chat_history
             if '{chat_history}' in custom_template:
                 return ChatPromptTemplate.from_messages([
@@ -182,6 +232,29 @@ class BaseAgent(ABC):
             # Fallback al método por defecto
             return self._create_default_prompt_template()
     
+    def process_prompt_variables(self, prompt: str, **kwargs) -> str:
+        """Procesar las variables en el prompt"""
+        # Variables por defecto del contexto de empresa
+        variables = {
+            'company_name': self.company_config.company_name,
+            'business_hours': getattr(self.company_config, 'business_hours', 'Lun-Vie 9:00-18:00'),
+            'contact_email': getattr(self.company_config, 'contact_email', 'info@empresa.com'),
+            'contact_phone': getattr(self.company_config, 'contact_phone', '+57 300 000 0000'),
+            'services': ', '.join(self.company_config.services[:5]) if self.company_config.services else 'servicios varios',
+        }
+        
+        # Agregar variables adicionales pasadas como kwargs
+        variables.update(kwargs)
+        
+        # Reemplazar variables en el prompt (manteniendo las que no tienen valor)
+        processed_prompt = prompt
+        for key, value in variables.items():
+            placeholder = f'{{{key}}}'
+            if placeholder in processed_prompt:
+                processed_prompt = processed_prompt.replace(placeholder, str(value))
+        
+        return processed_prompt
+    
     # ============================================================================
     # MÉTODOS PÚBLICOS PARA GESTIÓN DE PROMPTS
     # ============================================================================
@@ -191,13 +264,22 @@ class BaseAgent(ABC):
         try:
             agent_key = self._get_agent_key()
             
-            # Usar el manager de Redis para guardar
-            success = self.prompt_manager.save_custom_prompt(
-                self.company_config.company_id,
-                agent_key,
-                custom_template,
-                modified_by
-            )
+            # Usar el nuevo PromptManager si está disponible
+            if hasattr(self, 'prompt_manager') and isinstance(self.prompt_manager, PromptManager):
+                success = self.prompt_manager.save_custom_prompt(
+                    self.company_config.company_id,
+                    agent_key,
+                    custom_template,
+                    modified_by
+                )
+            else:
+                # Usar el manager de Redis original
+                success = self.prompt_redis_manager.save_custom_prompt(
+                    self.company_config.company_id,
+                    agent_key,
+                    custom_template,
+                    modified_by
+                )
             
             if success:
                 logger.info(f"[{self.company_config.company_id}] Custom prompt saved to Redis for {agent_key}")
@@ -215,11 +297,18 @@ class BaseAgent(ABC):
         try:
             agent_key = self._get_agent_key()
             
-            # Usar el manager de Redis para eliminar
-            success = self.prompt_manager.delete_custom_prompt(
-                self.company_config.company_id,
-                agent_key
-            )
+            # Usar el nuevo PromptManager si está disponible
+            if hasattr(self, 'prompt_manager') and isinstance(self.prompt_manager, PromptManager):
+                success = self.prompt_manager.delete_custom_prompt(
+                    self.company_config.company_id,
+                    agent_key
+                )
+            else:
+                # Usar el manager de Redis original
+                success = self.prompt_redis_manager.delete_custom_prompt(
+                    self.company_config.company_id,
+                    agent_key
+                )
             
             if success:
                 logger.info(f"[{self.company_config.company_id}] Custom prompt removed from Redis for {agent_key}")
@@ -236,7 +325,15 @@ class BaseAgent(ABC):
         """Verificar si el agente tiene un prompt personalizado en Redis"""
         try:
             agent_key = self._get_agent_key()
-            return self.prompt_manager.has_custom_prompt(
+            
+            # Intentar con ambos managers
+            if hasattr(self, 'prompt_manager') and isinstance(self.prompt_manager, PromptManager):
+                # El nuevo PromptManager no tiene has_custom_prompt, verificar si hay prompt custom
+                prompt = self.prompt_manager.get_prompt(self.company_config.company_id, agent_key)
+                redis_key = f"{self.company_config.company_id}:prompts:{agent_key}"
+                return self.prompt_manager.redis.exists(redis_key) > 0
+            
+            return self.prompt_redis_manager.has_custom_prompt(
                 self.company_config.company_id,
                 agent_key
             )
@@ -248,7 +345,21 @@ class BaseAgent(ABC):
         """Obtener información del prompt actual"""
         try:
             agent_key = self._get_agent_key()
-            info = self.prompt_manager.get_modification_info(
+            
+            # Intentar con el nuevo PromptManager
+            if hasattr(self, 'prompt_manager') and isinstance(self.prompt_manager, PromptManager):
+                all_prompts = self.prompt_manager.get_all_prompts(self.company_config.company_id)
+                if agent_key in all_prompts:
+                    info = all_prompts[agent_key]
+                    info.update({
+                        "agent_name": agent_key,
+                        "company_id": self.company_config.company_id,
+                        "has_custom": info.get('is_custom', False)
+                    })
+                    return info
+            
+            # Fallback al manager original
+            info = self.prompt_redis_manager.get_modification_info(
                 self.company_config.company_id,
                 agent_key
             )
