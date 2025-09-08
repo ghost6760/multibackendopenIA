@@ -699,8 +699,8 @@ def get_prompts():
         
         return create_success_response({
             "company_id": company_id,
-            "prompts": prompts_data,
-            "source": "redis_with_fallback"  # 🆕 Indicar fuente de datos
+            "agents": prompts_data,  # ✅ Compatible con frontend
+            "source": "redis_with_fallback"
         })
         
     except Exception as e:
