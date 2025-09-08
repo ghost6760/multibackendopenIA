@@ -45,7 +45,7 @@ class PromptManager:
         except Exception as e:
             logger.error(f"Error loading default prompts: {str(e)}")
             self.default_prompts = {}
-    
+
     def get_prompt(self, company_id: str, agent_name: str) -> Optional[str]:
         """
         Obtener prompt para un agente específico
@@ -58,7 +58,14 @@ class PromptManager:
             
             if custom_data:
                 try:
-                    data = json.loads(custom_data.decode('utf-8'))
+                    # Verificar si custom_data es bytes o string
+                    if isinstance(custom_data, bytes):
+                        custom_data_str = custom_data.decode('utf-8')
+                    else:
+                        custom_data_str = custom_data
+                    
+                    # Intentar parsear como JSON
+                    data = json.loads(custom_data_str)
                     if isinstance(data, dict) and data.get('template'):
                         logger.info(f"[{company_id}] Using custom prompt from Redis for {agent_name}")
                         return data['template']
@@ -66,7 +73,11 @@ class PromptManager:
                     # Si no es JSON, asumir que es string directo (compatibilidad)
                     if custom_data:
                         logger.info(f"[{company_id}] Using custom prompt from Redis for {agent_name} (legacy format)")
-                        return custom_data.decode('utf-8')
+                        # Verificar si es bytes antes de decodificar
+                        if isinstance(custom_data, bytes):
+                            return custom_data.decode('utf-8')
+                        else:
+                            return custom_data
             
             # Si no hay en Redis, buscar en los prompts por defecto
             if company_id in self.default_prompts:
@@ -86,6 +97,7 @@ class PromptManager:
         except Exception as e:
             logger.error(f"Error getting prompt for {company_id}/{agent_name}: {str(e)}")
             return None
+
     
     def save_custom_prompt(self, company_id: str, agent_name: str, prompt: str, modified_by: str = "admin") -> bool:
         """Guardar un prompt personalizado en Redis"""
@@ -141,8 +153,14 @@ class PromptManager:
             
             if custom_data:
                 try:
+                    # Verificar si es bytes o string
+                    if isinstance(custom_data, bytes):
+                        custom_data_str = custom_data.decode('utf-8')
+                    else:
+                        custom_data_str = custom_data
+                    
                     # Intentar parsear como JSON
-                    data = json.loads(custom_data.decode('utf-8'))
+                    data = json.loads(custom_data_str)
                     if isinstance(data, dict):
                         prompts[agent_name] = {
                             'prompt': data.get('template', default_prompt),
@@ -155,7 +173,7 @@ class PromptManager:
                     else:
                         # Si no es dict, asumir string directo
                         prompts[agent_name] = {
-                            'prompt': custom_data.decode('utf-8'),
+                            'prompt': custom_data_str,
                             'is_custom': True,
                             'source': 'redis',
                             'modified_at': None,
@@ -164,8 +182,13 @@ class PromptManager:
                         }
                 except (json.JSONDecodeError, AttributeError):
                     # Si no es JSON válido, usar como string
+                    if isinstance(custom_data, bytes):
+                        prompt_str = custom_data.decode('utf-8')
+                    else:
+                        prompt_str = custom_data or default_prompt
+                    
                     prompts[agent_name] = {
-                        'prompt': custom_data.decode('utf-8') if custom_data else default_prompt,
+                        'prompt': prompt_str,
                         'is_custom': True,
                         'source': 'redis',
                         'modified_at': None,
