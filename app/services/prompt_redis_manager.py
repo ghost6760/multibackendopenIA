@@ -23,7 +23,7 @@ class PromptRedisManager:
     PROMPTS_VERSION_KEY = "prompts_version:"
     
     # TTL para prompts (30 días - son configuraciones estables)
-    PROMPTS_TTL = 30 * 24 * 3600  
+    PROMPTS_TTL = None
     
     def __init__(self):
         self.redis_client = get_redis_client()
