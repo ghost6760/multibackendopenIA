@@ -7,6 +7,8 @@ from app.config.company_config import get_company_manager
 from app.utils.decorators import handle_errors, require_api_key
 from app.utils.helpers import create_success_response, create_error_response
 from app.services.prompt_redis_manager import get_prompt_redis_manager
+from app.services.openai_service import OpenAIService
+from app.services.prompt_manager import PromptManager
 from typing import Optional
 import logging
 import time
@@ -815,52 +817,83 @@ def reset_prompt(agent_name: str):
         return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
 
 
-@bp.route('/prompts/<agent_name>/preview', methods=['POST'])
-@handle_errors
-def preview_prompt(agent_name: str):
-    """Vista previa de prompt sin guardar (usando Redis para obtener contexto)"""
+@admin_bp.route('/api/admin/prompts/<agent_name>/preview', methods=['POST'])
+def preview_prompt(agent_name):
+    """Preview del prompt procesado con variables"""
     try:
         data = request.get_json()
-        company_id = data.get('company_id') or _get_company_id_from_request()
-        prompt_template = data.get('prompt_template')
-        test_message = data.get('test_message', '¿Cuánto cuesta un tratamiento?')
-        
-        if not company_id:
-            return create_error_response("company_id is required", 400)
-        
-        if not prompt_template:
-            return create_error_response("prompt_template is required", 400)
+        company_id = data.get('company_id', request.headers.get('X-Company-ID', 'benova'))
+        prompt = data.get('prompt', '')
         
         logger.info(f"Previewing prompt for {agent_name} in company {company_id}")
         
-        # Obtener configuración de empresa
-        company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        # Crear instancia del servicio OpenAI
+        openai_service = OpenAIService()
         
-        company_config = company_manager.get_company_config(company_id)
+        # Obtener la configuración de la empresa
+        company_config = current_app.config.get('COMPANIES_CONFIG', {}).get(company_id, {})
         
-        # Simular respuesta del agente
-        openai_service = get_openai_service()
-        simulated_response = _simulate_agent_response(
-            agent_name, 
-            company_config, 
-            prompt_template,
-            test_message,
-            openai_service
+        # Variables de sustitución basadas en el agente
+        variables = {
+            'company_name': company_config.get('name', 'Empresa'),
+            'business_hours': company_config.get('business_hours', 'Lun-Vie 9:00-18:00'),
+            'services': ', '.join([s['name'] for s in company_config.get('services', [])[:5]]) if company_config.get('services') else 'servicios varios',
+            'contact_email': company_config.get('contact_email', 'info@empresa.com'),
+            'contact_phone': company_config.get('contact_phone', '+57 300 000 0000'),
+            'question': '[Pregunta del usuario]',
+            'context': '[Información contextual del RAG]',
+            'chat_history': '[Historial de conversación]',
+            'emergency_protocols': '[Protocolos de emergencia]',
+            'schedule_context': '[Información de disponibilidad]'
+        }
+        
+        # Procesar el prompt con las variables
+        processed_prompt = prompt
+        for key, value in variables.items():
+            processed_prompt = processed_prompt.replace(f'{{{key}}}', value)
+        
+        # Simular una respuesta del agente
+        test_message = "Hola, ¿me puedes ayudar?"
+        
+        # Ajustar el mensaje de prueba según el tipo de agente
+        if 'router' in agent_name.lower():
+            test_message = "Quiero información sobre los servicios disponibles"
+        elif 'sales' in agent_name.lower():
+            test_message = "¿Cuáles son los precios de sus servicios?"
+        elif 'emergency' in agent_name.lower():
+            test_message = "Tengo un problema urgente con mi tratamiento"
+        elif 'schedule' in agent_name.lower():
+            test_message = "Quiero agendar una cita para mañana"
+        elif 'support' in agent_name.lower():
+            test_message = "¿Cuál es el horario de atención?"
+        
+        # Reemplazar la variable {question} con el mensaje de prueba
+        test_prompt = processed_prompt.replace('[Pregunta del usuario]', test_message)
+        
+        response = openai_service.create_chat_completion(
+            messages=[
+                {"role": "system", "content": test_prompt},
+                {"role": "user", "content": test_message}
+            ],
+            temperature=0.7,
+            max_tokens=200
         )
         
-        return create_success_response({
-            "agent_name": agent_name,
-            "company_id": company_id,
-            "test_message": test_message,
-            "simulated_response": simulated_response,
-            "prompt_preview": prompt_template[:200] + "..." if len(prompt_template) > 200 else prompt_template
+        return jsonify({
+            'success': True,
+            'processed_prompt': processed_prompt,
+            'test_message': test_message,
+            'sample_response': response
         })
         
     except Exception as e:
-        logger.error(f"Error previewing prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
+        logger.error(f"Error previewing prompt: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @bp.route('/prompts/export', methods=['GET'])
