@@ -22,7 +22,7 @@ class PromptRedisManager:
     DEFAULT_PROMPTS_KEY = "default_prompts:"
     PROMPTS_VERSION_KEY = "prompts_version:"
     
-    # TTL para prompts (30 días - son configuraciones estables)
+    # TTL para prompts - Sin expiración (persistencia permanente)
     PROMPTS_TTL = None
     
     def __init__(self):
@@ -62,9 +62,9 @@ class PromptRedisManager:
                 # Guardar cada prompt por defecto
                 for agent_name, template in defaults.items():
                     key = self._get_default_prompt_key(agent_name)
-                    self.redis_client.setex(
+                    # Usar set sin TTL para persistencia permanente
+                    self.redis_client.set(
                         key,
-                        self.PROMPTS_TTL,
                         json.dumps({
                             "template": template,
                             "is_default": True,
@@ -73,7 +73,7 @@ class PromptRedisManager:
                     )
                 
                 # Marcar como cargado
-                self.redis_client.setex(version_key, self.PROMPTS_TTL, "1")
+                self.redis_client.set(version_key, "1")
                 logger.info("Default prompts loaded into Redis")
                 
         except Exception as e:
@@ -99,11 +99,10 @@ class PromptRedisManager:
                 "agent_name": agent_name
             }
             
-            # Guardar en Redis con TTL
+            # Guardar en Redis sin TTL para persistencia permanente
             key = self._get_prompt_key(company_id, agent_name)
-            self.redis_client.setex(
+            self.redis_client.set(
                 key,
-                self.PROMPTS_TTL,
                 json.dumps(prompt_data)
             )
             
@@ -164,9 +163,9 @@ class PromptRedisManager:
                 }
                 
                 key = self._get_prompt_key(company_id, agent_name)
-                self.redis_client.setex(
+                # Usar set sin TTL para persistencia permanente
+                self.redis_client.set(
                     key,
-                    self.PROMPTS_TTL,
                     json.dumps(prompt_data)
                 )
             else:
@@ -283,9 +282,9 @@ class PromptRedisManager:
             if default_prompt:
                 # Guardar como referencia por defecto
                 default_key = self._get_default_prompt_key(agent_name)
-                self.redis_client.setex(
+                # Usar set sin TTL para persistencia permanente
+                self.redis_client.set(
                     default_key,
-                    self.PROMPTS_TTL,
                     json.dumps({
                         "template": default_prompt,
                         "is_default": True,
@@ -324,7 +323,7 @@ class PromptRedisManager:
             logger.warning(f"Error getting default from agent: {e}")
             return None
     
-    def _get_system_default_prompt(self, agent_name: str) -> Optional[str]:
+    def _get_default_prompt_from_system(self, agent_name: str) -> Optional[str]:
         """Obtener prompt por defecto del sistema"""
         # Prompts por defecto básicos del sistema
         defaults = {
@@ -418,11 +417,10 @@ class PromptRedisManager:
             agent_data = company_prompts.get(agent_name, {})
             
             if agent_data and agent_data.get('is_custom'):
-                # Migrar a Redis
+                # Migrar a Redis sin TTL para persistencia permanente
                 key = self._get_prompt_key(company_id, agent_name)
-                self.redis_client.setex(
+                self.redis_client.set(
                     key,
-                    self.PROMPTS_TTL,
                     json.dumps(agent_data)
                 )
                 logger.info(f"Migrated prompt from file to Redis: {company_id}/{agent_name}")
@@ -450,13 +448,12 @@ class PromptRedisManager:
             
             company_prompts = custom_prompts.get(company_id, {})
             
-            # Migrar todos a Redis
+            # Migrar todos a Redis sin TTL para persistencia permanente
             for agent_name, agent_data in company_prompts.items():
                 if agent_data:
                     key = self._get_prompt_key(company_id, agent_name)
-                    self.redis_client.setex(
+                    self.redis_client.set(
                         key,
-                        self.PROMPTS_TTL,
                         json.dumps(agent_data)
                     )
             
