@@ -6,24 +6,25 @@ from langchain.schema import BaseMessage
 from langchain.schema.output_parser import StrOutputParser
 from app.config.company_config import CompanyConfig
 from app.services.openai_service import OpenAIService
+from app.services.prompt_redis_manager import get_prompt_redis_manager
 import logging
-
-# 🆕 AGREGAR ESTOS IMPORTS
 import json
 import os
 from datetime import datetime
 
-
 logger = logging.getLogger(__name__)
 
 class BaseAgent(ABC):
-    """Clase base para todos los agentes del sistema multi-tenant"""
+    """Clase base para todos los agentes del sistema multi-tenant con persistencia en Redis"""
     
     def __init__(self, company_config: CompanyConfig, openai_service: OpenAIService):
         self.company_config = company_config
         self.openai_service = openai_service
         self.chat_model = openai_service.get_chat_model()
         self.agent_name = self.__class__.__name__
+        
+        # Inicializar manager de prompts de Redis
+        self.prompt_manager = get_prompt_redis_manager()
         
         # Inicializar el agente específico con soporte para prompts personalizados
         self._initialize_agent()
@@ -34,19 +35,19 @@ class BaseAgent(ABC):
         pass
     
     def _create_prompt_template(self) -> ChatPromptTemplate:
-        """Crear template con soporte para prompts personalizados"""
+        """Crear template con soporte para prompts personalizados desde Redis"""
         
-        # 1. Intentar cargar prompt personalizado
+        # 1. Intentar cargar prompt personalizado desde Redis primero
         custom_template = self._load_custom_prompt()
         if custom_template:
             return self._build_custom_prompt_template(custom_template)
         
-        # 2. Usar prompt por defecto del agente
+        # 2. Si no hay personalizado, usar el por defecto del agente
         return self._create_default_prompt_template()
     
     @abstractmethod
     def _create_default_prompt_template(self) -> ChatPromptTemplate:
-        """Crear el template de prompts por defecto del agente - DEBE ser implementado por cada agente"""
+        """Crear el template de prompts por defecto para el agente"""
         pass
     
     def invoke(self, inputs: Dict[str, Any]) -> str:
@@ -89,51 +90,78 @@ class BaseAgent(ABC):
         """Respuesta de respaldo en caso de error"""
         return f"Disculpa, tuve un problema técnico. Por favor intenta de nuevo o contacta con {self.company_config.company_name}."
 
+    # ============================================================================
+    # MÉTODOS PARA GESTIÓN DE PROMPTS CON REDIS
+    # ============================================================================
+    
     def _load_custom_prompt(self) -> Optional[str]:
-        """Cargar prompt personalizado desde custom_prompts.json"""
+        """Cargar prompt personalizado desde Redis (con fallback a archivo JSON)"""
         try:
-            # Construir path del archivo
+            agent_key = self._get_agent_key()
+            
+            # Primero intentar cargar desde Redis usando el manager
+            custom_template = self.prompt_manager.load_custom_prompt(
+                self.company_config.company_id, 
+                agent_key
+            )
+            
+            if custom_template:
+                logger.info(f"[{self.company_config.company_id}] Using custom prompt from Redis for {agent_key}")
+                return custom_template
+            
+            # Si no está en Redis, intentar fallback al archivo (para migración gradual)
+            return self._load_custom_prompt_from_file()
+            
+        except Exception as e:
+            logger.warning(f"Error loading custom prompt for {self.company_config.company_id}: {e}")
+            # En caso de error, intentar cargar desde archivo
+            return self._load_custom_prompt_from_file()
+    
+    def _load_custom_prompt_from_file(self) -> Optional[str]:
+        """Cargar prompt personalizado desde archivo JSON (método legacy para compatibilidad)"""
+        try:
             custom_prompts_file = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
                 'custom_prompts.json'
             )
             
             if not os.path.exists(custom_prompts_file):
-                logger.debug(f"Custom prompts file not found: {custom_prompts_file}")
                 return None
             
-            # Cargar archivo JSON
             with open(custom_prompts_file, 'r', encoding='utf-8') as f:
                 custom_prompts = json.load(f)
             
-            # Obtener prompts de la empresa
             company_prompts = custom_prompts.get(self.company_config.company_id, {})
-            
-            # Obtener prompt del agente específico
             agent_key = self._get_agent_key()
             agent_data = company_prompts.get(agent_key, {})
             
-            # Retornar template personalizado si existe y no es null
             custom_template = agent_data.get('template')
             if custom_template:
-                logger.info(f"[{self.company_config.company_id}] Using custom prompt for {agent_key}")
+                # Si encontramos en archivo, migrar automáticamente a Redis
+                logger.info(f"Migrating prompt from file to Redis: {self.company_config.company_id}/{agent_key}")
+                self.prompt_manager.save_custom_prompt(
+                    self.company_config.company_id,
+                    agent_key,
+                    custom_template,
+                    agent_data.get('modified_by', 'migration')
+                )
                 return custom_template
             
             return None
             
         except Exception as e:
-            logger.warning(f"Error loading custom prompt for {self.company_config.company_id}: {e}")
+            logger.warning(f"Error loading custom prompt from file: {e}")
             return None
-
+    
     def _get_agent_key(self) -> str:
-        """Obtener clave del agente para custom_prompts.json"""
+        """Obtener clave del agente para custom_prompts"""
         class_name = self.__class__.__name__.lower()
         # Convertir "SalesAgent" -> "sales_agent"
         if class_name.endswith('agent'):
             return class_name.replace('agent', '_agent')
         else:
             return f"{class_name}_agent"
-
+    
     def _build_custom_prompt_template(self, custom_template: str) -> ChatPromptTemplate:
         """Construir ChatPromptTemplate desde template personalizado"""
         try:
@@ -153,105 +181,129 @@ class BaseAgent(ABC):
             logger.error(f"Error building custom prompt template: {e}")
             # Fallback al método por defecto
             return self._create_default_prompt_template()
-
+    
+    # ============================================================================
+    # MÉTODOS PÚBLICOS PARA GESTIÓN DE PROMPTS
+    # ============================================================================
+    
     def save_custom_prompt(self, custom_template: str, modified_by: str = "admin") -> bool:
-        """Guardar prompt personalizado para este agente"""
+        """Guardar prompt personalizado en Redis"""
         try:
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            # Cargar prompts existentes o crear estructura vacía
-            if os.path.exists(custom_prompts_file):
-                with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                    custom_prompts = json.load(f)
-            else:
-                custom_prompts = {}
-            
-            # Asegurar que existe la estructura para la empresa
-            company_id = self.company_config.company_id
-            if company_id not in custom_prompts:
-                custom_prompts[company_id] = {}
-            
-            # Obtener clave del agente
             agent_key = self._get_agent_key()
             
-            # Asegurar que existe la estructura para el agente
-            if agent_key not in custom_prompts[company_id]:
-                custom_prompts[company_id][agent_key] = {
-                    "template": None,
-                    "is_custom": False,
-                    "modified_at": None,
-                    "modified_by": None,
-                    "default_template": None
-                }
+            # Usar el manager de Redis para guardar
+            success = self.prompt_manager.save_custom_prompt(
+                self.company_config.company_id,
+                agent_key,
+                custom_template,
+                modified_by
+            )
             
-            # Actualizar con el nuevo prompt personalizado
-            custom_prompts[company_id][agent_key].update({
-                "template": custom_template,
-                "is_custom": True,
-                "modified_at": datetime.utcnow().isoformat() + "Z",
-                "modified_by": modified_by
-            })
+            if success:
+                logger.info(f"[{self.company_config.company_id}] Custom prompt saved to Redis for {agent_key}")
+                # Recargar el template del agente para usar el nuevo prompt
+                self.prompt_template = self._create_prompt_template()
             
-            # Guardar archivo actualizado
-            with open(custom_prompts_file, 'w', encoding='utf-8') as f:
-                json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"[{company_id}] Custom prompt saved for {agent_key}")
-            return True
+            return success
             
         except Exception as e:
             logger.error(f"Error saving custom prompt: {e}")
             return False
-
+    
     def remove_custom_prompt(self) -> bool:
-        """Remover prompt personalizado (volver a default)"""
+        """Remover prompt personalizado (volver a default) usando Redis"""
         try:
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            if not os.path.exists(custom_prompts_file):
-                return True  # No hay archivo, ya está "limpio"
-            
-            # Cargar prompts
-            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                custom_prompts = json.load(f)
-            
-            # Obtener claves
-            company_id = self.company_config.company_id
             agent_key = self._get_agent_key()
             
-            # Limpiar prompt personalizado
-            if (company_id in custom_prompts and 
-                agent_key in custom_prompts[company_id]):
-                custom_prompts[company_id][agent_key].update({
-                    "template": None,
-                    "is_custom": False,
-                    "modified_at": datetime.utcnow().isoformat() + "Z",
-                    "modified_by": "system_reset"
-                })
+            # Usar el manager de Redis para eliminar
+            success = self.prompt_manager.delete_custom_prompt(
+                self.company_config.company_id,
+                agent_key
+            )
             
-            # Guardar archivo actualizado
-            with open(custom_prompts_file, 'w', encoding='utf-8') as f:
-                json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
+            if success:
+                logger.info(f"[{self.company_config.company_id}] Custom prompt removed from Redis for {agent_key}")
+                # Recargar el template del agente para usar el prompt por defecto
+                self.prompt_template = self._create_default_prompt_template()
             
-            logger.info(f"[{company_id}] Custom prompt removed for {agent_key}")
-            return True
+            return success
             
         except Exception as e:
             logger.error(f"Error removing custom prompt: {e}")
             return False
-
+    
+    def has_custom_prompt(self) -> bool:
+        """Verificar si el agente tiene un prompt personalizado en Redis"""
+        try:
+            agent_key = self._get_agent_key()
+            return self.prompt_manager.has_custom_prompt(
+                self.company_config.company_id,
+                agent_key
+            )
+        except Exception as e:
+            logger.warning(f"Error checking custom prompt: {e}")
+            return False
+    
+    def get_prompt_info(self) -> Dict[str, Any]:
+        """Obtener información del prompt actual"""
+        try:
+            agent_key = self._get_agent_key()
+            info = self.prompt_manager.get_modification_info(
+                self.company_config.company_id,
+                agent_key
+            )
+            
+            # Añadir información adicional
+            info.update({
+                "agent_name": agent_key,
+                "company_id": self.company_config.company_id,
+                "has_custom": self.has_custom_prompt()
+            })
+            
+            return info
+            
+        except Exception as e:
+            logger.warning(f"Error getting prompt info: {e}")
+            return {
+                "agent_name": self._get_agent_key(),
+                "company_id": self.company_config.company_id,
+                "has_custom": False,
+                "error": str(e)
+            }
+    
+    def get_current_prompt_template(self) -> str:
+        """Obtener el template del prompt actual (personalizado o default)"""
+        try:
+            # Primero intentar obtener personalizado desde Redis
+            custom_template = self._load_custom_prompt()
+            if custom_template:
+                return custom_template
+            
+            # Si no hay personalizado, obtener el default
+            default_template = self._create_default_prompt_template()
+            if hasattr(default_template, 'messages'):
+                # Extraer el contenido del system message
+                for message in default_template.messages:
+                    if hasattr(message, 'prompt') and hasattr(message.prompt, 'template'):
+                        return message.prompt.template
+            
+            return "Default prompt template"
+            
+        except Exception as e:
+            logger.warning(f"Error getting current prompt template: {e}")
+            return "Error retrieving prompt template"
+    
+    # ============================================================================
+    # MÉTODOS DE LOGGING Y MONITOREO
+    # ============================================================================
+    
     def _log_agent_activity(self, action: str, details: Dict[str, Any] = None):
         """Log de actividad del agente con contexto de empresa"""
         log_data = {
             "agent": self.agent_name,
             "company_id": self.company_config.company_id,
-            "action": action
+            "action": action,
+            "has_custom_prompt": self.has_custom_prompt()
         }
         if details:
             log_data.update(details)
