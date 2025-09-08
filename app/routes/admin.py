@@ -674,7 +674,7 @@ def get_prompts():
                     prompt_info = all_prompts.get(agent_name, {})
                     
                     prompts_data[agent_name] = {
-                        "current": current_prompt or prompt_info.get('template') or prompt_info.get('default_template'),
+                        "current": current_prompt or prompt_info.get('template') or prompt_info.get('default_template') or "Prompt no configurado",
                         "is_custom": prompt_info.get('is_custom', False),
                         "modified_at": prompt_info.get('modified_at'),
                         "modified_by": prompt_info.get('modified_by')
