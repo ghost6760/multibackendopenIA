@@ -817,7 +817,7 @@ def reset_prompt(agent_name: str):
         return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
 
 
-@admin_bp.route('/api/admin/prompts/<agent_name>/preview', methods=['POST'])
+@bp.route('/api/admin/prompts/<agent_name>/preview', methods=['POST'])
 def preview_prompt(agent_name):
     """Preview del prompt procesado con variables"""
     try:
