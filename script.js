@@ -2652,7 +2652,7 @@ async function previewPrompt(agentName) {
         addToLog(`Previewing prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
         // CORRECCIÓN: Asegurar que se envía como objeto
-        const response = await apiRequest(`/api/admin/prompts/${agentName}/preview`, {
+        const response = await apiRequest('/api/admin/prompts/preview', {
             method: 'POST',
             body: {
                 company_id: currentCompanyId,
@@ -2747,6 +2747,5 @@ window.closeModal = closeModal; // Ya existe, pero importante para el modal de p
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
-
 
 
