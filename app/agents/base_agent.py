@@ -15,21 +15,52 @@ from app.services.prompt_service import get_prompt_service
 
 logger = logging.getLogger(__name__)
 
-class BaseAgent:
-    """Agente base con soporte para prompts personalizados en PostgreSQL"""
+class BaseAgent(ABC):
+    """Agente base con soporte para prompts personalizados en PostgreSQL - FIXED"""
     
-    def __init__(self, company_config):
+    def __init__(self, company_config, openai_service=None):
+        """
+        Fixed constructor to accept both company_config and optional openai_service
+        
+        Args:
+            company_config: CompanyConfig object
+            openai_service: OpenAIService object (optional, will be created if None)
+        """
         self.company_config = company_config
+        
+        # Handle OpenAI service - create if not provided for backward compatibility
+        if openai_service is not None:
+            self.openai_service = openai_service
+            self.chat_model = openai_service.get_chat_model()
+        else:
+            # Import here to avoid circular imports
+            from app.services.openai_service import OpenAIService
+            self.openai_service = OpenAIService()
+            self.chat_model = self.openai_service.get_chat_model()
+        
+        self.agent_name = self.__class__.__name__
         self.prompt_service = get_prompt_service()
         
         # Cache del prompt para evitar consultas repetidas
         self._cached_prompt = None
         self._cache_timestamp = None
         
+        # Initialize the specific agent
+        self._initialize_agent()
+    
+    @abstractmethod
+    def _initialize_agent(self):
+        """Inicializar configuración específica del agente - MUST be implemented by subclasses"""
+        pass
+    
+    @abstractmethod
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """Crear el template de prompts por defecto del agente - MUST be implemented by subclasses"""
+        pass
+    
     def get_prompt_template(self) -> ChatPromptTemplate:
         """
         Obtener template de prompt personalizado o por defecto
-        Mantiene la misma API que antes
         """
         try:
             # Verificar cache (válido por 5 minutos)
@@ -62,25 +93,6 @@ class BaseAgent:
             # Fallback al template por defecto codificado
             return self._create_default_prompt_template()
 
-    def _load_custom_prompt(self) -> Optional[str]:
-        """
-        DEPRECATED: Mantener por compatibilidad
-        Usar get_prompt_template() en su lugar
-        """
-        try:
-            agent_key = self._get_agent_key()
-            prompt_data = self.prompt_service.get_prompt(
-                self.company_config.company_id, agent_key
-            )
-            
-            if prompt_data['is_custom'] and prompt_data['template']:
-                return prompt_data['template']
-            return None
-            
-        except Exception as e:
-            logger.warning(f"Error in _load_custom_prompt: {e}")
-            return None
-
     def _get_agent_key(self) -> str:
         """Obtener clave del agente para identificación en BD"""
         class_name = self.__class__.__name__.lower()
@@ -93,143 +105,60 @@ class BaseAgent:
     def _build_custom_prompt_template(self, custom_template: str) -> ChatPromptTemplate:
         """Construir ChatPromptTemplate desde template personalizado"""
         try:
-            # Determinar si el template necesita MessagesPlaceholder para chat_history
-            if '{chat_history}' in custom_template:
-                return ChatPromptTemplate.from_messages([
-                    ("system", custom_template),
-                    MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{question}")
-                ])
-            else:
-                return ChatPromptTemplate.from_messages([
-                    ("system", custom_template),
-                    ("human", "{question}")
-                ])
+            # Intentar parsear como template simple
+            return ChatPromptTemplate.from_messages([
+                ("system", custom_template),
+                ("human", "{question}")
+            ])
         except Exception as e:
             logger.error(f"Error building custom prompt template: {e}")
-            # Fallback al método por defecto
             return self._create_default_prompt_template()
-
-    def _create_default_prompt_template(self) -> ChatPromptTemplate:
-        """
-        Crear template por defecto - DEBE ser implementado por cada agente
-        """
-        raise NotImplementedError("Subclases deben implementar _create_default_prompt_template()")
-
-    def save_custom_prompt(self, custom_template: str, modified_by: str = "admin") -> bool:
-        """Guardar prompt personalizado para este agente"""
+    
+    def invoke(self, inputs: Dict[str, Any]) -> str:
+        """Método principal para invocar el agente"""
         try:
-            agent_key = self._get_agent_key()
-            success = self.prompt_service.save_custom_prompt(
-                self.company_config.company_id, 
-                agent_key, 
-                custom_template, 
-                modified_by
-            )
+            # Agregar contexto de empresa
+            inputs = self._enhance_inputs_with_company_context(inputs)
             
-            if success:
-                # Invalidar cache
-                self._cached_prompt = None
-                self._cache_timestamp = None
-                logger.info(f"[{self.company_config.company_id}] Custom prompt saved for {agent_key}")
+            # Ejecutar cadena del agente
+            result = self._execute_agent_chain(inputs)
             
-            return success
+            # Post-procesar respuesta
+            return self._post_process_response(result, inputs)
             
         except Exception as e:
-            logger.error(f"Error saving custom prompt: {e}")
-            return False
-
-    def remove_custom_prompt(self) -> bool:
-        """Remover prompt personalizado (volver a default)"""
-        try:
-            agent_key = self._get_agent_key()
-            success = self.prompt_service.delete_custom_prompt(
-                self.company_config.company_id, 
-                agent_key
-            )
-            
-            if success:
-                # Invalidar cache
-                self._cached_prompt = None
-                self._cache_timestamp = None
-                logger.info(f"[{self.company_config.company_id}] Custom prompt removed for {agent_key}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"Error removing custom prompt: {e}")
-            return False
-
-    def has_custom_prompt(self) -> bool:
-        """Verificar si este agente tiene prompt personalizado"""
-        try:
-            agent_key = self._get_agent_key()
-            return self.prompt_service.has_custom_prompt(
-                self.company_config.company_id, 
-                agent_key
-            )
-        except Exception as e:
-            logger.error(f"Error checking custom prompt: {e}")
-            return False
-
-    def get_prompt_info(self) -> Dict[str, Any]:
-        """Obtener información completa del prompt actual"""
-        try:
-            agent_key = self._get_agent_key()
-            return self.prompt_service.get_prompt(
-                self.company_config.company_id, 
-                agent_key
-            )
-        except Exception as e:
-            logger.error(f"Error getting prompt info: {e}")
-            return {
-                'template': None,
-                'is_custom': False,
-                'version': 1,
-                'modified_at': None,
-                'modified_by': None
-            }
-
-    def get_prompt_history(self) -> list:
-        """Obtener historial de versiones del prompt"""
-        try:
-            agent_key = self._get_agent_key()
-            return self.prompt_service.get_prompt_history(
-                self.company_config.company_id, 
-                agent_key
-            )
-        except Exception as e:
-            logger.error(f"Error getting prompt history: {e}")
-            return []
-
-    def restore_prompt_version(self, version: int, modified_by: str = "admin") -> bool:
-        """Restaurar una versión específica del prompt"""
-        try:
-            agent_key = self._get_agent_key()
-            success = self.prompt_service.restore_prompt_version(
-                self.company_config.company_id, 
-                agent_key, 
-                version, 
-                modified_by
-            )
-            
-            if success:
-                # Invalidar cache
-                self._cached_prompt = None
-                self._cache_timestamp = None
-                logger.info(f"[{self.company_config.company_id}] Prompt version {version} restored for {agent_key}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"Error restoring prompt version: {e}")
-            return False
-
-    def clear_prompt_cache(self):
-        """Limpiar cache del prompt (útil después de actualizaciones)"""
-        self._cached_prompt = None
-        self._cache_timestamp = None
-
+            logger.error(f"Error in {self.agent_name} for company {self.company_config.company_id}: {e}")
+            return self._get_fallback_response()
+    
+    def _enhance_inputs_with_company_context(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Enriquecer inputs con contexto de empresa"""
+        enhanced_inputs = inputs.copy()
+        enhanced_inputs.update({
+            "company_name": self.company_config.company_name,
+            "services": self.company_config.services,
+            "agent_name": getattr(self.company_config, 'sales_agent_name', 'Asistente'),
+            "company_id": self.company_config.company_id
+        })
+        return enhanced_inputs
+    
+    @abstractmethod
+    def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
+        """Ejecutar la cadena específica del agente - MUST be implemented by subclasses"""
+        pass
+    
+    def _post_process_response(self, response: str, inputs: Dict[str, Any]) -> str:
+        """Post-procesar respuesta del agente"""
+        return response
+    
+    def _get_fallback_response(self) -> str:
+        """Respuesta de respaldo en caso de error"""
+        return f"Disculpa, tuve un problema técnico. Por favor intenta de nuevo o contacta con {self.company_config.company_name}."
+    
+    def _log_agent_activity(self, activity: str, context: Dict[str, Any] = None):
+        """Log agent activity for debugging"""
+        context_str = f" - {context}" if context else ""
+        logger.debug(f"[{self.company_config.company_id}] {self.agent_name}: {activity}{context_str}")
+        
     # ============================================================================
     # MÉTODOS PARA COMPATIBILIDAD CON CÓDIGO EXISTENTE
     # ============================================================================
