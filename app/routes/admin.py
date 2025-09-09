@@ -6,7 +6,7 @@ from app.services.redis_service import get_redis_client
 from app.config.company_config import get_company_manager
 from app.utils.decorators import handle_errors, require_api_key
 from app.utils.helpers import create_success_response, create_error_response
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import time
 from app.services.prompt_service import get_prompt_service
