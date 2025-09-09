@@ -360,14 +360,35 @@ Mensaje del usuario: {{question}}"""
             return self.get_error_message()
     
     def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
-        """
-        Ejecutar la cadena específica del agente
-        Subclasses should override this method
-        """
-        # Default implementation for compatibility
-        question = inputs.get("question", "")
-        company_name = getattr(self.company_config, 'company_name', 'nuestro equipo')
-        return f"Hola, soy un asistente de {company_name}. Has preguntado: {question}. ¿En qué más puedo ayudarte?"
+        """Ejecutar cadena del agente con variables requeridas"""
+        try:
+            # Asegurar que company_name esté presente
+            enhanced_inputs = inputs.copy()
+            
+            # Agregar company_name si no está presente
+            if 'company_name' not in enhanced_inputs:
+                enhanced_inputs['company_name'] = getattr(
+                    self.company_config, 'company_name', 'nuestra empresa'
+                )
+            
+            # Agregar otras variables comunes que podrían necesitarse
+            if 'services' not in enhanced_inputs:
+                enhanced_inputs['services'] = getattr(
+                    self.company_config, 'services', 'nuestros servicios'
+                )
+            
+            # Ejecutar la cadena con variables completas
+            return self.chain.invoke(enhanced_inputs)
+            
+        except Exception as e:
+            logger.error(f"Error executing agent chain: {e}")
+            # Fallback response
+            return json.dumps({
+                "intent": "SUPPORT",
+                "confidence": 0.5,
+                "reasoning": f"Error en procesamiento: {e}",
+                "company_context": getattr(self.company_config, 'company_name', 'nuestra empresa')
+            })
     
     def invoke(self, inputs: Dict[str, Any]) -> str:
         """Método principal para invocar el agente (compatibilidad con LangChain)"""
