@@ -1235,3 +1235,335 @@ def prompt_service_health():
         return create_error_response(f"Service unhealthy: {str(e)}", 503)
 
 
+# Add these endpoints to your app/routes/admin.py file
+
+# ============================================================================
+# PROMPT MANAGEMENT ENDPOINTS - Add these to admin.py
+# ============================================================================
+
+@bp.route('/prompts', methods=['GET'])
+@handle_errors
+def get_prompts():
+    """Obtener prompts actuales de los agentes para una empresa"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        if not company_id:
+            logger.error("No company_id provided in request")
+            return create_error_response("company_id is required", 400)
+        
+        logger.info(f"Getting prompts for company: {company_id}")
+        
+        # Validar empresa
+        if not validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Obtener factory y agentes
+        factory = get_multi_agent_factory()
+        orchestrator = factory.get_orchestrator(company_id)
+        
+        if not orchestrator:
+            logger.error(f"Orchestrator not available for {company_id}")
+            return create_error_response(f"Orchestrator not available for {company_id}", 503)
+        
+        prompts_data = {}
+        agents_to_check = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
+        
+        # Get prompt service
+        try:
+            prompt_service = get_prompt_service()
+        except Exception as e:
+            logger.warning(f"Prompt service not available: {e}")
+            # Return default prompts structure
+            for agent_key in agents_to_check:
+                prompts_data[agent_key] = {
+                    "current_prompt": f"Default prompt for {agent_key} - Prompt service not available",
+                    "is_custom": False,
+                    "last_modified": None
+                }
+            
+            return create_success_response({
+                "company_id": company_id,
+                "agents": prompts_data,
+                "note": "Using fallback prompts - database not configured"
+            })
+        
+        # Load prompts from service
+        for agent_key in agents_to_check:
+            try:
+                prompt_data = prompt_service.get_prompt(company_id, agent_key)
+                
+                if prompt_data and prompt_data.get('template'):
+                    current_prompt = prompt_data['template']
+                    is_custom = prompt_data.get('is_custom', False)
+                    last_modified = prompt_data.get('modified_at')
+                else:
+                    # Fallback to agent's default prompt
+                    agent_name = agent_key.replace('_agent', '')
+                    if hasattr(orchestrator, 'agents') and agent_name in orchestrator.agents:
+                        agent_instance = orchestrator.agents[agent_name]
+                        if hasattr(agent_instance, '_create_default_prompt_template'):
+                            template = agent_instance._create_default_prompt_template()
+                            if hasattr(template, 'messages') and template.messages:
+                                current_prompt = str(template.messages[0].prompt.template)
+                            else:
+                                current_prompt = f"Default prompt for {agent_key}"
+                        else:
+                            current_prompt = f"Default prompt for {agent_key}"
+                    else:
+                        current_prompt = f"Default prompt for {agent_key}"
+                    
+                    is_custom = False
+                    last_modified = None
+                
+                prompts_data[agent_key] = {
+                    "current_prompt": current_prompt,
+                    "is_custom": is_custom,
+                    "last_modified": last_modified
+                }
+                
+            except Exception as e:
+                logger.warning(f"Error getting prompt for {agent_key}: {e}")
+                prompts_data[agent_key] = {
+                    "current_prompt": f"Error loading prompt for {agent_key}",
+                    "is_custom": False,
+                    "last_modified": None
+                }
+        
+        logger.info(f"Successfully loaded {len(prompts_data)} prompts for {company_id}")
+        
+        return create_success_response({
+            "company_id": company_id,
+            "agents": prompts_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_prompts: {e}")
+        return create_error_response(f"Internal server error: {e}", 500)
+
+@bp.route('/prompts/<agent_name>', methods=['PUT'])
+@handle_errors
+def update_prompt(agent_name):
+    """Actualizar prompt personalizado para un agente"""
+    try:
+        company_id = _get_company_id_from_request()
+        data = request.get_json()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        if not data or 'template' not in data:
+            return create_error_response("template is required", 400)
+        
+        # Validations
+        if not validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Convert agent_name to proper format (e.g., router -> router_agent)
+        if not agent_name.endswith('_agent'):
+            agent_key = f"{agent_name}_agent"
+        else:
+            agent_key = agent_name
+            
+        if not validate_agent_name(agent_key):
+            return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        template = data['template']
+        modified_by = data.get('modified_by', 'admin')
+        
+        # Get prompt service
+        try:
+            prompt_service = get_prompt_service()
+        except Exception as e:
+            return create_error_response("Prompt service not available - database not configured", 503)
+        
+        # Save the prompt
+        success = prompt_service.save_custom_prompt(
+            company_id, 
+            agent_key, 
+            template, 
+            modified_by
+        )
+        
+        if success:
+            # Clear cache for the agent
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            if orchestrator and hasattr(orchestrator, 'agents'):
+                agent_instance_name = agent_key.replace('_agent', '')
+                if agent_instance_name in orchestrator.agents:
+                    agent_instance = orchestrator.agents[agent_instance_name]
+                    if hasattr(agent_instance, 'clear_prompt_cache'):
+                        agent_instance.clear_prompt_cache()
+            
+            return create_success_response({
+                "message": f"Prompt updated successfully for {agent_key}",
+                "company_id": company_id,
+                "agent": agent_key
+            })
+        else:
+            return create_error_response("Failed to save prompt", 500)
+            
+    except Exception as e:
+        logger.error(f"Error updating prompt: {e}")
+        return create_error_response(f"Internal server error: {e}", 500)
+
+@bp.route('/prompts/<agent_name>', methods=['DELETE'])
+@handle_errors
+def reset_prompt(agent_name):
+    """Resetear prompt a default (eliminar personalización)"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        # Validations
+        if not validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Convert agent_name to proper format
+        if not agent_name.endswith('_agent'):
+            agent_key = f"{agent_name}_agent"
+        else:
+            agent_key = agent_name
+            
+        if not validate_agent_name(agent_key):
+            return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        # Get prompt service
+        try:
+            prompt_service = get_prompt_service()
+        except Exception as e:
+            return create_error_response("Prompt service not available - database not configured", 503)
+        
+        # Delete custom prompt
+        success = prompt_service.delete_custom_prompt(company_id, agent_key)
+        
+        if success:
+            # Clear cache
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            if orchestrator and hasattr(orchestrator, 'agents'):
+                agent_instance_name = agent_key.replace('_agent', '')
+                if agent_instance_name in orchestrator.agents:
+                    agent_instance = orchestrator.agents[agent_instance_name]
+                    if hasattr(agent_instance, 'clear_prompt_cache'):
+                        agent_instance.clear_prompt_cache()
+            
+            return create_success_response({
+                "message": f"Prompt reset to default for {agent_key}",
+                "company_id": company_id,
+                "agent": agent_key
+            })
+        else:
+            return create_error_response("Failed to reset prompt", 500)
+            
+    except Exception as e:
+        logger.error(f"Error resetting prompt: {e}")
+        return create_error_response(f"Internal server error: {e}", 500)
+
+@bp.route('/prompts/preview', methods=['POST'])
+@handle_errors 
+def preview_prompt():
+    """Preview how a prompt will look with sample data"""
+    try:
+        data = request.get_json()
+        company_id = _get_company_id_from_request()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        if not data or 'template' not in data or 'agent_name' not in data:
+            return create_error_response("template and agent_name are required", 400)
+        
+        template = data['template']
+        agent_name = data['agent_name']
+        sample_question = data.get('sample_question', 'Hola, necesito información')
+        
+        # Get company config for sample data
+        company_manager = get_company_manager()
+        company_config = company_manager.get_company_config(company_id)
+        
+        if not company_config:
+            return create_error_response(f"Company config not found: {company_id}", 400)
+        
+        # Sample data for template rendering
+        sample_data = {
+            'company_name': company_config.company_name,
+            'services': getattr(company_config, 'services', 'nuestros servicios'),
+            'agent_name': getattr(company_config, 'sales_agent_name', 'Asistente'),
+            'question': sample_question,
+            'chat_history': [],
+            'context': 'Información de ejemplo sobre nuestros servicios...'
+        }
+        
+        # Try to render the template
+        try:
+            from langchain.prompts import ChatPromptTemplate
+            
+            # Create a simple prompt template for preview
+            if '{chat_history}' in template:
+                preview_template = ChatPromptTemplate.from_messages([
+                    ("system", template),
+                    ("human", "{question}")
+                ])
+            else:
+                preview_template = ChatPromptTemplate.from_messages([
+                    ("system", template),
+                    ("human", "{question}")
+                ])
+            
+            # Format the template with sample data
+            formatted_messages = preview_template.format_messages(**sample_data)
+            
+            # Extract the system message for preview
+            if formatted_messages:
+                system_message = formatted_messages[0].content if formatted_messages else template
+            else:
+                system_message = template
+            
+            return create_success_response({
+                "preview": system_message,
+                "sample_data": sample_data,
+                "agent_name": agent_name,
+                "company_id": company_id
+            })
+            
+        except Exception as format_error:
+            logger.warning(f"Template formatting error: {format_error}")
+            return create_success_response({
+                "preview": template,
+                "warning": "Template could not be fully rendered - showing raw template",
+                "error": str(format_error),
+                "sample_data": sample_data
+            })
+            
+    except Exception as e:
+        logger.error(f"Error in prompt preview: {e}")
+        return create_error_response(f"Preview error: {e}", 500)
+
+# Helper function to validate agent names - add this if not already present
+def validate_agent_name(agent_name: str) -> bool:
+    """Validar agent_name"""
+    if not agent_name or not isinstance(agent_name, str):
+        return False
+    
+    # Lista de agentes válidos
+    valid_agents = [
+        'router_agent', 'sales_agent', 'support_agent', 
+        'emergency_agent', 'schedule_agent', 'availability_agent'
+    ]
+    
+    return agent_name in valid_agents
+
+def validate_company_id(company_id: str) -> bool:
+    """Validar company_id"""
+    if not company_id or not isinstance(company_id, str):
+        return False
+    
+    # Validar que existe en la configuración
+    company_manager = get_company_manager()
+    return company_manager.validate_company_id(company_id)
+
+
