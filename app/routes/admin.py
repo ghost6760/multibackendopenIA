@@ -631,273 +631,267 @@ def export_system_configuration():
 # ENDPOINTS PARA GESTIÓN DE PROMPTS PERSONALIZADOS - VERSIÓN CORREGIDA
 # ============================================================================
 
-@bp.route('/prompts', methods=['GET'])
+@bp.route('/prompts/<company_id>', methods=['GET'])
 @handle_errors
-def get_prompts():
-    """Obtener prompts actuales de los agentes para una empresa"""
+def get_company_prompts(company_id: str):
+    """Obtener todos los prompts de una empresa"""
     try:
-        company_id = _get_company_id_from_request()
+        # Validar entrada
+        if not validate_company_id(company_id):
+            return create_error_response("Invalid company ID", 400)
         
-        if not company_id:
-            logger.error("No company_id provided in request")
-            return create_error_response("company_id is required", 400)
+        # Obtener prompts del servicio PostgreSQL
+        prompt_service = get_prompt_service()
+        prompts = prompt_service.get_company_prompts(company_id)
         
-        logger.info(f"Getting prompts for company: {company_id}")
-        
-        company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
-        
-        # Obtener factory y agentes
-        factory = get_multi_agent_factory()
-        orchestrator = factory.get_orchestrator(company_id)
-        
-        if not orchestrator:
-            logger.error(f"Orchestrator not available for {company_id}")
-            return create_error_response(f"Orchestrator not available for {company_id}", 503)
-        
-        prompts_data = {}
-        agents_to_check = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
-        
-        # Cargar prompts por defecto desde custom_prompts.json si existe
-        default_prompts = _load_default_prompts(company_id)
-        
-        for agent_key in agents_to_check:
-            # Mapear nombres correctamente
-            agent_name = agent_key.replace('_agent', '')  # router_agent -> router
-            
-            # Intentar obtener el agente desde orchestrator.agents
-            agent_instance = None
-            if hasattr(orchestrator, 'agents') and agent_name in orchestrator.agents:
-                agent_instance = orchestrator.agents[agent_name]
-            
-            if agent_instance:
-                try:
-                    # Intentar obtener el prompt actual del agente
-                    if hasattr(agent_instance, 'prompt_template') and agent_instance.prompt_template:
-                        if hasattr(agent_instance.prompt_template, 'messages'):
-                            current_prompt = str(agent_instance.prompt_template.messages[0].prompt.template)
-                        else:
-                            current_prompt = str(agent_instance.prompt_template)
-                    else:
-                        # Si no hay prompt en el agente, usar el default
-                        current_prompt = default_prompts.get(agent_key, f"Default prompt for {agent_key}")
-                    
-                    prompts_data[agent_key] = {
-                        "current_prompt": current_prompt,
-                        "is_custom": _has_custom_prompt(company_id, agent_key),
-                        "last_modified": _get_prompt_modification_date(company_id, agent_key)
-                    }
-                    logger.debug(f"Loaded prompt for {agent_key}")
-                    
-                except Exception as e:
-                    logger.warning(f"Error getting prompt for {agent_key}: {e}")
-                    # Usar prompt por defecto si hay error
-                    prompts_data[agent_key] = {
-                        "current_prompt": default_prompts.get(agent_key, f"Default prompt for {agent_key}"),
-                        "is_custom": False,
-                        "last_modified": None
-                    }
-            else:
-                # Si el agente no existe, proporcionar prompt por defecto
-                prompts_data[agent_key] = {
-                    "current_prompt": default_prompts.get(agent_key, f"Default prompt for {agent_key}"),
-                    "is_custom": False,
-                    "last_modified": None
-                }
-        
-        logger.info(f"Successfully loaded {len(prompts_data)} prompts for {company_id}")
+        # Formatear respuesta para mantener compatibilidad
+        formatted_prompts = []
+        for prompt in prompts:
+            agent_data = {
+                "agent_name": prompt['agent_name'],
+                "template": prompt['template'],
+                "is_custom": prompt['is_custom'],
+                "version": prompt.get('version', 1),
+                "modified_at": prompt.get('modified_at'),
+                "modified_by": prompt.get('modified_by'),
+                "has_custom": prompt['is_custom']
+            }
+            formatted_prompts.append(agent_data)
         
         return create_success_response({
             "company_id": company_id,
-            "agents": prompts_data
+            "prompts": formatted_prompts,
+            "total_agents": len(formatted_prompts),
+            "custom_count": sum(1 for p in formatted_prompts if p['is_custom'])
         })
         
     except Exception as e:
-        logger.error(f"Error getting prompts: {e}", exc_info=True)
+        logger.error(f"Error getting company prompts: {e}", exc_info=True)
         return create_error_response(f"Failed to get prompts: {str(e)}", 500)
 
-@bp.route('/prompts/<agent_name>', methods=['PUT'])
+@bp.route('/prompts/<company_id>/<agent_name>', methods=['GET'])
 @handle_errors
-def update_agent_prompt(agent_name):
-    """Actualizar prompt de un agente específico"""
+def get_agent_prompt(company_id: str, agent_name: str):
+    """Obtener prompt específico de un agente"""
     try:
-        # CORRECCIÓN: Manejar el body correctamente
-        raw_data = request.get_data(as_text=True)
-        logger.debug(f"Raw data received: {raw_data[:200]}")  # Log para debug
+        # Validar entrada
+        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
+            return create_error_response("Invalid company ID or agent name", 400)
         
-        # Intentar parsear JSON
-        try:
-            if raw_data:
-                import json
-                data = json.loads(raw_data)
-            else:
-                data = request.get_json(force=True)
-        except json.JSONDecodeError as je:
-            logger.error(f"JSON decode error: {je}")
-            return create_error_response("Invalid JSON format", 400)
+        # Obtener prompt del servicio PostgreSQL
+        prompt_service = get_prompt_service()
+        prompt_data = prompt_service.get_prompt(company_id, agent_name)
         
-        if not isinstance(data, dict):
-            return create_error_response("Request body must be a JSON object", 400)
-            
-        company_id = data.get('company_id') or _get_company_id_from_request()
-        prompt_template = data.get('prompt_template')
+        # Formatear respuesta
+        response_data = {
+            "company_id": company_id,
+            "agent_name": agent_name,
+            "template": prompt_data['template'],
+            "is_custom": prompt_data['is_custom'],
+            "version": prompt_data.get('version', 1),
+            "modified_at": prompt_data.get('modified_at'),
+            "modified_by": prompt_data.get('modified_by'),
+            "has_custom": prompt_data['is_custom']
+        }
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error getting agent prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to get prompt: {str(e)}", 500)
+
+@bp.route('/prompts/<company_id>/<agent_name>', methods=['POST'])
+@handle_errors
+def save_agent_prompt(company_id: str, agent_name: str):
+    """Guardar prompt personalizado para un agente"""
+    try:
+        # Validar entrada
+        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
+            return create_error_response("Invalid company ID or agent name", 400)
+        
+        # Obtener datos del request
+        data = request.get_json()
+        if not data or 'template' not in data:
+            return create_error_response("Missing template in request body", 400)
+        
+        template = data['template'].strip()
+        if not template:
+            return create_error_response("Template cannot be empty", 400)
+        
         modified_by = data.get('modified_by', 'admin')
         
-        if not company_id:
-            return create_error_response("company_id is required", 400)
-            
-        if not prompt_template:
-            return create_error_response("prompt_template is required", 400)
+        # Guardar prompt en PostgreSQL
+        prompt_service = get_prompt_service()
+        success = prompt_service.save_custom_prompt(
+            company_id, agent_name, template, modified_by
+        )
         
-        logger.info(f"Updating prompt for {agent_name} in company {company_id}")
-        
-        # Validar empresa
-        company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
-        
-        # Guardar prompt personalizado
-        success = _save_custom_prompt(company_id, agent_name, prompt_template, modified_by)
-        
-        if not success:
-            return create_error_response("Failed to save custom prompt", 500)
-        
-        # Limpiar cache para forzar recreación
-        factory = get_multi_agent_factory()
-        factory.clear_company_cache(company_id)
-        
-        logger.info(f"Prompt updated successfully for {agent_name} in {company_id}")
-        
-        return create_success_response({
-            "message": f"Prompt updated successfully for {agent_name}",
-            "company_id": company_id,
-            "agent_name": agent_name,
-            "updated_at": time.time()
-        })
-        
-    except Exception as e:
-        logger.error(f"Error updating prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to update prompt: {str(e)}", 500)
-
-@bp.route('/prompts/<agent_name>', methods=['DELETE'])
-@handle_errors
-def reset_agent_prompt(agent_name):
-    """Restaurar prompt por defecto de un agente"""
-    try:
-        company_id = _get_company_id_from_request()
-        
-        if not company_id:
-            logger.error("No company_id provided for reset")
-            return create_error_response("company_id is required", 400)
-        
-        logger.info(f"Resetting prompt for {agent_name} in company {company_id}")
-        
-        company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
-        
-        # Eliminar prompt personalizado
-        result = _delete_custom_prompt(company_id, agent_name)
-        
-        if result:
-            # En lugar de reset_orchestrator, usar clear_company_cache
-            factory = get_multi_agent_factory()
-            factory.clear_company_cache(company_id)
-            
-            logger.info(f"Successfully reset prompt for {agent_name} in {company_id}")
+        if success:
+            # Obtener datos actualizados
+            updated_prompt = prompt_service.get_prompt(company_id, agent_name)
             
             return create_success_response({
-                "message": f"Prompt restored to default for {agent_name}",
+                "message": "Prompt saved successfully",
                 "company_id": company_id,
-                "agent_name": agent_name
+                "agent_name": agent_name,
+                "version": updated_prompt.get('version', 1),
+                "modified_at": updated_prompt.get('modified_at'),
+                "modified_by": modified_by
             })
         else:
-            return create_error_response(f"Failed to reset prompt for {agent_name}", 500)
+            return create_error_response("Failed to save prompt", 500)
         
     except Exception as e:
-        logger.error(f"Error resetting prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
+        logger.error(f"Error saving agent prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to save prompt: {str(e)}", 500)
 
-@bp.route('/prompts/preview', methods=['POST'])
+@bp.route('/prompts/<company_id>/<agent_name>', methods=['DELETE'])
 @handle_errors
-def preview_prompt():
-    """Vista previa de un prompt con mensaje de prueba"""
+def delete_agent_prompt(company_id: str, agent_name: str):
+    """Eliminar prompt personalizado (restaurar a default)"""
     try:
-        # CORRECCIÓN: Manejar el body correctamente
-        raw_data = request.get_data(as_text=True)
-        logger.debug(f"Preview raw data: {raw_data[:200]}")  # Log para debug
+        # Validar entrada
+        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
+            return create_error_response("Invalid company ID or agent name", 400)
         
-        # Intentar parsear JSON
-        try:
-            if raw_data:
-                import json
-                data = json.loads(raw_data)
-            else:
-                data = request.get_json(force=True)
-        except json.JSONDecodeError as je:
-            logger.error(f"JSON decode error in preview: {je}")
-            return create_error_response("Invalid JSON format", 400)
+        # Eliminar prompt personalizado de PostgreSQL
+        prompt_service = get_prompt_service()
+        success = prompt_service.delete_custom_prompt(company_id, agent_name)
         
-        if not isinstance(data, dict):
-            return create_error_response("Request body must be a JSON object", 400)
+        if success:
+            return create_success_response({
+                "message": "Custom prompt deleted, restored to default",
+                "company_id": company_id,
+                "agent_name": agent_name,
+                "restored_at": prompt_service.get_modification_date(company_id, agent_name)
+            })
+        else:
+            return create_error_response("Failed to delete prompt", 500)
         
-        # Obtener parámetros con validación
-        company_id = data.get('company_id')
-        agent_name = data.get('agent_name')
-        prompt_template = data.get('prompt_template')
-        test_message = data.get('test_message', '¿Cuánto cuesta un tratamiento?')
+    except Exception as e:
+        logger.error(f"Error deleting agent prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to delete prompt: {str(e)}", 500)
+
+@bp.route('/prompts/<company_id>/<agent_name>/preview', methods=['POST'])
+@handle_errors
+def preview_prompt(company_id: str, agent_name: str):
+    """Vista previa de prompt con variables de prueba"""
+    try:
+        # Validar entrada
+        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
+            return create_error_response("Invalid company ID or agent name", 400)
         
-        # Validaciones estrictas
-        if not company_id or not company_id.strip():
-            logger.error("Missing or empty company_id in preview request")
-            return create_error_response("company_id is required and cannot be empty", 400)
-            
-        if not agent_name or not agent_name.strip():
-            logger.error("Missing or empty agent_name in preview request")
-            return create_error_response("agent_name is required and cannot be empty", 400)
-            
-        if not prompt_template or not prompt_template.strip():
-            logger.error("Missing or empty prompt_template in preview request")
-            return create_error_response("prompt_template is required and cannot be empty", 400)
+        # Obtener template del request
+        data = request.get_json()
+        if not data or 'template' not in data:
+            return create_error_response("Missing template in request body", 400)
         
-        logger.info(f"Preview request for {agent_name} in {company_id}")
+        template = data['template']
+        test_vars = data.get('variables', {})
         
+        # Obtener configuración de la empresa para variables reales
         company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        company_config = company_manager.get_company_config(company_id)
         
-        # Crear instancia temporal del agente con el nuevo prompt
-        config = company_manager.get_company_config(company_id)
-        openai_service = OpenAIService()
+        # Variables de prueba basadas en la empresa real
+        default_vars = {
+            'company_name': company_config.company_name if company_config else 'Empresa de Prueba',
+            'phone': company_config.phone if company_config else '+1234567890',
+            'email': company_config.email if company_config else 'contacto@empresa.com',
+            'address': company_config.address if company_config else 'Dirección de Prueba 123',
+            'question': '¿Cuáles son sus servicios?',
+            'chat_history': 'Usuario: Hola\nAsistente: ¡Hola! ¿En qué puedo ayudarte?',
+            'services': company_config.services if company_config else 'servicios de belleza'
+        }
         
-        # Simular respuesta (sin guardar cambios)
+        # Combinar variables por defecto con las proporcionadas
+        preview_vars = {**default_vars, **test_vars}
+        
+        # Aplicar variables al template
         try:
-            preview_result = _simulate_agent_response(
-                agent_name=agent_name,
-                company_config=config,
-                custom_prompt=prompt_template,
-                test_message=test_message,
-                openai_service=openai_service
-            )
-            
-            logger.info(f"Preview generated successfully for {agent_name}")
-            
-        except Exception as sim_error:
-            logger.error(f"Error simulating response: {sim_error}", exc_info=True)
-            preview_result = f"Error generando preview: {str(sim_error)}"
+            preview_text = template.format(**preview_vars)
+        except KeyError as e:
+            return create_error_response(f"Missing variable in template: {e}", 400)
+        except Exception as e:
+            return create_error_response(f"Template formatting error: {e}", 400)
         
         return create_success_response({
-            "company_id": company_id,
-            "agent_name": agent_name,
-            "test_message": test_message,
-            "preview_response": preview_result,
-            "prompt_preview": prompt_template[:200] + "..." if len(prompt_template) > 200 else prompt_template
+            "preview": preview_text,
+            "variables_used": list(preview_vars.keys()),
+            "template_length": len(template),
+            "preview_length": len(preview_text),
+            "template_preview": template[:200] + "..." if len(template) > 200 else template
         })
         
     except Exception as e:
         logger.error(f"Error previewing prompt: {e}", exc_info=True)
         return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
+
+@bp.route('/prompts/<company_id>/<agent_name>/history', methods=['GET'])
+@handle_errors  
+def get_prompt_history(company_id: str, agent_name: str):
+    """Obtener historial de versiones de un prompt"""
+    try:
+        # Validar entrada
+        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
+            return create_error_response("Invalid company ID or agent name", 400)
+        
+        # Obtener historial de PostgreSQL
+        prompt_service = get_prompt_service()
+        history = prompt_service.get_prompt_history(company_id, agent_name)
+        
+        return create_success_response({
+            "company_id": company_id,
+            "agent_name": agent_name,
+            "history": history,
+            "total_versions": len(history)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting prompt history: {e}", exc_info=True)
+        return create_error_response(f"Failed to get history: {str(e)}", 500)
+
+@bp.route('/prompts/<company_id>/<agent_name>/restore/<int:version>', methods=['POST'])
+@handle_errors
+def restore_prompt_version(company_id: str, agent_name: str, version: int):
+    """Restaurar una versión específica del prompt"""
+    try:
+        # Validar entrada
+        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
+            return create_error_response("Invalid company ID or agent name", 400)
+        
+        if version < 1:
+            return create_error_response("Invalid version number", 400)
+        
+        # Obtener usuario que solicita la restauración
+        data = request.get_json() or {}
+        modified_by = data.get('modified_by', 'admin')
+        
+        # Restaurar versión en PostgreSQL
+        prompt_service = get_prompt_service()
+        success = prompt_service.restore_prompt_version(
+            company_id, agent_name, version, modified_by
+        )
+        
+        if success:
+            # Obtener datos actualizados
+            updated_prompt = prompt_service.get_prompt(company_id, agent_name)
+            
+            return create_success_response({
+                "message": f"Prompt restored to version {version}",
+                "company_id": company_id,
+                "agent_name": agent_name,
+                "restored_version": version,
+                "new_version": updated_prompt.get('version', 1),
+                "modified_at": updated_prompt.get('modified_at'),
+                "modified_by": modified_by
+            })
+        else:
+            return create_error_response(f"Failed to restore version {version}", 500)
+        
+    except Exception as e:
+        logger.error(f"Error restoring prompt version: {e}", exc_info=True)
+        return create_error_response(f"Failed to restore version: {str(e)}", 500)
         
 # ============================================================================
 # FUNCIONES AUXILIARES PARA GESTIÓN DE PROMPTS
@@ -1176,271 +1170,6 @@ def validate_agent_name(agent_name: str) -> bool:
     return agent_name in valid_agents
 
 
-# ============================================================================
-# NUEVOS ENDPOINTS PARA GESTIÓN DE PROMPTS CON POSTGRESQL
-# ============================================================================
-
-@bp.route('/prompts/<company_id>', methods=['GET'])
-@handle_errors
-def get_company_prompts(company_id: str):
-    """Obtener todos los prompts de una empresa"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id):
-            return create_error_response("Invalid company ID", 400)
-        
-        # Obtener prompts del servicio PostgreSQL
-        prompt_service = get_prompt_service()
-        prompts = prompt_service.get_company_prompts(company_id)
-        
-        # Formatear respuesta para mantener compatibilidad
-        formatted_prompts = []
-        for prompt in prompts:
-            agent_data = {
-                "agent_name": prompt['agent_name'],
-                "template": prompt['template'],
-                "is_custom": prompt['is_custom'],
-                "version": prompt.get('version', 1),
-                "modified_at": prompt.get('modified_at'),
-                "modified_by": prompt.get('modified_by'),
-                "has_custom": prompt['is_custom']
-            }
-            formatted_prompts.append(agent_data)
-        
-        return create_success_response({
-            "company_id": company_id,
-            "prompts": formatted_prompts,
-            "total_agents": len(formatted_prompts),
-            "custom_count": sum(1 for p in formatted_prompts if p['is_custom'])
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting company prompts: {e}", exc_info=True)
-        return create_error_response(f"Failed to get prompts: {str(e)}", 500)
-
-@bp.route('/prompts/<company_id>/<agent_name>', methods=['GET'])
-@handle_errors
-def get_agent_prompt(company_id: str, agent_name: str):
-    """Obtener prompt específico de un agente"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
-            return create_error_response("Invalid company ID or agent name", 400)
-        
-        # Obtener prompt del servicio PostgreSQL
-        prompt_service = get_prompt_service()
-        prompt_data = prompt_service.get_prompt(company_id, agent_name)
-        
-        # Formatear respuesta
-        response_data = {
-            "company_id": company_id,
-            "agent_name": agent_name,
-            "template": prompt_data['template'],
-            "is_custom": prompt_data['is_custom'],
-            "version": prompt_data.get('version', 1),
-            "modified_at": prompt_data.get('modified_at'),
-            "modified_by": prompt_data.get('modified_by'),
-            "has_custom": prompt_data['is_custom']
-        }
-        
-        return create_success_response(response_data)
-        
-    except Exception as e:
-        logger.error(f"Error getting agent prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to get prompt: {str(e)}", 500)
-
-@bp.route('/prompts/<company_id>/<agent_name>', methods=['POST'])
-@handle_errors
-def save_agent_prompt(company_id: str, agent_name: str):
-    """Guardar prompt personalizado para un agente"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
-            return create_error_response("Invalid company ID or agent name", 400)
-        
-        # Obtener datos del request
-        data = request.get_json()
-        if not data or 'template' not in data:
-            return create_error_response("Missing template in request body", 400)
-        
-        template = data['template'].strip()
-        if not template:
-            return create_error_response("Template cannot be empty", 400)
-        
-        modified_by = data.get('modified_by', 'admin')
-        
-        # Guardar prompt en PostgreSQL
-        prompt_service = get_prompt_service()
-        success = prompt_service.save_custom_prompt(
-            company_id, agent_name, template, modified_by
-        )
-        
-        if success:
-            # Obtener datos actualizados
-            updated_prompt = prompt_service.get_prompt(company_id, agent_name)
-            
-            return create_success_response({
-                "message": "Prompt saved successfully",
-                "company_id": company_id,
-                "agent_name": agent_name,
-                "version": updated_prompt.get('version', 1),
-                "modified_at": updated_prompt.get('modified_at'),
-                "modified_by": modified_by
-            })
-        else:
-            return create_error_response("Failed to save prompt", 500)
-        
-    except Exception as e:
-        logger.error(f"Error saving agent prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to save prompt: {str(e)}", 500)
-
-@bp.route('/prompts/<company_id>/<agent_name>', methods=['DELETE'])
-@handle_errors
-def delete_agent_prompt(company_id: str, agent_name: str):
-    """Eliminar prompt personalizado (restaurar a default)"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
-            return create_error_response("Invalid company ID or agent name", 400)
-        
-        # Eliminar prompt personalizado de PostgreSQL
-        prompt_service = get_prompt_service()
-        success = prompt_service.delete_custom_prompt(company_id, agent_name)
-        
-        if success:
-            return create_success_response({
-                "message": "Custom prompt deleted, restored to default",
-                "company_id": company_id,
-                "agent_name": agent_name,
-                "restored_at": prompt_service.get_modification_date(company_id, agent_name)
-            })
-        else:
-            return create_error_response("Failed to delete prompt", 500)
-        
-    except Exception as e:
-        logger.error(f"Error deleting agent prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to delete prompt: {str(e)}", 500)
-
-@bp.route('/prompts/<company_id>/<agent_name>/preview', methods=['POST'])
-@handle_errors
-def preview_prompt(company_id: str, agent_name: str):
-    """Vista previa de prompt con variables de prueba"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
-            return create_error_response("Invalid company ID or agent name", 400)
-        
-        # Obtener template del request
-        data = request.get_json()
-        if not data or 'template' not in data:
-            return create_error_response("Missing template in request body", 400)
-        
-        template = data['template']
-        test_vars = data.get('variables', {})
-        
-        # Obtener configuración de la empresa para variables reales
-        company_manager = get_company_manager()
-        company_config = company_manager.get_company_config(company_id)
-        
-        # Variables de prueba basadas en la empresa real
-        default_vars = {
-            'company_name': company_config.company_name if company_config else 'Empresa de Prueba',
-            'phone': company_config.phone if company_config else '+1234567890',
-            'email': company_config.email if company_config else 'contacto@empresa.com',
-            'address': company_config.address if company_config else 'Dirección de Prueba 123',
-            'question': '¿Cuáles son sus servicios?',
-            'chat_history': 'Usuario: Hola\nAsistente: ¡Hola! ¿En qué puedo ayudarte?',
-            'services': company_config.services if company_config else 'servicios de belleza'
-        }
-        
-        # Combinar variables por defecto con las proporcionadas
-        preview_vars = {**default_vars, **test_vars}
-        
-        # Aplicar variables al template
-        try:
-            preview_text = template.format(**preview_vars)
-        except KeyError as e:
-            return create_error_response(f"Missing variable in template: {e}", 400)
-        except Exception as e:
-            return create_error_response(f"Template formatting error: {e}", 400)
-        
-        return create_success_response({
-            "preview": preview_text,
-            "variables_used": list(preview_vars.keys()),
-            "template_length": len(template),
-            "preview_length": len(preview_text),
-            "template_preview": template[:200] + "..." if len(template) > 200 else template
-        })
-        
-    except Exception as e:
-        logger.error(f"Error previewing prompt: {e}", exc_info=True)
-        return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
-
-@bp.route('/prompts/<company_id>/<agent_name>/history', methods=['GET'])
-@handle_errors  
-def get_prompt_history(company_id: str, agent_name: str):
-    """Obtener historial de versiones de un prompt"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
-            return create_error_response("Invalid company ID or agent name", 400)
-        
-        # Obtener historial de PostgreSQL
-        prompt_service = get_prompt_service()
-        history = prompt_service.get_prompt_history(company_id, agent_name)
-        
-        return create_success_response({
-            "company_id": company_id,
-            "agent_name": agent_name,
-            "history": history,
-            "total_versions": len(history)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting prompt history: {e}", exc_info=True)
-        return create_error_response(f"Failed to get history: {str(e)}", 500)
-
-@bp.route('/prompts/<company_id>/<agent_name>/restore/<int:version>', methods=['POST'])
-@handle_errors
-def restore_prompt_version(company_id: str, agent_name: str, version: int):
-    """Restaurar una versión específica del prompt"""
-    try:
-        # Validar entrada
-        if not validate_company_id(company_id) or not validate_agent_name(agent_name):
-            return create_error_response("Invalid company ID or agent name", 400)
-        
-        if version < 1:
-            return create_error_response("Invalid version number", 400)
-        
-        # Obtener usuario que solicita la restauración
-        data = request.get_json() or {}
-        modified_by = data.get('modified_by', 'admin')
-        
-        # Restaurar versión en PostgreSQL
-        prompt_service = get_prompt_service()
-        success = prompt_service.restore_prompt_version(
-            company_id, agent_name, version, modified_by
-        )
-        
-        if success:
-            # Obtener datos actualizados
-            updated_prompt = prompt_service.get_prompt(company_id, agent_name)
-            
-            return create_success_response({
-                "message": f"Prompt restored to version {version}",
-                "company_id": company_id,
-                "agent_name": agent_name,
-                "restored_version": version,
-                "new_version": updated_prompt.get('version', 1),
-                "modified_at": updated_prompt.get('modified_at'),
-                "modified_by": modified_by
-            })
-        else:
-            return create_error_response(f"Failed to restore version {version}", 500)
-        
-    except Exception as e:
-        logger.error(f"Error restoring prompt version: {e}", exc_info=True)
-        return create_error_response(f"Failed to restore version: {str(e)}", 500)
 
 # ============================================================================
 # ENDPOINTS DE ESTADÍSTICAS Y ADMINISTRACIÓN
