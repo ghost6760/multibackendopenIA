@@ -93,3 +93,31 @@ def validate_pagination(page: Any, page_size: Any, max_page_size: int = 100) -> 
         size = 50
     
     return page_num, size
+
+
+# Al final de app/utils/validators.py, agregar:
+
+def validate_company_id(company_id: str) -> bool:
+    """Validar company_id usando el company_manager existente"""
+    if not company_id or not isinstance(company_id, str):
+        return False
+    
+    try:
+        from app.config.company_config import get_company_manager
+        company_manager = get_company_manager()
+        return company_manager.validate_company_id(company_id)
+    except Exception as e:
+        logger.error(f"Error validating company_id {company_id}: {e}")
+        return False
+
+def validate_agent_name(agent_name: str) -> bool:
+    """Validar agent_name contra lista de agentes válidos"""
+    if not agent_name or not isinstance(agent_name, str):
+        return False
+    
+    valid_agents = [
+        'router_agent', 'sales_agent', 'support_agent', 
+        'emergency_agent', 'schedule_agent', 'availability_agent'
+    ]
+    
+    return agent_name in valid_agents
