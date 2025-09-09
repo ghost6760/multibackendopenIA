@@ -1,6 +1,5 @@
 # ============================================================================
-# BASE AGENT ACTUALIZADO PARA USAR POSTGRESQL - CONSTRUCTOR FIXED
-# Mantiene la misma API pero usa el servicio de prompts + Fixed constructor signature
+# BASE AGENT WITH BACKWARD COMPATIBILITY - Complete Fix
 # ============================================================================
 
 import os
@@ -16,15 +15,11 @@ from app.services.prompt_service import get_prompt_service
 logger = logging.getLogger(__name__)
 
 class BaseAgent:
-    """Agente base con soporte para prompts personalizados en PostgreSQL"""
+    """Agente base con soporte para prompts personalizados en PostgreSQL + Backward Compatibility"""
     
     def __init__(self, company_config, openai_service=None):
         """
-        FIXED: Constructor que acepta tanto company_config como openai_service opcional
-        
-        Args:
-            company_config: CompanyConfig object
-            openai_service: OpenAIService object (opcional, se crea si es None)
+        Constructor que acepta tanto company_config como openai_service opcional
         """
         self.company_config = company_config
         
@@ -70,11 +65,26 @@ class BaseAgent:
         Subclasses can override this method for custom initialization
         """
         pass
+    
+    # ============================================================================
+    # BACKWARD COMPATIBILITY METHODS
+    # ============================================================================
+    
+    def _create_prompt_template(self) -> ChatPromptTemplate:
+        """
+        DEPRECATED but needed for backward compatibility
+        Maps to the new get_prompt_template() method
+        """
+        return self.get_prompt_template()
+    
+    def _log_agent_activity(self, activity: str, context: Dict[str, Any] = None):
+        """Log agent activity for debugging"""
+        context_str = f" - {context}" if context else ""
+        logger.debug(f"[{self.company_config.company_id}] {self.__class__.__name__}: {activity}{context_str}")
         
     def get_prompt_template(self) -> ChatPromptTemplate:
         """
         Obtener template de prompt personalizado o por defecto
-        Mantiene la misma API que antes
         """
         try:
             # Verificar cache (válido por 5 minutos)
@@ -165,11 +175,23 @@ class BaseAgent:
 
     def _create_default_prompt_template(self) -> ChatPromptTemplate:
         """
-        Crear template por defecto - DEBE ser implementado por cada agente
+        Crear template por defecto - Cada agente debe implementar este método
+        Provide a safe fallback if not implemented
         """
-        # Provide a minimal default template to prevent errors
+        # Safe fallback if subclass doesn't implement this
+        company_name = getattr(self.company_config, 'company_name', 'nuestra empresa')
+        services = getattr(self.company_config, 'services', 'nuestros servicios')
+        
+        default_template = f"""Eres un asistente profesional de {company_name}.
+
+Especializado en {services}.
+
+Tu objetivo es ayudar al usuario de manera amigable, profesional y eficiente.
+
+Mensaje del usuario: {{question}}"""
+
         return ChatPromptTemplate.from_messages([
-            ("system", f"Eres un asistente profesional de {self.company_config.company_name}. Ayuda al usuario de manera amigable y profesional."),
+            ("system", default_template),
             ("human", "{question}")
         ])
 
@@ -320,12 +342,13 @@ class BaseAgent:
 
     def get_error_message(self) -> str:
         """Mensaje de error genérico"""
+        company_name = getattr(self.company_config, 'company_name', 'nuestro equipo')
         return f"Lo siento, hubo un problema procesando tu consulta. " \
-               f"Por favor intenta de nuevo o contacta con {self.company_config.company_name}."
+               f"Por favor intenta de nuevo o contacta con {company_name}."
 
     def process_query(self, query: str, chat_history: list = None) -> str:
         """
-        Procesar consulta del usuario - DEBE ser implementado por cada agente
+        Procesar consulta del usuario - Compatible con ambas implementaciones
         """
         try:
             return self._execute_agent_chain({
@@ -341,9 +364,10 @@ class BaseAgent:
         Ejecutar la cadena específica del agente
         Subclasses should override this method
         """
-        # Default implementation
+        # Default implementation for compatibility
         question = inputs.get("question", "")
-        return f"Procesando consulta: {question} (implementación por defecto)"
+        company_name = getattr(self.company_config, 'company_name', 'nuestro equipo')
+        return f"Hola, soy un asistente de {company_name}. Has preguntado: {question}. ¿En qué más puedo ayudarte?"
     
     def invoke(self, inputs: Dict[str, Any]) -> str:
         """Método principal para invocar el agente (compatibilidad con LangChain)"""
@@ -351,60 +375,26 @@ class BaseAgent:
             inputs.get("question", ""),
             inputs.get("chat_history", [])
         )
-
-# ============================================================================
-# EJEMPLO DE IMPLEMENTACIÓN EN AGENTE ESPECÍFICO (ACTUALIZADO)
-# ============================================================================
-
-class SalesAgent(BaseAgent):
-    """Ejemplo de agente de ventas usando el nuevo sistema"""
     
-    def _create_default_prompt_template(self) -> ChatPromptTemplate:
-        """Template por defecto para agente de ventas"""
-        default_template = f"""Eres un agente de ventas profesional para {self.company_config.company_name}.
-Especializado en medicina estética y tratamientos de belleza.
-
-Tu objetivo es:
-- Informar sobre productos y servicios
-- Guiar hacia la compra
-- Resolver dudas comerciales
-- Agendar citas de consulta
-
-Mantén un tono profesional, amigable y orientado a resultados.
-
-Servicios disponibles: {getattr(self.company_config, 'services', 'Servicios generales')}
-
-Contexto del chat: {{chat_history}}
-Consulta del usuario: {{question}}"""
-
-        return ChatPromptTemplate.from_messages([
-            ("system", default_template),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}")
-        ])
-
-    def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
-        """Procesar consulta de ventas"""
-        try:
-            # Obtener template (personalizado o por defecto)
-            prompt_template = self.get_prompt_template()
-            
-            # Preparar variables para el template
-            template_vars = {
-                "company_name": self.company_config.company_name,
-                "question": inputs.get("question", ""),
-                "chat_history": inputs.get("chat_history", [])
-            }
-            
-            # Aquí iría la lógica de procesamiento con LLM si está disponible
-            if self.chat_model:
-                # prompt = prompt_template.format(**template_vars)
-                # response = self.chat_model.invoke(prompt)
-                pass
-            
-            # Por ahora retornamos un mensaje de ejemplo
-            return f"Respuesta de ventas para: {inputs.get('question', '')}"
-            
-        except Exception as e:
-            logger.error(f"Error processing sales query: {e}")
-            return self.get_error_message()
+    # ============================================================================
+    # LEGACY METHODS FOR BACKWARD COMPATIBILITY
+    # ============================================================================
+    
+    def _enhance_inputs_with_company_context(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Enriquecer inputs con contexto de empresa (legacy compatibility)"""
+        enhanced_inputs = inputs.copy()
+        enhanced_inputs.update({
+            "company_name": getattr(self.company_config, 'company_name', 'Empresa'),
+            "services": getattr(self.company_config, 'services', 'servicios'),
+            "agent_name": getattr(self.company_config, 'sales_agent_name', 'Asistente'),
+            "company_id": getattr(self.company_config, 'company_id', 'default')
+        })
+        return enhanced_inputs
+    
+    def _post_process_response(self, response: str, inputs: Dict[str, Any]) -> str:
+        """Post-procesar respuesta del agente (legacy compatibility)"""
+        return response
+    
+    def _get_fallback_response(self) -> str:
+        """Respuesta de respaldo en caso de error (legacy compatibility)"""
+        return self.get_error_message()
