@@ -1,4 +1,3 @@
-# app/config/constants.py
 """Application constants - Enhanced for Multi-tenant"""
 
 # Bot status constants (compartidas entre empresas)
@@ -15,12 +14,7 @@ REDIS_KEY_PATTERNS = {
     "cache": "cache:",
     "doc_change": "{company_prefix}doc_change:",
     "vectorstore_version": "{company_id}:vectorstore_version",
-    "document_hashes": "{company_id}:document_hashes",
-    # Nuevas keys para prompts
-    "prompts": "{company_id}:prompts:",
-    "default_prompts": "default_prompts:",
-    "prompts_version": "prompts_version:",
-    "prompts_backup": "{company_id}:prompts_backup:"
+    "document_hashes": "{company_id}:document_hashes"
 }
 
 # Redis TTL values (in seconds) - compartidas
@@ -29,11 +23,7 @@ REDIS_TTL = {
     "processed_message": 3600, # 1 hour
     "conversation": 604800,    # 7 days
     "cache": 300,             # 5 minutes
-    "doc_change": 3600,       # 1 hour
-    # TTL para prompts - Sin expiración
-    "prompts": None,          # Sin TTL - persistencia permanente
-    "default_prompts": None,  # Sin TTL - persistencia permanente
-    "prompts_backup": None    # Sin TTL - persistencia permanente
+    "doc_change": 3600        # 1 hour
 }
 
 # Multimedia constants (compartidas)
