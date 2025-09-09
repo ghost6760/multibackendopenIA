@@ -1,4 +1,6 @@
-# Dockerfile con auto-migración para Railway
+# Dockerfile simplificado - Solo Backend Flask
+# Optimizado para Railway deployment sin frontend React
+# ============================================================================
 FROM python:3.11-slim
 
 # Variables de entorno para Python
@@ -21,13 +23,12 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código del backend y migraciones
+# Copiar código del backend
 COPY app/ ./app/
-COPY migrations/ ./migrations/
 COPY wsgi.py run.py ./
 COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 
-# Crear directorio static y copiar archivos estáticos
+# Crear directorio static y copiar archivos estáticos desde la raíz del proyecto
 RUN mkdir -p ./static
 COPY index.html ./static/
 COPY script.js ./static/
@@ -48,5 +49,17 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# Script de inicio que ejecuta migraciones y luego inicia la app
-CMD ["sh", "-c", "python migrations/run_migration.py && gunicorn --bind 0.0.0.0:8080 --workers 2 --threads 4 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100 --preload --log-level info --access-logfile - --error-logfile - wsgi:app"]
+# Comando de inicio con configuración optimizada para Railway
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:8080", \
+     "--workers", "2", \
+     "--threads", "4", \
+     "--timeout", "120", \
+     "--keep-alive", "2", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "100", \
+     "--preload", \
+     "--log-level", "info", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "wsgi:app"]
