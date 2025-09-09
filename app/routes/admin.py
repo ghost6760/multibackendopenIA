@@ -931,6 +931,186 @@ def preview_prompt():
         logger.error(f"Error in prompt preview: {e}")
         return create_error_response(f"Preview error: {e}", 500)
 
+@bp.route('/prompts/<agent_name>', methods=['DELETE'])
+@handle_errors
+def delete_prompt(agent_name):
+    """Eliminar prompt personalizado (restaurar a default)"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        # Validations
+        if not validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Convert agent_name to proper format
+        if not agent_name.endswith('_agent'):
+            agent_key = f"{agent_name}_agent"
+        else:
+            agent_key = agent_name
+            
+        if not validate_agent_name(agent_key):
+            return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        # Get prompt service
+        try:
+            prompt_service = get_prompt_service()
+        except Exception as e:
+            return create_error_response("Prompt service not available", 503)
+        
+        # Delete the custom prompt
+        success = prompt_service.delete_custom_prompt(company_id, agent_key)
+        
+        if success:
+            # Clear cache for the agent
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            if orchestrator and hasattr(orchestrator, 'agents'):
+                agent_instance_name = agent_key.replace('_agent', '')
+                if agent_instance_name in orchestrator.agents:
+                    agent_instance = orchestrator.agents[agent_instance_name]
+                    # Clear agent's prompt cache if it exists
+                    if hasattr(agent_instance, '_prompt_template'):
+                        agent_instance._prompt_template = None
+            
+            return create_success_response({
+                "message": f"Custom prompt deleted for {agent_name}",
+                "company_id": company_id,
+                "agent_name": agent_key,
+                "restored_to_default": True
+            })
+        else:
+            return create_error_response("Failed to delete prompt or no custom prompt exists", 404)
+            
+    except Exception as e:
+        logger.error(f"Error deleting prompt: {e}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
+
+@bp.route('/prompts/preview', methods=['POST'])
+@handle_errors
+def preview_prompt():
+    """Previsualizar prompt con datos de la empresa"""
+    try:
+        company_id = _get_company_id_from_request()
+        data = request.get_json()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        if not data or 'template' not in data:
+            return create_error_response("template is required", 400)
+        
+        template = data['template']
+        
+        # Validations
+        if not validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Get company configuration
+        company_manager = get_company_manager()
+        company_config = company_manager.get_company_config(company_id)
+        
+        if not company_config:
+            return create_error_response(f"Company configuration not found: {company_id}", 404)
+        
+        # Get prompt service
+        try:
+            prompt_service = get_prompt_service()
+        except Exception as e:
+            # Fallback preview without service
+            company_name = company_config.get('name', 'Your Company')
+            preview = template.replace('{company_name}', company_name)
+            preview = preview.replace('{company_id}', company_id)
+            
+            return create_success_response({
+                "preview": preview,
+                "company_id": company_id,
+                "fallback": True
+            })
+        
+        # Use service for preview
+        company_data = {
+            'id': company_id,
+            'name': company_config.get('name', 'Your Company'),
+            'description': company_config.get('description', ''),
+            'services': company_config.get('services', [])
+        }
+        
+        preview = prompt_service.preview_prompt(template, company_data)
+        
+        return create_success_response({
+            "preview": preview,
+            "company_id": company_id,
+            "company_name": company_data['name']
+        })
+        
+    except Exception as e:
+        logger.error(f"Error previewing prompt: {e}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
+
+@bp.route('/prompts/restore/<agent_name>', methods=['POST'])
+@handle_errors
+def restore_prompt(agent_name):
+    """Restaurar prompt a su versión por defecto"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        # Validations
+        if not validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Convert agent_name to proper format
+        if not agent_name.endswith('_agent'):
+            agent_key = f"{agent_name}_agent"
+        else:
+            agent_key = agent_name
+            
+        if not validate_agent_name(agent_key):
+            return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        # Get prompt service
+        try:
+            prompt_service = get_prompt_service()
+        except Exception as e:
+            return create_error_response("Prompt service not available", 503)
+        
+        # Restore to default (same as delete)
+        success = prompt_service.restore_default_prompt(company_id, agent_key)
+        
+        if success:
+            # Get the default prompt to return
+            default_prompt_data = prompt_service.get_prompt(company_id, agent_key)
+            
+            # Clear cache for the agent
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            if orchestrator and hasattr(orchestrator, 'agents'):
+                agent_instance_name = agent_key.replace('_agent', '')
+                if agent_instance_name in orchestrator.agents:
+                    agent_instance = orchestrator.agents[agent_instance_name]
+                    if hasattr(agent_instance, '_prompt_template'):
+                        agent_instance._prompt_template = None
+            
+            return create_success_response({
+                "message": f"Prompt restored to default for {agent_name}",
+                "company_id": company_id,
+                "agent_name": agent_key,
+                "default_prompt": default_prompt_data.get('template', ''),
+                "is_custom": False
+            })
+        else:
+            return create_error_response("Failed to restore prompt or no custom prompt exists", 404)
+            
+    except Exception as e:
+        logger.error(f"Error restoring prompt: {e}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
+
+
 # ============================================================================
 # FUNCIONES DE VALIDACIÓN
 # ============================================================================
