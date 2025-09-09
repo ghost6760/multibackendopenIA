@@ -11,7 +11,7 @@ import logging
 import time
 from app.services.prompt_service import get_prompt_service
 from app.utils.helpers import create_success_response, create_error_response
-from app.utils.validation import validate_company_id, validate_agent_name
+from app.utils.validators import validate_company_id, validate_agent_name
 
 import json
 import os
