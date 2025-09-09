@@ -54,17 +54,6 @@ def create_app(config_class=Config):
         init_redis(app)
         init_openai(app)
         # init_vectorstore se maneja por empresa ahora
-
-        # ============================================================================
-        # AGREGAR AQUÍ: INICIALIZAR POSTGRESQL
-        # ============================================================================
-        try:
-            from app.services.database_service import get_database_service
-            db_service = get_database_service()
-            logger.info("✅ PostgreSQL connection initialized")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize PostgreSQL: {e}")
-        # ============================================================================
     
     # ENHANCED: Middleware multi-tenant
     @app.before_request
