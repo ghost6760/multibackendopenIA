@@ -95,8 +95,9 @@ Para consultas específicas, te conectaré con un especialista."""
                 
                 if search_results:
                     context_parts = []
-                    for result in search_results:
-                        content = result.get('content', '')
+                    for doc in search_results:
+                        # Handle LangChain Document objects
+                        content = getattr(doc, 'page_content', '') if hasattr(doc, 'page_content') else str(doc)
                         if content:
                             context_parts.append(content[:200])  # Limitar longitud
                     
