@@ -1,4 +1,4 @@
-# app/agents/support_agent.py - VERSIÓN COMPLETA con imports corregidos
+# app/agents/support_agent.py - FIXED VERSION
 
 from app.agents.base_agent import BaseAgent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -9,7 +9,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class SupportAgent(BaseAgent):
-    """Agente de soporte multi-tenant"""
+    """Agente de soporte multi-tenant - FIXED"""
     
     def _initialize_agent(self):
         """Inicializar agente de soporte"""
@@ -22,13 +22,14 @@ class SupportAgent(BaseAgent):
         self._create_chain()
     
     def _create_chain(self):
-        """Crear cadena de soporte con contexto"""
+        """Crear cadena de soporte con contexto - FIXED"""
         self.chain = (
             {
                 "context": self._get_support_context,
                 "question": lambda x: x.get("question", ""),
                 "chat_history": lambda x: x.get("chat_history", []),
-                "company_name": lambda x: self.company_config.company_name
+                "company_name": lambda x: self.company_config.company_name,
+                "services": lambda x: ", ".join(self.company_config.services)  # ✅ FIXED: Add services variable
             }
             | self.prompt_template
             | self.chat_model
@@ -36,17 +37,17 @@ class SupportAgent(BaseAgent):
         )
     
     def _create_default_prompt_template(self) -> ChatPromptTemplate:
-        """Template por defecto de soporte"""
+        """Template por defecto de soporte - FIXED"""
         return ChatPromptTemplate.from_messages([
-            ("system", f"""Eres un especialista en soporte al cliente de {self.company_config.company_name}.
+            ("system", f"""Eres un especialista en soporte al cliente de {{company_name}}.
 
 OBJETIVO: Resolver consultas generales y facilitar navegación.
 
-SERVICIOS: {self.company_config.services}
+SERVICIOS: {{services}}
 
 TIPOS DE CONSULTA:
 - Información del centro (ubicación, horarios)
-- Procesos y políticas de {self.company_config.company_name}
+- Procesos y políticas de {{company_name}}
 - Escalación a especialistas
 - Consultas generales
 
@@ -62,7 +63,7 @@ TONO: Profesional, servicial, eficiente.
 LONGITUD: Máximo 4 oraciones.
 EMOJIS: Máximo 3 por respuesta.
 
-Si no puedes resolver completamente: "Te conectaré con un especialista de {self.company_config.company_name} para resolver tu consulta específica. 👩‍⚕️"
+Si no puedes resolver completamente: "Te conectaré con un especialista de {{company_name}} para resolver tu consulta específica. 👩‍⚕️"
 
 Historial de conversación:
 {{chat_history}}
@@ -73,43 +74,67 @@ Consulta del usuario: {{question}}"""),
         ])
     
     def _get_support_context(self, inputs):
-        """Obtener contexto de soporte filtrado - CORREGIDO"""
+        """Obtener contexto de soporte filtrado"""
         try:
             question = inputs.get("question", "")
             
             if not self.vectorstore_service:
                 return f"""Información general de {self.company_config.company_name}:
-- Centro especializado en {self.company_config.services}
+- Centro especializado en {", ".join(self.company_config.services)}
 - Atención de calidad y personalizada
 - Información institucional disponible
 Para consultas específicas, te conectaré con un especialista."""
             
-            docs = self.vectorstore_service.search_by_company(question, self.company_config.company_id, k=2)
+            # Si hay vectorstore, buscar contexto relevante
+            try:
+                search_results = self.vectorstore_service.search_documents(
+                    query=question,
+                    k=3,
+                    filter_criteria={"document_type": "support"}
+                )
+                
+                if search_results:
+                    context_parts = []
+                    for result in search_results:
+                        content = result.get('content', '')
+                        if content:
+                            context_parts.append(content[:200])  # Limitar longitud
+                    
+                    if context_parts:
+                        return "\n".join(context_parts)
+                
+            except Exception as e:
+                logger.error(f"[{self.company_config.company_id}] Error searching support context: {e}")
             
-            if not docs:
-                return f"Información general de {self.company_config.company_name} disponible."
-            
-            # CORREGIDO: Usar page_content directamente de los objetos Document de LangChain
-            context_parts = []
-            for doc in docs:
-                if hasattr(doc, 'page_content') and doc.page_content:
-                    context_parts.append(doc.page_content)
-                elif isinstance(doc, dict) and 'content' in doc:
-                    # Fallback para formato dict si es necesario
-                    context_parts.append(doc['content'])
-            
-            if context_parts:
-                return "\n\n".join(context_parts)
-            else:
-                return f"Información general de {self.company_config.company_name} disponible."
+            # Fallback context
+            return f"""Información general de {self.company_config.company_name}:
+- Centro especializado en {", ".join(self.company_config.services)}
+- Atención de calidad y personalizada
+- Información institucional disponible
+Para consultas específicas, te conectaré con un especialista."""
             
         except Exception as e:
-            logger.error(f"Error retrieving support context: {e}")
-            return f"Información general de {self.company_config.company_name} disponible."
+            logger.error(f"[{self.company_config.company_id}] Error getting support context: {e}")
+            return f"Centro {self.company_config.company_name} - Información general disponible"
     
-    def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
-        """Ejecutar cadena de soporte"""
-        if not hasattr(self, 'chain'):
-            return f"Hola, soy el asistente de {self.company_config.company_name}. ¿En qué puedo ayudarte hoy? 😊"
-        
-        return self.chain.invoke(inputs)
+    def process_message(self, message: str, chat_history: List[Dict] = None, **kwargs) -> str:
+        """Procesar mensaje de soporte"""
+        try:
+            logger.info(f"[{self.company_config.company_id}] SupportAgent: message_processed")
+            
+            if not hasattr(self, 'chain') or self.chain is None:
+                return f"Sistema de soporte de {self.company_config.company_name} iniciándose. Por favor, intenta de nuevo en un momento."
+            
+            # Preparar inputs
+            inputs = {
+                "question": message,
+                "chat_history": chat_history or []
+            }
+            
+            # Generar respuesta
+            response = self.chain.invoke(inputs)
+            return response
+            
+        except Exception as e:
+            logger.error(f"[{self.company_config.company_id}] Error in SupportAgent.process_message: {e}")
+            return f"Disculpa, hay un problema temporal en el sistema de soporte de {self.company_config.company_name}. Te conectaré con un especialista."
