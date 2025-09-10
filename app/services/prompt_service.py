@@ -437,44 +437,7 @@ class PromptService:
             return self._repair_from_hardcoded(company_id, agent_name, repair_user)
         finally:
             conn.close()
-            
-    def get_default_prompt_by_company_agent(self, company_id: str, agent_name: str) -> Optional[str]:
-        """Obtener prompt por defecto específico para empresa + agente"""
-        conn = self.get_db_connection()
-        if not conn:
-            return None
-        
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Buscar primero con clave específica empresa_agente
-                company_agent_key = f"{company_id}_{agent_name}"
-                cursor.execute(
-                    "SELECT template FROM default_prompts WHERE agent_name = %s",
-                    (company_agent_key,)
-                )
-                
-                result = cursor.fetchone()
-                if result:
-                    return result['template']
-                
-                # Fallback a agente genérico
-                cursor.execute(
-                    "SELECT template FROM default_prompts WHERE agent_name = %s",
-                    (agent_name,)
-                )
-                
-                result = cursor.fetchone()
-                if result:
-                    return result['template']
-                
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error getting default prompt for {company_id}/{agent_name}: {e}")
-            return None
-        finally:
-            conn.close()
-        
+    
     def _repair_from_hardcoded(self, company_id: str, agent_name: str = None, repair_user: str = "system_repair") -> bool:
         """Fallback para reparar usando prompts hardcodeados"""
         try:
@@ -529,8 +492,7 @@ class PromptService:
     def get_repair_summary(self) -> List[Dict[str, Any]]:
         """Obtener resumen de la última operación de reparación"""
         return self.repair_summary
-
-
+    
     def get_db_status(self) -> Dict[str, Any]:
         """Obtener estado de la base de datos"""
         try:
@@ -590,44 +552,6 @@ class PromptService:
         finally:
             if 'conn' in locals():
                 conn.close()
-
-
-    def get_default_prompt_by_company_agent(self, company_id: str, agent_name: str) -> Optional[str]:
-    """Obtener prompt por defecto específico para empresa + agente"""
-    conn = self.get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Buscar primero con clave específica empresa_agente
-            company_agent_key = f"{company_id}_{agent_name}"
-            cursor.execute(
-                "SELECT template FROM default_prompts WHERE agent_name = %s",
-                (company_agent_key,)
-            )
-            
-            result = cursor.fetchone()
-            if result:
-                return result['template']
-            
-            # Fallback a agente genérico
-            cursor.execute(
-                "SELECT template FROM default_prompts WHERE agent_name = %s",
-                (agent_name,)
-            )
-            
-            result = cursor.fetchone()
-            if result:
-                return result['template']
-            
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error getting default prompt for {company_id}/{agent_name}: {e}")
-        return None
-    finally:
-        conn.close()
     
     def migrate_from_json(self) -> Dict[str, Any]:
         """
