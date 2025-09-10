@@ -127,69 +127,87 @@ class PromptMigrationManager:
                 conn.close()
     
     def _populate_default_prompts(self) -> bool:
-        """Poblar default_prompts desde agentes del repositorio"""
-        logger.info("Poblando default_prompts desde repositorio...")
+        """Poblar default_prompts desde custom_prompts.json (NO hardcoded)"""
+        logger.info("Poblando default_prompts desde custom_prompts.json...")
         
         try:
-            # Prompts extraídos de los agentes del repositorio
-            default_prompts = {
-                'router_agent': {
-                    'template': 'Eres un asistente especializado en clasificar intenciones de usuarios. Analiza el mensaje y determina si es: VENTAS, SOPORTE, EMERGENCIA, AGENDAMIENTO, o DISPONIBILIDAD. Responde solo con la categoría en mayúsculas.',
-                    'description': 'Clasificador de intenciones principal del sistema',
-                    'category': 'routing'
-                },
-                'sales_agent': {
-                    'template': 'Eres un especialista en ventas para servicios médicos y estéticos. Proporciona información comercial precisa, destacando beneficios y promoviendo la reserva de citas. Mantén un tono profesional y persuasivo.',
-                    'description': 'Agente comercial especializado en conversión',
-                    'category': 'commercial'
-                },
-                'support_agent': {
-                    'template': 'Eres un asistente de soporte técnico amigable y eficiente. Ayuda a resolver dudas generales, problemas técnicos y proporciona información sobre servicios. Mantén un tono servicial y profesional.',
-                    'description': 'Soporte general y atención al cliente',
-                    'category': 'support'
-                },
-                'emergency_agent': {
-                    'template': 'Eres un asistente para situaciones de emergencia médica. Proporciona información de primeros auxilios básicos, recomienda buscar atención médica inmediata cuando sea necesario, y ofrece números de emergencia. NUNCA des diagnósticos médicos.',
-                    'description': 'Asistencia en emergencias médicas',
-                    'category': 'emergency'
-                },
-                'schedule_agent': {
-                    'template': 'Eres un asistente especializado en agendamiento de citas. Ayuda a los usuarios a programar, modificar o cancelar citas médicas. Proporciona información sobre disponibilidad y confirma los detalles de las citas.',
-                    'description': 'Gestión de citas y programación',
-                    'category': 'scheduling'
-                },
-                'availability_agent': {
-                    'template': 'Eres un asistente que proporciona información sobre disponibilidad de servicios, horarios de atención, y disponibilidad de profesionales. Ofrece alternativas cuando no hay disponibilidad inmediata.',
-                    'description': 'Consulta de disponibilidad y horarios',
-                    'category': 'availability'
-                }
-            }
+            # Buscar archivo custom_prompts.json
+            custom_prompts_file = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 
+                'custom_prompts.json'
+            )
+            
+            if not os.path.exists(custom_prompts_file):
+                logger.error(f"No se encontró custom_prompts.json en {custom_prompts_file}")
+                return False
+            
+            # Cargar prompts desde JSON
+            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+                custom_prompts = json.load(f)
+            
+            logger.info(f"Cargando prompts desde: {custom_prompts_file}")
             
             conn = psycopg2.connect(self.db_connection_string)
             
             with conn.cursor() as cursor:
-                for agent_name, data in default_prompts.items():
-                    cursor.execute("""
-                        INSERT INTO default_prompts (agent_name, template, description, category)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (agent_name) DO UPDATE SET
-                            template = EXCLUDED.template,
-                            description = EXCLUDED.description,
-                            category = EXCLUDED.category,
-                            updated_at = CURRENT_TIMESTAMP
-                    """, (agent_name, data['template'], data['description'], data['category']))
+                # Limpiar defaults existentes
+                cursor.execute("DELETE FROM default_prompts")
+                
+                prompts_count = 0
+                
+                # Extraer default_template de cada empresa/agente
+                for company_id, agents in custom_prompts.items():
+                    if company_id.startswith('_'):  # Skip metadata
+                        continue
+                    
+                    for agent_name, agent_data in agents.items():
+                        if not isinstance(agent_data, dict):
+                            continue
+                        
+                        default_template = agent_data.get('default_template')
+                        if not default_template:
+                            continue
+                        
+                        # Crear entrada única para empresa + agente
+                        unique_agent_key = f"{company_id}_{agent_name}"
+                        description = f"Prompt por defecto para {agent_name} de {company_id}"
+                        
+                        # Determinar categoría
+                        category_mapping = {
+                            'router_agent': 'routing',
+                            'sales_agent': 'sales', 
+                            'support_agent': 'support',
+                            'emergency_agent': 'emergency',
+                            'schedule_agent': 'scheduling',
+                            'availability_agent': 'availability'
+                        }
+                        category = category_mapping.get(agent_name, 'general')
+                        
+                        cursor.execute("""
+                            INSERT INTO default_prompts (agent_name, template, description, category)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (agent_name) DO UPDATE SET
+                                template = EXCLUDED.template,
+                                description = EXCLUDED.description,
+                                category = EXCLUDED.category,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, (unique_agent_key, default_template, description, category))
+                        
+                        prompts_count += 1
+                        logger.info(f"Migrado default_template: {unique_agent_key}")
                 
                 conn.commit()
-                logger.info(f"Default prompts poblados: {len(default_prompts)} agentes")
+                logger.info(f"Default prompts poblados: {prompts_count} prompts específicos por empresa")
                 return True
                 
         except Exception as e:
-            logger.error(f"Error poblando default prompts: {e}")
+            logger.error(f"Error poblando default prompts desde JSON: {e}")
             self.migration_stats["errors"].append(f"Default prompts population failed: {str(e)}")
             return False
         finally:
             if 'conn' in locals():
                 conn.close()
+
     
     def _migrate_custom_prompts_file(self) -> bool:
         """Migrar custom_prompts.json existente a PostgreSQL"""
