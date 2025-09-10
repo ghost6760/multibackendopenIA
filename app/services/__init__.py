@@ -15,6 +15,9 @@ from .vector_auto_recovery import (
     get_system_wide_health
 )
 
+from .prompt_service import PromptService, get_prompt_service, init_prompt_service
+
+
 __all__ = [
     # Basic services
     'ChatwootService',
@@ -39,6 +42,11 @@ __all__ = [
     'initialize_auto_recovery_system',
     'get_auto_recovery_instance',
     'get_system_wide_health'
+
+    # Prompt service
+    'PromptService',
+    'get_prompt_service',
+    'init_prompt_service'
 ]
 
 # Convenience functions for multi-tenant usage
@@ -49,3 +57,7 @@ def get_chatwoot_service(company_id: str) -> ChatwootService:
 def get_vectorstore_service(company_id: str) -> VectorstoreService:
     """Get Vectorstore service for specific company"""
     return VectorstoreService(company_id=company_id)
+    
+def get_prompt_service_for_company(company_id: str = None) -> PromptService:
+    """Get Prompt service (company-agnostic, handles multi-tenancy internally)"""
+    return get_prompt_service()
