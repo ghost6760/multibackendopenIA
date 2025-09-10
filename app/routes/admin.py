@@ -21,26 +21,31 @@ from langchain.schema.output_parser import StrOutputParser
 logger = logging.getLogger(__name__)
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
-def _get_company_id_from_request() -> Optional[str]:
-    """Obtener company_id desde diferentes fuentes en la request"""
-    # 1. Desde JSON body
-    if request.is_json:
-        data = request.get_json()
-        if data and 'company_id' in data:
-            return data['company_id']
-    
-    # 2. Desde query parameters
-    company_id = request.args.get('company_id')
-    if company_id:
-        return company_id
-    
-    # 3. Desde headers
-    company_id = request.headers.get('X-Company-ID')
-    if company_id:
-        return company_id
-    
-    # 4. Default para compatibilidad
-    return None
+def _get_company_id_from_request():
+    """Obtener company_id desde request - COMPATIBLE con GET y POST"""
+    try:
+        # 1. Intentar desde query parameters (GET requests)
+        company_id = request.args.get('company_id')
+        if company_id:
+            return company_id.strip()
+        
+        # 2. Intentar desde JSON body (POST requests)
+        if request.get_json():
+            data = request.get_json()
+            company_id = data.get('company_id')
+            if company_id:
+                return company_id.strip()
+        
+        # 3. Intentar desde form data
+        company_id = request.form.get('company_id')
+        if company_id:
+            return company_id.strip()
+            
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error getting company_id from request: {e}")
+        return None
 
 # ============================================================================
 # ENDPOINTS PARA GESTIÓN DE PROMPTS - VERSIÓN REFACTORIZADA
@@ -48,20 +53,16 @@ def _get_company_id_from_request() -> Optional[str]:
 # ============================================================================
 
 @bp.route('/prompts', methods=['GET'])
-@handle_errors
+@handle_errors  
 def get_prompts():
-    """
-    Obtener prompts actuales - REFACTORIZADO CON POSTGRESQL
-    MANTIENE: Endpoint exacto, formato de respuesta idéntico
-    MEJORA: PostgreSQL con fallbacks, mejor rendimiento
-    """
+    """CORREGIDO: Obtener prompts de empresa desde query params"""
     try:
-        company_id = _get_company_id_from_request()
+        # CORREGIDO: Usar query parameters para GET
+        company_id = request.args.get('company_id')
+        if not company_id or not company_id.strip():
+            return create_error_response("company_id is required in query parameters", 400)
         
-        if not company_id:
-            logger.error("No company_id provided in request")
-            return create_error_response("company_id is required", 400)
-        
+        company_id = company_id.strip()
         logger.info(f"Getting prompts for company: {company_id}")
         
         # Validar empresa
@@ -69,20 +70,23 @@ def get_prompts():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # 🆕 USAR NUEVO SERVICIO DE PROMPTS CON FALLBACKS
+        # NUEVA LÓGICA: Usar PromptService
         prompt_service = get_prompt_service()
         agents_data = prompt_service.get_company_prompts(company_id)
         
-        # MANTENER formato de respuesta exacto para compatibilidad
+        # Obtener status de la base de datos
+        db_status = prompt_service.get_db_status()
+        fallback_info = prompt_service.get_last_fallback_info()
+        
         response_data = {
             "company_id": company_id,
             "agents": agents_data,
-            # 🆕 INFORMACIÓN ADICIONAL SOBRE FALLBACKS (opcional, no rompe compatibilidad)
-            "fallback_used": prompt_service.last_fallback_level,
-            "database_status": prompt_service.get_db_status()
+            "database_status": db_status,
+            "fallback_used": fallback_info.get("level", "none"),
+            "total_agents": len(agents_data),
+            "custom_prompts": len([a for a in agents_data.values() if a.get("is_custom", False)])
         }
         
-        logger.info(f"Successfully loaded prompts for {company_id} using fallback: {prompt_service.last_fallback_level}")
         return create_success_response(response_data)
         
     except Exception as e:
