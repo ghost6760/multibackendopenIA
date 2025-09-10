@@ -3,6 +3,7 @@
 # ============================================================================
 FROM python:3.11-slim
 
+
 # Variables de entorno para Python
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
