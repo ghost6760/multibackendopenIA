@@ -113,22 +113,26 @@ class PromptsSystemFixer:
                 ) AS $$
                 DECLARE
                     repair_count INTEGER := 0;
+                    agent_key_pattern VARCHAR(200);
                 BEGIN
                     -- Si se especifica un agente específico
                     IF p_agent_name IS NOT NULL THEN
-                        -- Verificar que existe en default_prompts (usando alias para evitar ambigüedad)
-                        IF EXISTS (SELECT 1 FROM default_prompts dp WHERE dp.agent_name = p_agent_name) THEN
-                            -- Insertar prompt personalizado desde default
+                        -- Buscar con patrón empresa_agente o agente genérico
+                        agent_key_pattern := p_company_id || '_' || p_agent_name;
+                        
+                        -- Verificar que existe en default_prompts (con alias para evitar ambigüedad)
+                        IF EXISTS (SELECT 1 FROM default_prompts dp WHERE dp.agent_name = agent_key_pattern) THEN
+                            -- Insertar prompt personalizado desde default específico
                             INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
                             SELECT 
                                 p_company_id, 
-                                dp.agent_name,
+                                p_agent_name,  -- Usar nombre original del agente, no la clave compuesta
                                 dp.template,
                                 p_repair_user,
                                 p_repair_user,
-                                'Reparado desde repositorio'
+                                'Reparado desde repositorio específico'
                             FROM default_prompts dp
-                            WHERE dp.agent_name = p_agent_name
+                            WHERE dp.agent_name = agent_key_pattern
                             ON CONFLICT (company_id, agent_name) DO UPDATE SET
                                 template = EXCLUDED.template,
                                 modified_by = EXCLUDED.modified_by,
@@ -139,7 +143,31 @@ class PromptsSystemFixer:
                                 p_agent_name, 
                                 'REPAIRED'::VARCHAR(50), 
                                 true, 
-                                'Prompt reparado exitosamente'::TEXT;
+                                'Prompt reparado desde template específico'::TEXT;
+                            
+                        -- Fallback a template genérico
+                        ELSIF EXISTS (SELECT 1 FROM default_prompts dp WHERE dp.agent_name = p_agent_name) THEN
+                            INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                            SELECT 
+                                p_company_id, 
+                                p_agent_name,
+                                dp.template,
+                                p_repair_user,
+                                p_repair_user,
+                                'Reparado desde repositorio genérico'
+                            FROM default_prompts dp
+                            WHERE dp.agent_name = p_agent_name
+                            ON CONFLICT (company_id, agent_name) DO UPDATE SET
+                                template = EXCLUDED.template,
+                                modified_by = EXCLUDED.modified_by,
+                                modified_at = CURRENT_TIMESTAMP,
+                                notes = EXCLUDED.notes;
+                            
+                            RETURN QUERY SELECT 
+                                p_agent_name, 
+                                'REPAIRED_GENERIC'::VARCHAR(50), 
+                                true, 
+                                'Prompt reparado desde template genérico'::TEXT;
                         ELSE
                             RETURN QUERY SELECT 
                                 p_agent_name, 
@@ -152,12 +180,17 @@ class PromptsSystemFixer:
                         INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
                         SELECT 
                             p_company_id, 
-                            dp.agent_name,
+                            CASE 
+                                WHEN dp.agent_name LIKE p_company_id || '_%' THEN 
+                                    SUBSTRING(dp.agent_name FROM LENGTH(p_company_id) + 2)
+                                ELSE dp.agent_name
+                            END as clean_agent_name,
                             dp.template,
                             p_repair_user,
                             p_repair_user,
                             'Reparación masiva desde repositorio'
                         FROM default_prompts dp
+                        WHERE dp.agent_name LIKE p_company_id || '_%' OR dp.agent_name IN ('router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent')
                         ON CONFLICT (company_id, agent_name) DO UPDATE SET
                             template = EXCLUDED.template,
                             modified_by = EXCLUDED.modified_by,
@@ -174,52 +207,6 @@ class PromptsSystemFixer:
                     END IF;
                     
                     RETURN;
-                END;
-                $$ LANGUAGE plpgsql;
-                """
-                
-                cursor.execute(repair_function_sql)
-                
-                # Crear función create_prompt_version corregida
-                version_function_sql = """
-                CREATE OR REPLACE FUNCTION create_prompt_version()
-                RETURNS TRIGGER AS $$
-                DECLARE
-                    next_version INTEGER;
-                    action_type VARCHAR(50);
-                BEGIN
-                    -- Determinar el tipo de acción
-                    IF TG_OP = 'INSERT' THEN
-                        action_type := 'CREATE';
-                    ELSIF TG_OP = 'UPDATE' THEN
-                        action_type := 'UPDATE';
-                    ELSE
-                        action_type := 'UNKNOWN';
-                    END IF;
-                    
-                    -- Solo proceder si el registro tiene ID (existe en custom_prompts)
-                    IF NEW.id IS NOT NULL THEN
-                        -- Obtener el siguiente número de versión para este prompt
-                        SELECT COALESCE(MAX(version), 0) + 1 
-                        INTO next_version
-                        FROM prompt_versions 
-                        WHERE prompt_id = NEW.id;
-                        
-                        -- Insertar nueva versión
-                        INSERT INTO prompt_versions (
-                            prompt_id, company_id, agent_name, template, 
-                            version, action, created_by, notes
-                        ) VALUES (
-                            NEW.id, NEW.company_id, NEW.agent_name, NEW.template,
-                            next_version, action_type, NEW.modified_by, 
-                            CASE 
-                                WHEN action_type = 'CREATE' THEN 'Prompt creado'
-                                ELSE 'Prompt actualizado'
-                            END
-                        );
-                    END IF;
-                    
-                    RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql;
                 """
