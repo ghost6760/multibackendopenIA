@@ -364,6 +364,28 @@ Ayuda al usuario de manera profesional."""
     # ============================================================================
     # FUNCIONES DE COMPATIBILIDAD - MANTENER PARA NO ROMPER AGENTES EXISTENTES
     # ============================================================================
+
+    def invoke(self, inputs: Dict[str, Any]) -> str:
+        """
+        🆕 NUEVO MÉTODO: Invoke compatible con orchestrator
+        Mapea la interfaz estándar de LangChain a nuestro process_message
+        """
+        try:
+            question = inputs.get("question", "")
+            chat_history = inputs.get("chat_history", [])
+            context = inputs.get("context", "")
+            
+            if not question:
+                return f"No se proporcionó una pregunta válida para {self.company_config.company_name}."
+            
+            # Usar el método existente process_message
+            return self.process_message(question, chat_history, context)
+            
+        except Exception as e:
+            logger.error(f"Error in invoke method for {self.agent_name}: {e}")
+            return f"Lo siento, estoy experimentando dificultades técnicas. Por favor, contacta con {self.company_config.company_name} directamente."
+
+
     
     def process_message(self, question: str, chat_history: List[BaseMessage] = None, context: str = "") -> str:
         """
