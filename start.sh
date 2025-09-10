@@ -11,8 +11,8 @@ fi
 
 echo "📊 DATABASE_URL configurada: ${DATABASE_URL:0:20}..."
 
-# NUEVA ESTRATEGIA: Ejecutar el schema SQL directamente primero
-echo "🔧 Ejecutando schema PostgreSQL directamente..."
+# NUEVA ESTRATEGIA: Verificar y crear schema solo si es necesario
+echo "🔧 Verificando y ejecutando schema PostgreSQL..."
 python -c "
 import os
 import psycopg2
@@ -23,33 +23,52 @@ try:
     conn.autocommit = True
     cursor = conn.cursor()
     
-    # Leer y ejecutar el schema SQL
-    with open('postgresql_schema.sql', 'r', encoding='utf-8') as f:
-        schema_sql = f.read()
-    
-    print('📄 Ejecutando schema SQL...')
-    cursor.execute(schema_sql)
-    print('✅ Schema SQL ejecutado exitosamente')
-    
-    # Verificar tablas creadas
+    # Verificar si las tablas ya existen
     cursor.execute('''
         SELECT table_name FROM information_schema.tables 
         WHERE table_schema = \'public\' 
         AND table_name IN (\'custom_prompts\', \'default_prompts\', \'prompt_versions\')
     ''')
     
-    tables = [row[0] for row in cursor.fetchall()]
-    print(f'📊 Tablas creadas: {tables}')
+    existing_tables = [row[0] for row in cursor.fetchall()]
+    print(f'📊 Tablas existentes: {existing_tables}')
     
-    if len(tables) == 3:
-        print('✅ Todas las tablas fueron creadas correctamente')
+    if len(existing_tables) == 3:
+        print('✅ Todas las tablas ya existen, saltando creación de schema')
     else:
-        print(f'⚠️ Solo se crearon {len(tables)} de 3 tablas esperadas')
+        print(f'📄 Ejecutando schema SQL (faltan {3 - len(existing_tables)} tablas)...')
+        
+        # Leer y ejecutar el schema SQL con CREATE IF NOT EXISTS
+        with open('postgresql_schema.sql', 'r', encoding='utf-8') as f:
+            schema_sql = f.read()
+        
+        # Modificar el SQL para usar IF NOT EXISTS
+        schema_sql = schema_sql.replace('CREATE TABLE custom_prompts', 'CREATE TABLE IF NOT EXISTS custom_prompts')
+        schema_sql = schema_sql.replace('CREATE TABLE prompt_versions', 'CREATE TABLE IF NOT EXISTS prompt_versions')
+        schema_sql = schema_sql.replace('CREATE TABLE default_prompts', 'CREATE TABLE IF NOT EXISTS default_prompts')
+        
+        cursor.execute(schema_sql)
+        print('✅ Schema SQL ejecutado exitosamente')
+    
+    # Verificar tablas finales
+    cursor.execute('''
+        SELECT table_name FROM information_schema.tables 
+        WHERE table_schema = \'public\' 
+        AND table_name IN (\'custom_prompts\', \'default_prompts\', \'prompt_versions\')
+    ''')
+    
+    final_tables = [row[0] for row in cursor.fetchall()]
+    print(f'📊 Tablas disponibles: {final_tables}')
+    
+    if len(final_tables) == 3:
+        print('✅ Todas las tablas están disponibles')
+    else:
+        print(f'⚠️ Solo hay {len(final_tables)} de 3 tablas esperadas')
     
     conn.close()
     
 except Exception as e:
-    print(f'❌ Error ejecutando schema: {e}')
+    print(f'❌ Error verificando/creando schema: {e}')
     exit(1)
 "
 
