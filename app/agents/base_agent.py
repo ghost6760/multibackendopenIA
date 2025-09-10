@@ -176,10 +176,10 @@ class BaseAgent(ABC):
             return None
     
     def _build_custom_prompt_template(self, custom_template: str) -> ChatPromptTemplate:
-        """Construir ChatPromptTemplate desde template personalizado"""
+        """Construir ChatPromptTemplate desde template personalizado - CORREGIDO"""
         try:
             # Verificar si el template ya incluye variables de contexto
-            if "{company_name}" in custom_template or "{services}" in custom_template:
+            if "{company_name}" in custom_template:
                 # Template ya tiene contexto, usar directamente
                 return ChatPromptTemplate.from_messages([
                     ("system", custom_template),
@@ -187,14 +187,13 @@ class BaseAgent(ABC):
                     ("human", "{question}")
                 ])
             else:
-                # Añadir contexto empresarial al template
+                # Añadir SOLO company_name, NO services
                 enhanced_template = f"""{custom_template}
-
-CONTEXTO DE LA EMPRESA:
-- Empresa: {{company_name}}
-- Servicios: {{services}}
-
-Responde de manera profesional y acorde a la empresa."""
+    
+    CONTEXTO DE LA EMPRESA:
+    - Empresa: {{company_name}}
+    
+    Responde de manera profesional y acorde a la empresa."""
                 
                 return ChatPromptTemplate.from_messages([
                     ("system", enhanced_template),
@@ -208,15 +207,15 @@ Responde de manera profesional y acorde a la empresa."""
             return self._create_default_prompt_template()
     
     def _create_emergency_prompt_template(self) -> ChatPromptTemplate:
-        """Template de emergencia cuando todo falla"""
+        """Template de emergencia cuando todo falla - CORREGIDO"""
         agent_key = self._get_agent_key()
+        # ELIMINAR {services} del template de emergencia
         emergency_template = f"""Eres un asistente de {self.company_config.company_name}.
-Sistema en modo de recuperación - Prompt de emergencia para {agent_key}.
-
-Empresa: {{company_name}}
-Servicios: {{services}}
-
-Ayuda al usuario de manera profesional."""
+    Sistema en modo de recuperación - Prompt de emergencia para {agent_key}.
+    
+    Empresa: {{company_name}}
+    
+    Ayuda al usuario de manera profesional."""
         
         return ChatPromptTemplate.from_messages([
             ("system", emergency_template),
