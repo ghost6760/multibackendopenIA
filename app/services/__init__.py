@@ -1,5 +1,4 @@
 """Services package initialization - Enhanced for Multi-tenant"""
-
 from .chatwoot_service import ChatwootService
 from .openai_service import OpenAIService, init_openai
 from .redis_service import get_redis_client, init_redis, close_redis
@@ -14,9 +13,7 @@ from .vector_auto_recovery import (
     get_auto_recovery_instance,
     get_system_wide_health
 )
-
 from .prompt_service import PromptService, get_prompt_service, init_prompt_service
-
 
 __all__ = [
     # Basic services
@@ -41,8 +38,8 @@ __all__ = [
     'VectorstoreProtectionMiddleware', 
     'initialize_auto_recovery_system',
     'get_auto_recovery_instance',
-    'get_system_wide_health'
-
+    'get_system_wide_health',
+    
     # Prompt service
     'PromptService',
     'get_prompt_service',
