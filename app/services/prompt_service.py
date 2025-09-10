@@ -26,6 +26,10 @@ class PromptService:
         self.last_fallback_level = None
         self.repair_summary = []
         
+        # Información de último fallback usado
+        self._last_fallback_info = {"level": "none", "source": "postgresql"}
+        self._db_status = "connected"
+        
         # Cache para prompts hardcodeados (fallback nivel 3)
         self._hardcoded_prompts = {
             'router_agent': 'Eres un asistente especializado en clasificar intenciones. Responde con: VENTAS, SOPORTE, EMERGENCIA, AGENDAMIENTO, o DISPONIBILIDAD.',
@@ -35,6 +39,10 @@ class PromptService:
             'schedule_agent': 'Eres un asistente de agendamiento. Ayuda a programar, modificar o cancelar citas médicas.',
             'availability_agent': 'Eres un asistente de disponibilidad. Proporciona información sobre horarios y disponibilidad de servicios.'
         }
+    
+    def get_last_fallback_info(self) -> dict:
+        """Obtener información del último fallback usado"""
+        return self._last_fallback_info
     
     def get_db_connection(self) -> Optional[psycopg2.extensions.connection]:
         """Obtener conexión a PostgreSQL con manejo de errores"""
@@ -77,6 +85,7 @@ class PromptService:
             pg_prompts = self._get_prompts_from_postgresql(company_id, expected_agents)
             if pg_prompts:
                 self.last_fallback_level = "postgresql"
+                self._last_fallback_info = {"level": "postgresql", "source": "database"}
                 return pg_prompts
         except Exception as e:
             logger.warning(f"PostgreSQL fallback failed: {e}")
@@ -86,6 +95,7 @@ class PromptService:
             json_prompts = self._get_prompts_from_json(company_id, expected_agents)
             if json_prompts:
                 self.last_fallback_level = "json_fallback"
+                self._last_fallback_info = {"level": "json_fallback", "source": "file"}
                 return json_prompts
         except Exception as e:
             logger.warning(f"JSON fallback failed: {e}")
@@ -93,6 +103,7 @@ class PromptService:
         # NIVEL 3: Fallback a prompts hardcodeados
         logger.warning(f"Using hardcoded prompts fallback for {company_id}")
         self.last_fallback_level = "hardcoded"
+        self._last_fallback_info = {"level": "hardcoded", "source": "emergency_fallback"}
         
         for agent_name in expected_agents:
             agents_data[agent_name] = {
@@ -487,6 +498,7 @@ class PromptService:
         try:
             conn = self.get_db_connection()
             if not conn:
+                self._db_status = "failed"
                 return {
                     "postgresql_available": False,
                     "connection_status": "failed",
@@ -517,6 +529,7 @@ class PromptService:
                     cursor.execute("SELECT COUNT(*) as count FROM default_prompts")
                     total_defaults = cursor.fetchone()['count']
                 
+                self._db_status = "connected"
                 return {
                     "postgresql_available": True,
                     "connection_status": "connected",
@@ -529,6 +542,7 @@ class PromptService:
                 
         except Exception as e:
             logger.error(f"Error checking DB status: {e}")
+            self._db_status = f"error: {str(e)}"
             return {
                 "postgresql_available": False,
                 "connection_status": "error",
