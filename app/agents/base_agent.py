@@ -120,21 +120,35 @@ class BaseAgent(ABC):
             return None
     
     def _load_default_prompt_from_postgresql(self) -> Optional[str]:
-        """Cargar prompt por defecto desde PostgreSQL default_prompts"""
+        """Cargar prompt por defecto desde PostgreSQL usando clave específica por empresa"""
         try:
+            if not self.prompt_service:
+                return None
+            
             company_id = self.company_config.company_id
             agent_key = self._get_agent_key()
             
+            # Buscar con clave específica empresa_agente
+            company_agent_key = f"{company_id}_{agent_key}"
+            
             # Usar el servicio de prompts
             agents_data = self.prompt_service.get_company_prompts(company_id)
-            agent_data = agents_data.get(agent_key, {})
             
-            # Solo retornar si viene de default_prompts
-            if (agent_data.get('source') in ['default', 'postgresql_default'] and
-                agent_data.get('current_prompt')):
-                
-                logger.info(f"[{company_id}] Loaded default prompt from PostgreSQL for {agent_key}")
-                return agent_data['current_prompt']
+            # Buscar primero con clave específica
+            if company_agent_key in agents_data:
+                agent_data = agents_data[company_agent_key]
+                if (agent_data.get('source') in ['default', 'postgresql_default'] and
+                    agent_data.get('current_prompt')):
+                    logger.info(f"[{company_id}] Loaded company-specific default prompt for {agent_key}")
+                    return agent_data['current_prompt']
+            
+            # Fallback a clave genérica
+            if agent_key in agents_data:
+                agent_data = agents_data[agent_key]
+                if (agent_data.get('source') in ['default', 'postgresql_default'] and
+                    agent_data.get('current_prompt')):
+                    logger.info(f"[{company_id}] Loaded generic default prompt for {agent_key}")
+                    return agent_data['current_prompt']
             
             return None
             
