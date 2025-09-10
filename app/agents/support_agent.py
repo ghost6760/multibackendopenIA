@@ -22,13 +22,14 @@ class SupportAgent(BaseAgent):
         self._create_chain()
     
     def _create_chain(self):
-        """Crear cadena de soporte con contexto"""
+        """Crear cadena de soporte con contexto - CORREGIDO"""
         self.chain = (
             {
                 "context": self._get_support_context,
                 "question": lambda x: x.get("question", ""),
                 "chat_history": lambda x: x.get("chat_history", []),
-                "company_name": lambda x: self.company_config.company_name
+                "company_name": lambda x: self.company_config.company_name,
+                "services": lambda x: self.company_config.services  # ✅ AÑADIDO
             }
             | self.prompt_template
             | self.chat_model
