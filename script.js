@@ -2466,6 +2466,25 @@ async function loadPromptsTab() {
     let html = `
         <div class="prompts-management">
             <h3>🤖 Gestión de Prompts - ${currentCompanyId}</h3>
+            
+            <!-- 🆕 NUEVO: Panel de estado del sistema -->
+            <div class="prompts-system-status" id="prompts-system-status">
+                <div class="status-indicator" id="db-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Verificando estado del sistema...</span>
+                </div>
+            </div>
+            
+            <!-- 🆕 NUEVO: Botón de reparación global -->
+            <div class="prompts-actions">
+                <button onclick="repairPrompts()" class="btn-repair" id="repair-all-btn">
+                    🔧 Reparar Todos los Prompts
+                </button>
+                <button onclick="migratePromptsToPostgreSQL()" class="btn-migrate" id="migrate-btn" style="display: none;">
+                    🚀 Migrar a PostgreSQL
+                </button>
+            </div>
+            
             <div class="prompts-grid">
     `;
     
@@ -2480,6 +2499,8 @@ async function loadPromptsTab() {
                     <button onclick="updatePrompt('${agentName}')" class="btn-primary">Actualizar</button>
                     <button onclick="resetPrompt('${agentName}')" class="btn-secondary">Restaurar</button>
                     <button onclick="previewPrompt('${agentName}')" class="btn-info">Vista Previa</button>
+                    <!-- 🆕 NUEVO: Botón reparar individual -->
+                    <button onclick="repairPrompts('${agentName}')" class="btn-repair-small">🔧 Reparar</button>
                 </div>
             </div>
         `;
@@ -2492,8 +2513,11 @@ async function loadPromptsTab() {
     
     container.innerHTML = html;
     
-    // Cargar prompts actuales
-    await loadCurrentPrompts();
+    // Cargar prompts actuales y estado del sistema
+    await Promise.all([
+        loadCurrentPrompts(),
+        loadPromptsSystemStatus()
+    ]);
 }
 
 async function loadCurrentPrompts() {
@@ -2504,50 +2528,50 @@ async function loadCurrentPrompts() {
     }
     
     try {
-        addToLog(`Loading prompts for company: ${currentCompanyId}`, 'info');
-        const response = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId}`);
+        addToLog(`Loading prompts for company ${currentCompanyId}`, 'info');
         
-        console.log('Prompts response:', response); // Debug
+        const response = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId}`, {
+            method: 'GET'
+        });
         
-        if (!response || !response.agents) {
-            throw new Error('Invalid response format - no agents data');
-        }
-        
-        // Verificar si hay prompts vacíos
-        let hasAnyPrompt = false;
-        
-        for (const [agentName, promptData] of Object.entries(response.agents)) {
-            const textarea = document.getElementById(`prompt-${agentName}`);
-            const status = document.getElementById(`status-${agentName}`);
-            
-            if (textarea && promptData) {
-                // Verificar si el prompt está vacío o es genérico
-                const promptText = promptData.current_prompt || '';
+        if (response && response.agents) {
+            // MANTENER: Procesamiento de datos exacto
+            Object.entries(response.agents).forEach(([agentName, agentData]) => {
+                const textarea = document.getElementById(`prompt-${agentName}`);
+                const statusDiv = document.getElementById(`status-${agentName}`);
                 
-                if (promptText && !promptText.startsWith('Default prompt for')) {
-                    textarea.value = promptText;
-                    hasAnyPrompt = true;
+                if (textarea && statusDiv) {
+                    textarea.value = agentData.current_prompt || '';
                     textarea.disabled = false;
-                } else {
-                    // Si está vacío, mostrar mensaje informativo
-                    textarea.value = `[Prompt por defecto no configurado]\n\nPuedes crear un prompt personalizado para ${agentName.replace(/_/g, ' ')} escribiendo aquí y haciendo clic en "Actualizar".`;
-                    textarea.disabled = false;
-                }
-                
-                if (status) {
-                    if (promptData.is_custom) {
-                        status.innerHTML = `<span class="custom">✏️ Personalizado</span>`;
-                    } else {
-                        status.innerHTML = `<span class="default">🔧 Por defecto</span>`;
+                    
+                    // MEJORADO: Mostrar información de estado y fallback
+                    const isCustom = agentData.is_custom || false;
+                    const lastModified = agentData.last_modified;
+                    const fallbackLevel = agentData.fallback_level || 'unknown';
+                    const source = agentData.source || 'unknown';
+                    
+                    let statusText = isCustom ? 
+                        `✅ Personalizado${lastModified ? ` (${new Date(lastModified).toLocaleDateString()})` : ''}` : 
+                        '🔵 Por defecto';
+                    
+                    // 🆕 NUEVO: Indicador de nivel de fallback
+                    if (fallbackLevel && fallbackLevel !== 'postgresql') {
+                        statusText += ` - Fallback: ${fallbackLevel}`;
                     }
+                    
+                    statusDiv.textContent = statusText;
+                    statusDiv.className = `prompt-status ${isCustom ? 'custom' : 'default'} ${fallbackLevel}`;
                 }
+            });
+            
+            // 🆕 NUEVO: Actualizar estado del sistema si está disponible
+            if (response.database_status) {
+                updateSystemStatusDisplay(response.database_status, response.fallback_used);
             }
-        }
-        
-        if (hasAnyPrompt) {
-            showNotification('Prompts cargados exitosamente', 'success');
+            
+            addToLog(`Prompts loaded successfully (${Object.keys(response.agents).length} agents)`, 'success');
         } else {
-            showNotification('No hay prompts configurados. Puedes crear prompts personalizados.', 'info');
+            showNotification('No se encontraron prompts. Puedes crear prompts personalizados.', 'info');
         }
         
     } catch (error) {
@@ -2580,7 +2604,7 @@ async function updatePrompt(agentName) {
         toggleLoadingOverlay(true);
         addToLog(`Updating prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
-        // CORRECCIÓN: Asegurar que se envía como objeto
+        // MANTENER: Formato de request exacto
         const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
             method: 'PUT',
             body: {
@@ -2589,7 +2613,13 @@ async function updatePrompt(agentName) {
             }
         });
         
-        showNotification(`Prompt de ${agentName} actualizado exitosamente`, 'success');
+        // 🆕 MEJORADO: Mostrar información de versionado si está disponible
+        let successMessage = `Prompt de ${agentName} actualizado exitosamente`;
+        if (response.version) {
+            successMessage += ` (v${response.version})`;
+        }
+        
+        showNotification(successMessage, 'success');
         await loadCurrentPrompts(); // Recargar estado
         
     } catch (error) {
@@ -2614,6 +2644,7 @@ async function resetPrompt(agentName) {
         toggleLoadingOverlay(true);
         addToLog(`Resetting prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
+        // MANTENER: Request exacto
         const response = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId}`, {
             method: 'DELETE'
         });
@@ -2629,7 +2660,10 @@ async function resetPrompt(agentName) {
     }
 }
 
-
+/**
+ * MANTENER EXACTAMENTE - Vista previa de prompt
+ * NO CAMBIAR: Lógica, validaciones, formato de request
+ */
 async function previewPrompt(agentName) {
     if (!currentCompanyId) {
         showNotification('Por favor selecciona una empresa primero', 'warning');
@@ -2651,7 +2685,7 @@ async function previewPrompt(agentName) {
         toggleLoadingOverlay(true);
         addToLog(`Previewing prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
-        // CORRECCIÓN: Asegurar que se envía como objeto
+        // MANTENER: Formato de request exacto
         const response = await apiRequest('/api/admin/prompts/preview', {
             method: 'POST',
             body: {
@@ -2671,6 +2705,178 @@ async function previewPrompt(agentName) {
     } finally {
         toggleLoadingOverlay(false);
     }
+}
+
+// ============================================================================
+// 🆕 NUEVAS FUNCIONES - REPARAR Y MIGRACIÓN
+// ============================================================================
+
+/**
+ * 🆕 NUEVA FUNCIÓN - Reparar prompts desde repositorio
+ * Restaura prompts corruptos o faltantes desde default_prompts
+ */
+async function repairPrompts(agentName = null) {
+    if (!currentCompanyId) {
+        showNotification('Por favor selecciona una empresa primero', 'warning');
+        return;
+    }
+    
+    const confirmMessage = agentName 
+        ? `¿Reparar prompt de ${agentName} desde repositorio?\n\nEsto restaurará el prompt a la versión por defecto del repositorio.`
+        : '¿Reparar TODOS los prompts desde repositorio?\n\nEsto restaurará todos los prompts a las versiones por defecto del repositorio.';
+        
+    if (!confirm(confirmMessage)) return;
+    
+    try {
+        toggleLoadingOverlay(true);
+        addToLog(`Repairing prompts from repository for company ${currentCompanyId}${agentName ? ` (agent: ${agentName})` : ''}`, 'info');
+        
+        const response = await apiRequest('/api/admin/prompts/repair', {
+            method: 'POST',
+            body: {
+                company_id: currentCompanyId,
+                agent_name: agentName
+            }
+        });
+        
+        if (response.repaired_items && response.repaired_items.length > 0) {
+            const successCount = response.total_repaired || 0;
+            const totalCount = response.total_attempted || 0;
+            
+            showNotification(
+                `Reparación completada: ${successCount}/${totalCount} prompts reparados exitosamente`, 
+                'success'
+            );
+            
+            // Mostrar detalles en log
+            response.repaired_items.forEach(item => {
+                addToLog(`${item.agent_name}: ${item.success ? '✅' : '❌'} ${item.message}`, 
+                        item.success ? 'success' : 'error');
+            });
+        } else {
+            showNotification('Reparación completada, pero no se encontraron elementos para reparar', 'info');
+        }
+        
+        await loadCurrentPrompts(); // Recargar
+        
+    } catch (error) {
+        console.error('Error repairing prompts:', error);
+        showNotification('Error al reparar prompts: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * 🆕 NUEVA FUNCIÓN - Migrar prompts existentes a PostgreSQL
+ * Función administrativa para transición de JSON a PostgreSQL
+ */
+async function migratePromptsToPostgreSQL() {
+    if (!confirm('¿Migrar prompts de JSON a PostgreSQL?\n\nEsta operación migrará todos los prompts personalizados existentes a la base de datos PostgreSQL.')) {
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        addToLog('Starting migration from JSON to PostgreSQL...', 'info');
+        
+        const response = await apiRequest('/api/admin/prompts/migrate', {
+            method: 'POST',
+            body: {
+                force: false
+            }
+        });
+        
+        if (response.statistics) {
+            const stats = response.statistics;
+            showNotification(
+                `Migración completada: ${stats.prompts_migrated} prompts de ${stats.companies_migrated} empresas`, 
+                'success'
+            );
+            
+            addToLog(`Migration statistics: ${JSON.stringify(stats, null, 2)}`, 'info');
+        }
+        
+        // Ocultar botón de migración
+        const migrateBtn = document.getElementById('migrate-btn');
+        if (migrateBtn) migrateBtn.style.display = 'none';
+        
+        await loadCurrentPrompts(); // Recargar
+        
+    } catch (error) {
+        console.error('Error in migration:', error);
+        showNotification('Error en migración: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * 🆕 NUEVA FUNCIÓN - Cargar estado del sistema de prompts
+ * Muestra información sobre PostgreSQL, fallbacks, etc.
+ */
+async function loadPromptsSystemStatus() {
+    try {
+        const response = await apiRequest('/api/admin/status', {
+            method: 'GET'
+        });
+        
+        if (response && response.prompt_system) {
+            updateSystemStatusDisplay(response.prompt_system);
+        }
+        
+    } catch (error) {
+        console.error('Error loading system status:', error);
+        updateSystemStatusDisplay(null, 'error');
+    }
+}
+
+/**
+ * 🆕 NUEVA FUNCIÓN - Actualizar display del estado del sistema
+ */
+function updateSystemStatusDisplay(systemStatus, fallbackUsed = null) {
+    const statusContainer = document.getElementById('prompts-system-status');
+    const dbStatus = document.getElementById('db-status');
+    const migrateBtn = document.getElementById('migrate-btn');
+    
+    if (!dbStatus) return;
+    
+    if (!systemStatus) {
+        dbStatus.innerHTML = `
+            <span class="status-dot error"></span>
+            <span class="status-text">Estado del sistema no disponible</span>
+        `;
+        return;
+    }
+    
+    const isPostgreSQLAvailable = systemStatus.postgresql_available;
+    const tablesExist = systemStatus.tables_status || systemStatus.tables_exist;
+    const fallbackActive = systemStatus.fallback_active || fallbackUsed;
+    
+    let statusText = '';
+    let statusClass = '';
+    
+    if (isPostgreSQLAvailable && tablesExist) {
+        statusText = `✅ PostgreSQL Activo (${systemStatus.total_custom_prompts || 0} prompts personalizados)`;
+        statusClass = 'success';
+    } else if (isPostgreSQLAvailable && !tablesExist) {
+        statusText = '⚠️ PostgreSQL disponible - Tablas no creadas';
+        statusClass = 'warning';
+        if (migrateBtn) migrateBtn.style.display = 'inline-block';
+    } else if (fallbackActive) {
+        statusText = `⚠️ Modo Fallback Activo (${fallbackUsed || fallbackActive})`;
+        statusClass = 'warning';
+    } else {
+        statusText = '❌ Sistema de prompts no disponible';
+        statusClass = 'error';
+    }
+    
+    dbStatus.innerHTML = `
+        <span class="status-dot ${statusClass}"></span>
+        <span class="status-text">${statusText}</span>
+    `;
+    
+    dbStatus.className = `status-indicator ${statusClass}`;
 }
 
 function showPreviewModal(agentName, testMessage, previewResponse) {
@@ -2744,6 +2950,10 @@ window.resetPrompt = resetPrompt;
 window.previewPrompt = previewPrompt;
 window.showPreviewModal = showPreviewModal;
 window.closeModal = closeModal; // Ya existe, pero importante para el modal de prompts
+window.repairPrompts = repairPrompts;
+window.migratePromptsToPostgreSQL = migratePromptsToPostgreSQL;
+window.loadPromptsSystemStatus = loadPromptsSystemStatus;
+window.updateSystemStatusDisplay = updateSystemStatusDisplay;
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
