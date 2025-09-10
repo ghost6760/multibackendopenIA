@@ -1,5 +1,3 @@
-# app/agents/support_agent.py - FIXED VERSION
-
 from app.agents.base_agent import BaseAgent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema.output_parser import StrOutputParser
