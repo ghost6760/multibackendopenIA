@@ -8,6 +8,7 @@ from app.services.vectorstore_service import init_vectorstore
 from app.services.openai_service import init_openai
 from app.config.company_config import get_company_manager
 from app.services.multi_agent_factory import get_multi_agent_factory
+from app.services.prompt_service import get_prompt_service
 
 # Importar blueprints existentes
 from app.routes import webhook, documents, conversations, health, multimedia
@@ -23,6 +24,7 @@ import sys
 import threading
 import time
 import os
+import subprocess
 
 def create_app(config_class=Config):
     """Factory pattern para crear la aplicación Flask multi-tenant"""
@@ -488,13 +490,45 @@ def startup_checks(app):
         raise
 
 def delayed_multitenant_initialization(app):
-    """Inicialización inteligente multi-tenant en background - FIXED"""
-    max_attempts = 5  # Reducido de 10 a 5
+    """Inicialización inteligente multi-tenant en background - CON MIGRACIÓN DE PROMPTS"""
+    max_attempts = 5
     attempt = 0
     
     with app.app_context():
         logger = app.logger
         
+        # 🆕 NUEVO: Ejecutar migración de prompts al inicio
+        try:
+            logger.info("🔄 Ejecutando migración automática de prompts...")
+            
+            # Ejecutar migración de prompts
+            migration_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'migrate_prompts_to_postgresql.py')
+            if os.path.exists(migration_script):
+                result = subprocess.run([
+                    'python', migration_script, '--auto'
+                ], capture_output=True, text=True, timeout=60)
+                
+                if result.returncode == 0:
+                    logger.info("✅ Migración de prompts completada exitosamente")
+                else:
+                    logger.warning(f"⚠️ Migración de prompts con advertencias: {result.stderr}")
+            else:
+                # Fallback: ejecutar migración directamente
+                logger.info("Ejecutando migración directa de prompts...")
+                from migrate_prompts_to_postgresql import PromptMigrationManager
+                migrator = PromptMigrationManager()
+                stats = migrator.run_complete_migration()
+                
+                if stats.get("success", False):
+                    logger.info("✅ Migración directa de prompts exitosa")
+                else:
+                    logger.warning(f"⚠️ Migración directa con errores: {stats.get('errors', [])}")
+        
+        except Exception as e:
+            logger.error(f"❌ Error en migración automática de prompts: {e}")
+            # Continuar con el startup aunque falle la migración
+        
+        # Resto del código de inicialización multi-tenant existente...
         while attempt < max_attempts:
             try:
                 attempt += 1
@@ -508,39 +542,33 @@ def delayed_multitenant_initialization(app):
                     continue
                 
                 factory = get_multi_agent_factory()
-                
-                # FIX: Verificación simplificada sin health_check
                 working_companies = 0
                 
                 for company_id in companies.keys():
                     try:
                         orchestrator = factory.get_orchestrator(company_id)
                         if orchestrator:
-                            # REMOVED: health_check() que causaba el bucle infinito
-                            # Solo verificar que el orchestrator se pudo crear
                             working_companies += 1
                             logger.debug(f"✅ Orchestrator created for {company_id}")
                     except Exception as e:
                         logger.debug(f"Company {company_id} not ready: {e}")
                         continue
                 
-                # CAMBIO: Aceptar si al menos se creó un orchestrator
                 if working_companies > 0:
                     logger.info(f"✅ Multi-tenant system operational with {working_companies}/{len(companies)} companies ready")
                     break
                 else:
                     logger.info(f"⏳ Waiting for companies to be ready... attempt {attempt}")
                 
-                # REDUCIDO: Menos tiempo de espera
                 time.sleep(1)
                 
             except Exception as e:
                 logger.error(f"Error in delayed multi-tenant initialization attempt {attempt}: {e}")
                 time.sleep(1)
         
-        # CAMBIO: Mensaje menos dramático
         if attempt >= max_attempts:
             logger.warning("⚠️ Multi-tenant initialization completed with limited companies")
+
 
 def start_background_initialization(app):
     """Iniciar proceso de inicialización multi-tenant en background"""
