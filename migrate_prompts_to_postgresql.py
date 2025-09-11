@@ -96,30 +96,50 @@ class PromptMigrationManager:
             return self.migration_stats
     
     def _create_database_schema(self) -> bool:
-        """Crear schema PostgreSQL si no existe"""
-        logger.info("Creando schema PostgreSQL...")
+        """Crear schema PostgreSQL si no existe (INTELIGENTE)"""
+        logger.info("Verificando schema PostgreSQL...")
         
         try:
             conn = psycopg2.connect(self.db_connection_string)
             
             with conn.cursor() as cursor:
-                # Leer archivo SQL del schema
+                # Verificar si las tablas ya existen
+                cursor.execute("""
+                    SELECT table_name FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name IN ('custom_prompts', 'default_prompts', 'prompt_versions')
+                """)
+                
+                existing_tables = [row[0] for row in cursor.fetchall()]
+                logger.info(f"Tablas existentes encontradas: {existing_tables}")
+                
+                if len(existing_tables) == 3:
+                    logger.info("✅ Todas las tablas ya existen, saltando creación de schema")
+                    return True
+                
+                # Solo ejecutar schema si las tablas no existen
                 schema_file = os.path.join(os.path.dirname(__file__), 'postgresql_schema.sql')
                 
                 if os.path.exists(schema_file):
                     with open(schema_file, 'r', encoding='utf-8') as f:
                         schema_sql = f.read()
+                    
+                    # Modificar SQL para usar CREATE TABLE IF NOT EXISTS
+                    schema_sql = schema_sql.replace('CREATE TABLE custom_prompts', 'CREATE TABLE IF NOT EXISTS custom_prompts')
+                    schema_sql = schema_sql.replace('CREATE TABLE prompt_versions', 'CREATE TABLE IF NOT EXISTS prompt_versions')
+                    schema_sql = schema_sql.replace('CREATE TABLE default_prompts', 'CREATE TABLE IF NOT EXISTS default_prompts')
+                    
                     cursor.execute(schema_sql)
                 else:
-                    # Usar schema embebido si no existe el archivo
-                    cursor.execute(self._get_embedded_schema_sql())
+                    # Usar schema embebido con IF NOT EXISTS
+                    cursor.execute(self._get_embedded_schema_sql_safe())
                 
                 conn.commit()
-                logger.info("Schema PostgreSQL creado exitosamente")
+                logger.info("✅ Schema PostgreSQL verificado/creado exitosamente")
                 return True
                 
         except Exception as e:
-            logger.error(f"Error creando schema: {e}")
+            logger.error(f"Error verificando/creando schema: {e}")
             self.migration_stats["errors"].append(f"Schema creation failed: {str(e)}")
             return False
         finally:
@@ -127,31 +147,37 @@ class PromptMigrationManager:
                 conn.close()
     
     def _populate_default_prompts(self) -> bool:
-        """Poblar default_prompts desde custom_prompts.json (NO hardcoded)"""
+        """Poblar default_prompts desde custom_prompts.json (INTELIGENTE)"""
         logger.info("Poblando default_prompts desde custom_prompts.json...")
         
         try:
-            # Buscar archivo custom_prompts.json
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), 
-                'custom_prompts.json'
-            )
-            
-            if not os.path.exists(custom_prompts_file):
-                logger.error(f"No se encontró custom_prompts.json en {custom_prompts_file}")
-                return False
-            
-            # Cargar prompts desde JSON
-            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                custom_prompts = json.load(f)
-            
-            logger.info(f"Cargando prompts desde: {custom_prompts_file}")
-            
             conn = psycopg2.connect(self.db_connection_string)
             
             with conn.cursor() as cursor:
-                # Limpiar defaults existentes
-                cursor.execute("DELETE FROM default_prompts")
+                # Verificar si ya hay prompts por defecto
+                cursor.execute("SELECT COUNT(*) as count FROM default_prompts")
+                existing_count = cursor.fetchone()[0]
+                
+                if existing_count > 0:
+                    logger.info(f"Ya existen {existing_count} default prompts, actualizando...")
+                else:
+                    logger.info("No hay default prompts, creando desde custom_prompts.json...")
+                
+                # Buscar archivo custom_prompts.json
+                custom_prompts_file = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)), 
+                    'custom_prompts.json'
+                )
+                
+                if not os.path.exists(custom_prompts_file):
+                    logger.error(f"No se encontró custom_prompts.json en {custom_prompts_file}")
+                    return False
+                
+                # Cargar prompts desde JSON
+                with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+                    custom_prompts = json.load(f)
+                
+                logger.info(f"Cargando prompts desde: {custom_prompts_file}")
                 
                 prompts_count = 0
                 
@@ -197,7 +223,7 @@ class PromptMigrationManager:
                         logger.info(f"Migrado default_template: {unique_agent_key}")
                 
                 conn.commit()
-                logger.info(f"Default prompts poblados: {prompts_count} prompts específicos por empresa")
+                logger.info(f"✅ Default prompts poblados: {prompts_count} prompts específicos por empresa")
                 return True
                 
         except Exception as e:
@@ -208,6 +234,55 @@ class PromptMigrationManager:
             if 'conn' in locals():
                 conn.close()
 
+def _get_embedded_schema_sql_safe(self) -> str:
+    """Schema SQL embebido con IF NOT EXISTS"""
+    return """
+    -- Schema seguro con IF NOT EXISTS
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    
+    CREATE TABLE IF NOT EXISTS custom_prompts (
+        id BIGSERIAL PRIMARY KEY,
+        company_id VARCHAR(100) NOT NULL,
+        agent_name VARCHAR(100) NOT NULL,
+        template TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        version INTEGER DEFAULT 1,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        modified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(100) DEFAULT 'admin',
+        modified_by VARCHAR(100) DEFAULT 'admin',
+        notes TEXT,
+        CONSTRAINT unique_active_prompt UNIQUE (company_id, agent_name)
+    );
+    
+    CREATE TABLE IF NOT EXISTS prompt_versions (
+        id BIGSERIAL PRIMARY KEY,
+        prompt_id BIGINT REFERENCES custom_prompts(id) ON DELETE CASCADE,
+        company_id VARCHAR(100) NOT NULL,
+        agent_name VARCHAR(100) NOT NULL,
+        template TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        action VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(100) DEFAULT 'admin',
+        notes TEXT
+    );
+    
+    CREATE TABLE IF NOT EXISTS default_prompts (
+        id BIGSERIAL PRIMARY KEY,
+        agent_name VARCHAR(100) UNIQUE NOT NULL,
+        template TEXT NOT NULL,
+        description TEXT,
+        category VARCHAR(50) DEFAULT 'general',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- Índices solo si no existen
+    CREATE INDEX IF NOT EXISTS idx_custom_prompts_company_agent ON custom_prompts(company_id, agent_name);
+    CREATE INDEX IF NOT EXISTS idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
+    CREATE INDEX IF NOT EXISTS idx_default_prompts_agent ON default_prompts(agent_name);
+    """
     
     def _migrate_custom_prompts_file(self) -> bool:
         """Migrar custom_prompts.json existente a PostgreSQL"""
