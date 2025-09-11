@@ -2443,14 +2443,13 @@ function setupFileUploadHandlers() {
     });
 }
 
-
 // ============================================================================
 // GESTIÓN DE PROMPTS PERSONALIZADOS
 // ============================================================================
 async function loadPromptsTab() {
+    console.log('🔧 Loading prompts tab...');
     const container = document.getElementById('promptsTabContent');
     
-    // Validar que hay una empresa seleccionada
     if (!currentCompanyId) {
         container.innerHTML = `
             <div class="warning-message">
@@ -2467,24 +2466,26 @@ async function loadPromptsTab() {
         <div class="prompts-management">
             <h3>🤖 Gestión de Prompts - ${currentCompanyId}</h3>
             
-            <!-- 🆕 NUEVO: Panel de estado del sistema -->
-            <div class="prompts-system-status" id="prompts-system-status">
-                <div class="status-indicator" id="db-status">
+            <!-- Herramientas del sistema -->
+            <div class="system-tools">
+                <div class="system-status" id="promptsSystemStatus">
                     <span class="status-dot"></span>
-                    <span class="status-text">Verificando estado del sistema...</span>
+                    <span>Verificando estado del sistema...</span>
+                </div>
+                <div class="system-actions">
+                    <button onclick="repairPrompts()" class="btn-repair">🔧 Reparar Todos</button>
+                    <button onclick="migratePromptsToPostgreSQL()" class="btn-migrate">📦 Migrar a PostgreSQL</button>
+                    <button onclick="loadCurrentPrompts()" class="btn-refresh">🔄 Recargar</button>
                 </div>
             </div>
             
-            <!-- 🆕 NUEVO: Botón de reparación global -->
-            <div class="prompts-actions">
-                <button onclick="repairPrompts()" class="btn-repair" id="repair-all-btn">
-                    🔧 Reparar Todos los Prompts
-                </button>
-                <button onclick="migratePromptsToPostgreSQL()" class="btn-migrate" id="migrate-btn" style="display: none;">
-                    🚀 Migrar a PostgreSQL
-                </button>
+            <!-- Vista previa rápida -->
+            <div class="quick-preview" style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                <h4>🎯 Vista Previa Rápida</h4>
+                <p>Haz clic en "Vista Previa" junto a cualquier prompt para probar cómo responde el agente.</p>
             </div>
             
+            <!-- Grid de prompts -->
             <div class="prompts-grid">
     `;
     
@@ -2494,12 +2495,12 @@ async function loadPromptsTab() {
             <div class="prompt-card" data-agent="${agentName}">
                 <h4>${displayName}</h4>
                 <div class="prompt-status" id="status-${agentName}">Cargando...</div>
-                <textarea class="prompt-editor" id="prompt-${agentName}" rows="8" placeholder="Cargando prompt..."></textarea>
+                <textarea class="prompt-editor" id="prompt-${agentName}" rows="8" 
+                          placeholder="Cargando prompt..." disabled></textarea>
                 <div class="prompt-actions">
                     <button onclick="updatePrompt('${agentName}')" class="btn-primary">Actualizar</button>
                     <button onclick="resetPrompt('${agentName}')" class="btn-secondary">Restaurar</button>
                     <button onclick="previewPrompt('${agentName}')" class="btn-info">Vista Previa</button>
-                    <!-- 🆕 NUEVO: Botón reparar individual -->
                     <button onclick="repairPrompts('${agentName}')" class="btn-repair-small">🔧 Reparar</button>
                 </div>
             </div>
@@ -2513,7 +2514,7 @@ async function loadPromptsTab() {
     
     container.innerHTML = html;
     
-    // Cargar prompts actuales y estado del sistema
+    // Cargar datos
     await Promise.all([
         loadCurrentPrompts(),
         loadPromptsSystemStatus()
@@ -2664,23 +2665,65 @@ async function resetPrompt(agentName) {
  * MANTENER EXACTAMENTE - Vista previa de prompt
  * NO CAMBIAR: Lógica, validaciones, formato de request
  */
-async function previewPrompt() {
+async function previewPrompt(agentName = null) {
+    console.log('🔍 previewPrompt called with agent:', agentName);
+    
     if (!validateCompanySelection()) return;
     
-    const agentName = document.getElementById('editAgent').value;
-    const promptTemplate = document.getElementById('editPrompt').value.trim();
-    const testMessage = document.getElementById('previewMessage').value.trim() || '¿Cuánto cuesta un tratamiento?';
+    let promptTemplate, testMessage;
     
+    // CASO 1: Llamada desde botón en grid de prompts (con agentName)
+    if (agentName) {
+        const textarea = document.getElementById(`prompt-${agentName}`);
+        if (!textarea) {
+            showNotification(`Error: No se encontró el textarea para ${agentName}`, 'error');
+            return;
+        }
+        promptTemplate = textarea.value.trim();
+        testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?');
+        
+        if (!testMessage) {
+            showNotification('Operación cancelada', 'info');
+            return;
+        }
+    } 
+    // CASO 2: Llamada desde modal de edición (sin agentName - buscar en DOM)
+    else {
+        const agentSelect = document.getElementById('editAgent');
+        const promptTextarea = document.getElementById('editPrompt');
+        const messageInput = document.getElementById('previewMessage');
+        
+        if (!agentSelect || !promptTextarea) {
+            showNotification('Error: Elementos de edición no encontrados. Usa el botón "Vista Previa" desde la lista de prompts.', 'error');
+            return;
+        }
+        
+        agentName = agentSelect.value;
+        promptTemplate = promptTextarea.value.trim();
+        testMessage = messageInput ? messageInput.value.trim() : '¿Cuánto cuesta un tratamiento?';
+    }
+    
+    // Validaciones
     if (!agentName || !promptTemplate) {
         showNotification('Por favor selecciona un agente y escribe un prompt', 'warning');
         return;
     }
     
+    if (!testMessage.trim()) {
+        testMessage = '¿Cuánto cuesta un tratamiento?';
+    }
+    
     try {
         toggleLoadingOverlay(true);
         
-        console.log('🔍 Testing preview for:', { agentName, company: currentCompanyId, messageLength: testMessage.length });
+        console.log('🔍 Testing preview for:', { 
+            agentName, 
+            company: currentCompanyId, 
+            messageLength: testMessage.length,
+            promptLength: promptTemplate.length 
+        });
         
+        // ✅ FORMATO CORRECTO: Igual al test de conversaciones
         const response = await apiRequest('/api/admin/prompts/preview', {
             method: 'POST',
             body: JSON.stringify({
@@ -2693,84 +2736,27 @@ async function previewPrompt() {
         
         console.log('✅ Preview response received:', response);
         
-        // ✅ CORREGIDO: Verificar que existe la respuesta
-        if (!response.success || !response.data) {
-            throw new Error('Invalid response format');
+        // ✅ VALIDACIÓN DE RESPUESTA
+        if (!response || !response.success) {
+            throw new Error(response?.error || 'Invalid response format');
         }
         
         const data = response.data;
-        
-        // ✅ CORREGIDO: Verificar que existe preview
-        if (!data.preview) {
+        if (!data || !data.preview) {
             throw new Error('No preview content received');
         }
         
-        // ✅ CORREGIDO: Mostrar respuesta completa en el container
-        const container = document.getElementById('previewResult');
-        if (!container) {
-            throw new Error('Preview container not found');
-        }
-        
-        container.innerHTML = `
-            <div class="result-container result-success">
-                <h4>🔍 Vista Previa del Prompt</h4>
-                <div class="preview-details">
-                    <p><strong>Agente:</strong> ${escapeHTML(data.agent_name)} (ejecutado como: ${escapeHTML(data.agent_used || 'unknown')})</p>
-                    <p><strong>Empresa:</strong> ${escapeHTML(data.company_id)}</p>
-                    <p><strong>Mensaje de prueba:</strong> ${escapeHTML(data.test_message)}</p>
-                    ${data.debug_info ? `<p><strong>Origen del prompt:</strong> ${escapeHTML(data.debug_info.prompt_source)}</p>` : ''}
-                </div>
-                <div class="preview-response" style="background: #f0fff4; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #10b981;">
-                    <strong>Respuesta generada:</strong>
-                    <p style="margin: 8px 0 0 0; white-space: pre-wrap;">${escapeHTML(data.preview)}</p>
-                </div>
-                <div class="preview-meta" style="font-size: 0.9em; color: #666; margin-top: 10px;">
-                    <p><strong>Método:</strong> ${data.method || 'unknown'}</p>
-                    <p><strong>Tiempo:</strong> ${new Date(data.timestamp * 1000).toLocaleTimeString()}</p>
-                    ${data.debug_info ? `<p><strong>Longitud respuesta:</strong> ${data.debug_info.response_length} caracteres</p>` : ''}
-                </div>
-            </div>
-        `;
-        
-        // ✅ NUEVO: Log de debugging para identificar origen
-        if (data.debug_info) {
-            console.log('🔍 Prompt debugging info:', data.debug_info);
-            
-            if (data.debug_info.prompt_source === 'postgresql_default') {
-                console.log('✅ Using PostgreSQL default prompts');
-            } else if (data.debug_info.prompt_source === 'postgresql_custom') {
-                console.log('✅ Using PostgreSQL custom prompts');
-            } else if (data.debug_info.prompt_source === 'json_fallback') {
-                console.log('⚠️ Using JSON fallback prompts');
-            } else {
-                console.log('❓ Unknown prompt source:', data.debug_info.prompt_source);
-            }
-        }
-        
-        showNotification('Vista previa generada exitosamente', 'success');
+        // ✅ MOSTRAR EN MODAL (consistente con test de conversaciones)
+        showPreviewModal(agentName, testMessage, data);
         
     } catch (error) {
         console.error('❌ Error in preview:', error);
-        
-        const container = document.getElementById('previewResult');
-        if (container) {
-            container.innerHTML = `
-                <div class="result-container result-error">
-                    <p>❌ Error al generar vista previa</p>
-                    <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
-                    <p><strong>Agente:</strong> ${escapeHTML(agentName)}</p>
-                    <p><strong>Empresa:</strong> ${currentCompanyId}</p>
-                    <small>Revisa la consola del navegador y los logs del servidor para más detalles</small>
-                </div>
-            `;
-        }
-        
-        showNotification('Error al generar vista previa: ' + error.message, 'error');
-        
+        showNotification('Error en vista previa: ' + error.message, 'error');
     } finally {
         toggleLoadingOverlay(false);
     }
 }
+
 
 // ============================================================================
 // 🆕 NUEVAS FUNCIONES - REPARAR Y MIGRACIÓN
@@ -2944,20 +2930,50 @@ function updateSystemStatusDisplay(systemStatus, fallbackUsed = null) {
     dbStatus.className = `status-indicator ${statusClass}`;
 }
 
-function showPreviewModal(agentName, testMessage, previewResponse) {
+function showPreviewModal(agentName, testMessage, data) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.innerHTML = `
-        <div class="modal-content">
-            <h3>🔍 Vista Previa - ${agentName}</h3>
-            <div class="preview-content">
-                <p><strong>Mensaje de prueba:</strong></p>
-                <div class="test-message">${escapeHTML(testMessage)}</div>
-                
-                <p><strong>Respuesta simulada:</strong></p>
-                <div class="preview-response">${escapeHTML(previewResponse)}</div>
+        <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>🔍 Vista Previa - ${escapeHTML(agentName)}</h3>
+                <button onclick="closeModal()" class="modal-close">&times;</button>
             </div>
-            <button onclick="closeModal()" class="btn-primary">Cerrar</button>
+            
+            <div class="preview-content">
+                <!-- Información del test -->
+                <div class="preview-section">
+                    <h4>📋 Información del Test</h4>
+                    <p><strong>Agente:</strong> ${escapeHTML(data.agent_name || agentName)}</p>
+                    <p><strong>Empresa:</strong> ${escapeHTML(data.company_id || currentCompanyId)}</p>
+                    <p><strong>Mensaje de prueba:</strong></p>
+                    <div class="test-message-box">${escapeHTML(testMessage)}</div>
+                    ${data.debug_info ? `<p><strong>Origen del prompt:</strong> ${escapeHTML(data.debug_info.prompt_source)}</p>` : ''}
+                </div>
+                
+                <!-- Respuesta generada -->
+                <div class="preview-section">
+                    <h4>🤖 Respuesta Generada</h4>
+                    <div class="preview-response-box">
+                        ${escapeHTML(data.preview).replace(/\n/g, '<br>')}
+                    </div>
+                </div>
+                
+                <!-- Información técnica -->
+                <div class="preview-section technical-info">
+                    <h4>🔧 Información Técnica</h4>
+                    <div class="info-grid">
+                        <span><strong>Método:</strong> ${data.method || 'API'}</span>
+                        <span><strong>Tiempo:</strong> ${new Date().toLocaleTimeString()}</span>
+                        ${data.debug_info?.response_length ? `<span><strong>Longitud:</strong> ${data.debug_info.response_length} caracteres</span>` : ''}
+                        ${data.debug_info?.prompt_source ? `<span><strong>Fuente:</strong> ${data.debug_info.prompt_source}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-footer">
+                <button onclick="closeModal()" class="btn-primary">Cerrar</button>
+            </div>
         </div>
     `;
     
