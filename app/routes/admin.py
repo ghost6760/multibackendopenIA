@@ -351,62 +351,89 @@ def migrate_prompts_to_postgresql():
 # FUNCIONES AUXILIARES - MEJORADAS PERO COMPATIBLES
 # ============================================================================
 
-def _simulate_agent_response(company_id: str, agent_name: str, prompt_template: str, test_message: str) -> str:
-    """
-    Simular respuesta del agente con prompt personalizado
-    MEJORADO: Mejor contexto empresarial, manejo de errores
-    """
+def _simulate_agent_response(agent_name: str, company_config, custom_prompt: str, 
+                           test_message: str, openai_service) -> str:
+    """Simular respuesta de agente con prompt personalizado (CORREGIDO)"""
     try:
-        # Obtener configuración de la empresa
-        company_manager = get_company_manager()
-        config = company_manager.get_company_config(company_id)
+        from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+        from langchain.schema.output_parser import StrOutputParser
         
-        # Crear contexto mejorado
-        context_data = {
-            "company_name": config.company_name,
-            "services": config.services,
-            "business_type": getattr(config, 'business_type', 'Servicios médicos'),
-            "agent_name": agent_name.replace('_', ' ').title()
-        }
+        # ✅ CORREGIDO: Detectar qué variables necesita el template
+        required_vars = []
+        if '{question}' in custom_prompt:
+            required_vars.append('question')
+        if '{context}' in custom_prompt:
+            required_vars.append('context')
+        if '{chat_history}' in custom_prompt:
+            required_vars.append('chat_history')
+        if '{message}' in custom_prompt:
+            required_vars.append('message')
+        if '{schedule_context}' in custom_prompt:
+            required_vars.append('schedule_context')
+        if '{emergency_protocols}' in custom_prompt:
+            required_vars.append('emergency_protocols')
         
-        # Crear prompt template con contexto
-        full_template = f"""
-{prompt_template}
-
-CONTEXTO DE LA EMPRESA:
-- Empresa: {context_data['company_name']}
-- Servicios: {context_data['services']}
-- Tipo de negocio: {context_data['business_type']}
-
-Responde al siguiente mensaje como {context_data['agent_name']}:
-{{message}}
-"""
+        # ✅ CORREGIDO: Crear template con soporte para chat_history
+        if '{chat_history}' in custom_prompt:
+            template = ChatPromptTemplate.from_messages([
+                ("system", custom_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{question}" if '{question}' in custom_prompt else "{message}")
+            ])
+        else:
+            template = ChatPromptTemplate.from_messages([
+                ("system", custom_prompt),
+                ("human", "{question}" if '{question}' in custom_prompt else "{message}")
+            ])
         
-        # Usar el modelo de chat disponible
-        try:
-            factory = get_multi_agent_factory()
-            orchestrator = factory.get_orchestrator(company_id)
-            
-            if orchestrator and hasattr(orchestrator, 'openai_service'):
-                chat_model = orchestrator.openai_service.get_chat_model()
-                
-                # Crear chain simple para preview
-                template = ChatPromptTemplate.from_template(full_template)
-                chain = template | chat_model | StrOutputParser()
-                
-                # Ejecutar simulación
-                response = chain.invoke({"message": test_message})
-                return response[:500]  # Limitar respuesta para preview
-            else:
-                return f"Simulación no disponible. El agente {agent_name} respondería basado en el prompt personalizado al mensaje: '{test_message}'"
+        # Crear cadena temporal
+        chat_model = openai_service.get_chat_model()
+        chain = template | chat_model | StrOutputParser()
         
-        except Exception as model_error:
-            logger.warning(f"Model simulation failed: {model_error}")
-            return f"Vista previa simulada: El agente {agent_name} para {config.company_name} respondería al mensaje '{test_message}' usando el prompt personalizado."
+        # ✅ CORREGIDO: Preparar inputs con todas las variables necesarias
+        inputs = {}
+        
+        # Variable principal del mensaje
+        if '{question}' in custom_prompt:
+            inputs["question"] = test_message
+        elif '{message}' in custom_prompt:
+            inputs["message"] = test_message
+        else:
+            inputs["question"] = test_message  # Fallback
+        
+        # ✅ NUEVO: Variables de contexto
+        if '{context}' in custom_prompt:
+            inputs["context"] = f"Información de servicios de {company_config.company_name}:\n" + \
+                              f"- Servicios principales: {', '.join(company_config.services[:3])}\n" + \
+                              f"- Empresa: {company_config.company_name}\n" + \
+                              f"- Agente de prueba: {agent_name}"
+        
+        # ✅ NUEVO: Historial de chat vacío para preview
+        if '{chat_history}' in custom_prompt:
+            inputs["chat_history"] = []
+        
+        # ✅ NUEVO: Variables específicas por tipo de agente
+        if '{schedule_context}' in custom_prompt:
+            inputs["schedule_context"] = "Disponibilidad de ejemplo:\n- Lunes a Viernes: 9:00 AM - 6:00 PM\n- Próximas citas disponibles: Mañana, Pasado mañana"
+        
+        if '{emergency_protocols}' in custom_prompt:
+            inputs["emergency_protocols"] = f"Protocolos de emergencia de {company_config.company_name}:\n- Contacto inmediato\n- Evaluación prioritaria\n- Escalación urgente"
+        
+        # ✅ NUEVO: Variables adicionales de empresa
+        inputs.update({
+            "company_name": company_config.company_name,
+            "company_id": company_config.company_id,
+            "agent_name": getattr(company_config, f'{agent_name}_name', 'Asistente de Prueba')
+        })
+        
+        # Ejecutar simulación
+        response = chain.invoke(inputs)
+        return response
         
     except Exception as e:
         logger.error(f"Error simulating agent response: {e}")
-        return f"Error en la simulación: {str(e)}"
+        return f"Error en la simulación: {str(e)}. Variables detectadas en template: {required_vars if 'required_vars' in locals() else 'No detectadas'}"
+
 
 # ============================================================================
 # FUNCIONES DE COMPATIBILIDAD - MANTENER PARA NO ROMPER CÓDIGO EXISTENTE
