@@ -120,7 +120,7 @@ class BaseAgent(ABC):
             return None
     
     def _load_default_prompt_from_postgresql(self) -> Optional[str]:
-        """Cargar prompt por defecto desde PostgreSQL usando clave específica por empresa"""
+        """Cargar prompt por defecto desde PostgreSQL usando arquitectura separada CORREGIDA"""
         try:
             if not self.prompt_service:
                 return None
@@ -128,26 +128,19 @@ class BaseAgent(ABC):
             company_id = self.company_config.company_id
             agent_key = self._get_agent_key()
             
-            # Buscar con clave específica empresa_agente
-            company_agent_key = f"{company_id}_{agent_key}"
-            
-            # Usar el servicio de prompts
+            # ✅ CORREGIDO: Usar el servicio que busca con company_id + agent_name separados
             agents_data = self.prompt_service.get_company_prompts(company_id)
             
-            # Buscar primero con clave específica
-            if company_agent_key in agents_data:
-                agent_data = agents_data[company_agent_key]
-                if (agent_data.get('source') in ['default', 'postgresql_default'] and
-                    agent_data.get('current_prompt')):
-                    logger.info(f"[{company_id}] Loaded company-specific default prompt for {agent_key}")
-                    return agent_data['current_prompt']
-            
-            # Fallback a clave genérica
+            # ✅ CORREGIDO: Buscar directamente con agent_key (no concatenado)
             if agent_key in agents_data:
                 agent_data = agents_data[agent_key]
                 if (agent_data.get('source') in ['default', 'postgresql_default'] and
                     agent_data.get('current_prompt')):
-                    logger.info(f"[{company_id}] Loaded generic default prompt for {agent_key}")
+                    # ✅ CORREGIDO: Log específico para identificar origen
+                    if agent_data.get('source') == 'postgresql_default':
+                        logger.info(f"[{company_id}] ✅ Loaded company-specific default prompt for {agent_key}")
+                    else:
+                        logger.info(f"[{company_id}] ⚡ Loaded fallback default prompt for {agent_key}")
                     return agent_data['current_prompt']
             
             return None
