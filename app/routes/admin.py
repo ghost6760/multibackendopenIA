@@ -263,7 +263,10 @@ def repair_prompts():
 @bp.route('/prompts/preview', methods=['POST'])
 @handle_errors
 def preview_prompt():
-    """Generar vista previa de prompt con mensaje de prueba"""
+    """
+    Generar vista previa de prompt usando el MISMO FLUJO que el tester de conversaciones
+    REEMPLAZA: La función anterior que usaba _simulate_agent_response
+    """
     try:
         data = request.get_json()
         
@@ -278,40 +281,83 @@ def preview_prompt():
         if not custom_prompt.strip():
             return create_error_response("Prompt template cannot be empty", 400)
         
-        # Obtener configuración de empresa
-        company_config = get_company_manager().get_company_config(company_id)
-        if not company_config:
-            return create_error_response(f"Company {company_id} not found", 404)
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # ✅ CORREGIDO: Obtener openai_service
-        from app.services.openai_service import OpenAIService
-        openai_service = get_openai_service()
+        # ✅ NUEVO: Usar el MISMO FLUJO que testConversation()
+        from app.models.conversation import ConversationManager
         
-        # ✅ CORREGIDO: Pasar openai_service como parámetro
-        preview_response = _simulate_agent_response(
-            agent_name, 
-            company_config, 
-            custom_prompt, 
-            test_message,
-            openai_service  # ✅ AÑADIDO: parámetro faltante
-        )
+        # 1. Usar factory y orchestrator REAL (igual que el tester)
+        factory = get_multi_agent_factory()
+        orchestrator = factory.get_orchestrator(company_id)
+        
+        if not orchestrator:
+            return create_error_response(f"Multi-agent system not available for company: {company_id}", 503)
+        
+        # 2. Crear manager para test temporal
+        manager = ConversationManager(company_id=company_id)
+        temp_user_id = f"preview_test_{int(time.time())}"
+        
+        # 3. TRUCO: Temporalmente inyectar prompt personalizado
+        agent_key = agent_name.replace('_agent', '')  # router_agent -> router
+        
+        if agent_key not in orchestrator.agents:
+            return create_error_response(f"Agent {agent_name} not found", 404)
+        
+        real_agent = orchestrator.agents[agent_key]
+        original_prompt_template = getattr(real_agent, 'prompt_template', None)
+        
+        try:
+            # 4. Crear template temporal con prompt personalizado
+            from langchain.prompts import ChatPromptTemplate
+            
+            # Detectar si el prompt necesita chat_history
+            if '{chat_history}' in custom_prompt:
+                temp_template = ChatPromptTemplate.from_messages([
+                    ("system", custom_prompt),
+                    ("human", "{question}")
+                ])
+            else:
+                temp_template = ChatPromptTemplate.from_messages([
+                    ("system", custom_prompt),
+                    ("human", "{question}")
+                ])
+            
+            # 5. Inyectar temporalmente el prompt personalizado
+            real_agent.prompt_template = temp_template
+            
+            # 6. Usar el método REAL del orchestrator (igual que test_conversation)
+            preview_response, agent_used = orchestrator.get_response(
+                test_message, 
+                temp_user_id, 
+                manager
+            )
+            
+        finally:
+            # 7. Restaurar prompt original
+            if original_prompt_template is not None:
+                real_agent.prompt_template = original_prompt_template
         
         # Truncar respuesta si es muy larga
-        if len(preview_response) > 200:
-            preview_response = preview_response[:200] + "..."
+        if len(preview_response) > 300:
+            preview_response = preview_response[:300] + "..."
         
         return create_success_response({
             "preview": preview_response,
             "agent_name": agent_name,
+            "agent_used": agent_used,
             "company_id": company_id,
             "test_message": test_message,
-            "prompt_preview": custom_prompt[:200] + "..." if len(custom_prompt) > 200 else custom_prompt
+            "prompt_preview": custom_prompt[:150] + "..." if len(custom_prompt) > 150 else custom_prompt,
+            "method": "real_agent_system",  # Indicar que usamos el sistema real
+            "timestamp": time.time()
         })
         
     except Exception as e:
         logger.error(f"Error previewing prompt: {e}", exc_info=True)
         return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
-
 
 # 🆕 NUEVO ENDPOINT PARA MIGRACIÓN
 @bp.route('/prompts/migrate', methods=['POST'])
@@ -354,109 +400,6 @@ def migrate_prompts_to_postgresql():
     except Exception as e:
         logger.error(f"Error in migration: {e}", exc_info=True)
         return create_error_response(f"Migration failed: {str(e)}", 500)
-
-# ============================================================================
-# FUNCIONES AUXILIARES - MEJORADAS PERO COMPATIBLES
-# ============================================================================
-
-def _simulate_agent_response(agent_name: str, company_config, custom_prompt: str, 
-                           test_message: str, openai_service) -> str:
-    """Simular respuesta de agente con prompt personalizado (VERSIÓN CORREGIDA)"""
-    try:
-        from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-        from langchain.schema.output_parser import StrOutputParser
-        
-        # ✅ MEJORADO: Detectar variables requeridas automáticamente
-        required_vars = set()
-        import re
-        
-        # Buscar todas las variables en el prompt
-        variables = re.findall(r'\{([^}]+)\}', custom_prompt)
-        for var in variables:
-            required_vars.add(var)
-        
-        logger.debug(f"Variables detectadas en prompt: {required_vars}")
-        
-        # ✅ CORREGIDO: Crear template adaptativo
-        if 'chat_history' in required_vars:
-            template = ChatPromptTemplate.from_messages([
-                ("system", custom_prompt),
-                MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{question}" if 'question' in required_vars else "{message}")
-            ])
-        else:
-            template = ChatPromptTemplate.from_messages([
-                ("system", custom_prompt),
-                ("human", "{question}" if 'question' in required_vars else "{message}")
-            ])
-        
-        # Crear cadena
-        chat_model = openai_service.get_chat_model()
-        chain = template | chat_model | StrOutputParser()
-        
-        # ✅ MEJORADO: Preparar inputs dinámicamente
-        inputs = {}
-        
-        # Variable principal del mensaje
-        if 'question' in required_vars:
-            inputs["question"] = test_message
-        elif 'message' in required_vars:
-            inputs["message"] = test_message
-        else:
-            # Fallback: añadir ambas por seguridad
-            inputs["question"] = test_message
-            inputs["message"] = test_message
-        
-        # ✅ NUEVO: Variables de contexto específicas
-        if 'context' in required_vars:
-            services_text = ', '.join(company_config.services[:5])
-            inputs["context"] = f"""Servicios de {company_config.company_name}:
-- Servicios principales: {services_text}
-- Ubicación: Premium location
-- Especialidad: Tratamientos de alta calidad
-- Vista previa de contexto para prueba del prompt"""
-        
-        if 'chat_history' in required_vars:
-            inputs["chat_history"] = []
-        
-        if 'schedule_context' in required_vars:
-            inputs["schedule_context"] = f"""Disponibilidad de {company_config.company_name}:
-- Lunes a Viernes: 9:00 AM - 6:00 PM
-- Sábados: 9:00 AM - 2:00 PM
-- Próximas citas disponibles: Mañana 10:00 AM, Pasado mañana 2:00 PM
-- Citas de emergencia: Disponibles"""
-        
-        if 'emergency_protocols' in required_vars:
-            inputs["emergency_protocols"] = f"""Protocolos de emergencia - {company_config.company_name}:
-1. Evaluación inmediata de la situación
-2. Contacto prioritario con especialista
-3. Escalación según severidad
-4. Seguimiento post-emergencia"""
-        
-        # ✅ NUEVO: Variables adicionales comunes
-        company_name = company_config.company_name
-        if 'company_name' in required_vars:
-            inputs["company_name"] = company_name
-        if 'company_id' in required_vars:
-            inputs["company_id"] = company_config.company_id
-        if 'agent_name' in required_vars:
-            inputs["agent_name"] = f"Agente {agent_name} de {company_name}"
-        
-        # ✅ MEJORADO: Log de debug para troubleshooting
-        logger.debug(f"Inputs preparados: {list(inputs.keys())}")
-        logger.debug(f"Variables requeridas: {required_vars}")
-        
-        # Ejecutar simulación
-        response = chain.invoke(inputs)
-        
-        # ✅ NUEVO: Añadir contexto de preview
-        preview_note = f"\n\n[Vista previa generada para {agent_name} de {company_name}]"
-        return str(response) + preview_note
-        
-    except Exception as e:
-        logger.error(f"Error simulating agent response: {e}")
-        variables_found = re.findall(r'\{([^}]+)\}', custom_prompt) if 'custom_prompt' in locals() else []
-        return f"Error en la simulación: {str(e)}\n\nVariables detectadas en el prompt: {variables_found}\nPor favor verifica que el prompt tenga la sintaxis correcta."
 
 
 # ============================================================================
