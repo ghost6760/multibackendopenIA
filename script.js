@@ -2664,44 +2664,109 @@ async function resetPrompt(agentName) {
  * MANTENER EXACTAMENTE - Vista previa de prompt
  * NO CAMBIAR: Lógica, validaciones, formato de request
  */
-async function previewPrompt(agentName) {
-    if (!currentCompanyId) {
-        showNotification('Por favor selecciona una empresa primero', 'warning');
+async function previewPrompt() {
+    if (!validateCompanySelection()) return;
+    
+    const agentName = document.getElementById('editAgent').value;
+    const promptTemplate = document.getElementById('editPrompt').value.trim();
+    const testMessage = document.getElementById('previewMessage').value.trim() || '¿Cuánto cuesta un tratamiento?';
+    
+    if (!agentName || !promptTemplate) {
+        showNotification('Por favor selecciona un agente y escribe un prompt', 'warning');
         return;
     }
-    
-    const textarea = document.getElementById(`prompt-${agentName}`);
-    const promptTemplate = textarea.value.trim();
-    
-    if (!promptTemplate) {
-        showNotification('El prompt no puede estar vacío', 'error');
-        return;
-    }
-    
-    const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?');
-    if (!testMessage) return;
     
     try {
         toggleLoadingOverlay(true);
-        addToLog(`Previewing prompt for ${agentName} in company ${currentCompanyId}`, 'info');
         
-        // MANTENER: Formato de request exacto
+        console.log('🔍 Testing preview for:', { agentName, company: currentCompanyId, messageLength: testMessage.length });
+        
         const response = await apiRequest('/api/admin/prompts/preview', {
             method: 'POST',
-            body: {
-                company_id: currentCompanyId,
+            body: JSON.stringify({
                 agent_name: agentName,
+                company_id: currentCompanyId,
                 prompt_template: promptTemplate,
-                test_message: testMessage
-            }
+                message: testMessage
+            })
         });
         
-        // Mostrar preview en modal
-        showPreviewModal(agentName, testMessage, response.preview_response);
+        console.log('✅ Preview response received:', response);
+        
+        // ✅ CORREGIDO: Verificar que existe la respuesta
+        if (!response.success || !response.data) {
+            throw new Error('Invalid response format');
+        }
+        
+        const data = response.data;
+        
+        // ✅ CORREGIDO: Verificar que existe preview
+        if (!data.preview) {
+            throw new Error('No preview content received');
+        }
+        
+        // ✅ CORREGIDO: Mostrar respuesta completa en el container
+        const container = document.getElementById('previewResult');
+        if (!container) {
+            throw new Error('Preview container not found');
+        }
+        
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>🔍 Vista Previa del Prompt</h4>
+                <div class="preview-details">
+                    <p><strong>Agente:</strong> ${escapeHTML(data.agent_name)} (ejecutado como: ${escapeHTML(data.agent_used || 'unknown')})</p>
+                    <p><strong>Empresa:</strong> ${escapeHTML(data.company_id)}</p>
+                    <p><strong>Mensaje de prueba:</strong> ${escapeHTML(data.test_message)}</p>
+                    ${data.debug_info ? `<p><strong>Origen del prompt:</strong> ${escapeHTML(data.debug_info.prompt_source)}</p>` : ''}
+                </div>
+                <div class="preview-response" style="background: #f0fff4; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #10b981;">
+                    <strong>Respuesta generada:</strong>
+                    <p style="margin: 8px 0 0 0; white-space: pre-wrap;">${escapeHTML(data.preview)}</p>
+                </div>
+                <div class="preview-meta" style="font-size: 0.9em; color: #666; margin-top: 10px;">
+                    <p><strong>Método:</strong> ${data.method || 'unknown'}</p>
+                    <p><strong>Tiempo:</strong> ${new Date(data.timestamp * 1000).toLocaleTimeString()}</p>
+                    ${data.debug_info ? `<p><strong>Longitud respuesta:</strong> ${data.debug_info.response_length} caracteres</p>` : ''}
+                </div>
+            </div>
+        `;
+        
+        // ✅ NUEVO: Log de debugging para identificar origen
+        if (data.debug_info) {
+            console.log('🔍 Prompt debugging info:', data.debug_info);
+            
+            if (data.debug_info.prompt_source === 'postgresql_default') {
+                console.log('✅ Using PostgreSQL default prompts');
+            } else if (data.debug_info.prompt_source === 'postgresql_custom') {
+                console.log('✅ Using PostgreSQL custom prompts');
+            } else if (data.debug_info.prompt_source === 'json_fallback') {
+                console.log('⚠️ Using JSON fallback prompts');
+            } else {
+                console.log('❓ Unknown prompt source:', data.debug_info.prompt_source);
+            }
+        }
+        
+        showNotification('Vista previa generada exitosamente', 'success');
         
     } catch (error) {
-        console.error('Error in preview:', error);
-        showNotification('Error en vista previa: ' + error.message, 'error');
+        console.error('❌ Error in preview:', error);
+        
+        const container = document.getElementById('previewResult');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al generar vista previa</p>
+                    <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+                    <p><strong>Agente:</strong> ${escapeHTML(agentName)}</p>
+                    <p><strong>Empresa:</strong> ${currentCompanyId}</p>
+                    <small>Revisa la consola del navegador y los logs del servidor para más detalles</small>
+                </div>
+            `;
+        }
+        
+        showNotification('Error al generar vista previa: ' + error.message, 'error');
+        
     } finally {
         toggleLoadingOverlay(false);
     }
