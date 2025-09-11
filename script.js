@@ -2979,6 +2979,7 @@ function updateSystemStatusDisplay(systemStatus, fallbackUsed = null) {
     dbStatus.className = `status-indicator ${statusClass}`;
 }
 
+/**
  * MODAL ACTUALIZADO PARA FORMATO DIRECTO DEL BACKEND
  * Usa los campos exactos que se ven en las imágenes del Network tab
  */
