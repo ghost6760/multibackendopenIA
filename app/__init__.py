@@ -515,14 +515,26 @@ def delayed_multitenant_initialization(app):
             else:
                 # Fallback: ejecutar migración directamente
                 logger.info("Ejecutando migración directa de prompts...")
-                from migrate_prompts_to_postgresql import PromptMigrationManager
-                migrator = PromptMigrationManager()
-                stats = migrator.run_complete_migration()
                 
-                if stats.get("success", False):
-                    logger.info("✅ Migración directa de prompts exitosa")
-                else:
-                    logger.warning(f"⚠️ Migración directa con errores: {stats.get('errors', [])}")
+                # Añadir ruta raíz del proyecto al sys.path
+                import sys
+                root_path = os.path.dirname(os.path.dirname(__file__))
+                if root_path not in sys.path:
+                    sys.path.insert(0, root_path)
+                
+                try:
+                    from migrate_prompts_to_postgresql import PromptMigrationManager
+                    migrator = PromptMigrationManager()
+                    stats = migrator.run_complete_migration()
+                    
+                    if stats.get("success", False):
+                        logger.info("✅ Migración directa de prompts exitosa")
+                    else:
+                        logger.warning(f"⚠️ Migración directa con errores: {stats.get('errors', [])}")
+                except ImportError as ie:
+                    logger.error(f"❌ No se pudo importar migración: {ie}")
+                except Exception as e:
+                    logger.error(f"❌ Error en migración directa: {e}")
         
         except Exception as e:
             logger.error(f"❌ Error en migración automática de prompts: {e}")
