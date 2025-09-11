@@ -263,47 +263,55 @@ def repair_prompts():
 @bp.route('/prompts/preview', methods=['POST'])
 @handle_errors
 def preview_prompt():
-    """
-    Vista previa de prompt - MANTIENE funcionalidad existente
-    MEJORA: Mejor simulación con contexto empresarial
-    """
+    """Generar vista previa de prompt con mensaje de prueba"""
     try:
         data = request.get_json()
-        if not data:
-            return create_error_response("JSON data is required", 400)
         
-        company_id = data.get('company_id')
-        agent_name = data.get('agent_name')
-        prompt_template = data.get('prompt_template')
-        test_message = data.get('test_message', '¿Cuánto cuesta un tratamiento?')
+        if not data or 'agent_name' not in data or 'company_id' not in data:
+            return create_error_response("Missing agent_name or company_id", 400)
         
-        if not all([company_id, agent_name, prompt_template]):
-            return create_error_response("company_id, agent_name, and prompt_template are required", 400)
+        agent_name = data['agent_name']
+        company_id = data['company_id']
+        custom_prompt = data.get('prompt_template', '')
+        test_message = data.get('message', '¿Cuánto cuesta un tratamiento?')
         
-        # Validar empresa
-        company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        if not custom_prompt.strip():
+            return create_error_response("Prompt template cannot be empty", 400)
         
-        logger.info(f"Generating preview for {agent_name} in company {company_id}")
+        # Obtener configuración de empresa
+        company_config = get_company_manager().get_company_config(company_id)
+        if not company_config:
+            return create_error_response(f"Company {company_id} not found", 404)
         
-        # Simular respuesta del agente
+        # ✅ CORREGIDO: Obtener openai_service
+        from app.services.openai_service import get_openai_service
+        openai_service = get_openai_service()
+        
+        # ✅ CORREGIDO: Pasar openai_service como parámetro
         preview_response = _simulate_agent_response(
-            company_id, agent_name, prompt_template, test_message
+            agent_name, 
+            company_config, 
+            custom_prompt, 
+            test_message,
+            openai_service  # ✅ AÑADIDO: parámetro faltante
         )
         
-        response_data = {
-            "company_id": company_id,
-            "agent_name": agent_name,
-            "test_message": test_message,
-            "preview_response": preview_response
-        }
+        # Truncar respuesta si es muy larga
+        if len(preview_response) > 200:
+            preview_response = preview_response[:200] + "..."
         
-        return create_success_response(response_data)
+        return create_success_response({
+            "preview": preview_response,
+            "agent_name": agent_name,
+            "company_id": company_id,
+            "test_message": test_message,
+            "prompt_preview": custom_prompt[:200] + "..." if len(custom_prompt) > 200 else custom_prompt
+        })
         
     except Exception as e:
         logger.error(f"Error previewing prompt: {e}", exc_info=True)
         return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
+
 
 # 🆕 NUEVO ENDPOINT PARA MIGRACIÓN
 @bp.route('/prompts/migrate', methods=['POST'])
