@@ -79,7 +79,7 @@ $$ LANGUAGE plpgsql;
 SELECT create_constraint_if_not_exists(
     'custom_prompts', 
     'unique_active_prompt', 
-    'UNIQUE (company_id, agent_name) DEFERRABLE INITIALLY DEFERRED'
+    'UNIQUE (company_id, agent_name)'
 );
 
 SELECT create_constraint_if_not_exists(
