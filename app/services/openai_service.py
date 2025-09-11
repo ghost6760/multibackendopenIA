@@ -323,16 +323,4 @@ class OpenAIService:
         }
 
 
-_openai_service_instance = None
 
-def get_openai_service():
-    """
-    Get global OpenAI service instance
-    Sigue el mismo patrón que get_redis_client(), get_prompt_service(), etc.
-    """
-    global _openai_service_instance
-    
-    if _openai_service_instance is None:
-        _openai_service_instance = OpenAIService()
-    
-    return _openai_service_instance
