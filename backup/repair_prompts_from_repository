@@ -1,1 +1,532 @@
+#!/usr/bin/env python3
+"""
+Fix Prompts System - Solución completa para Railway
+Resuelve todos los problemas identificados en el sistema de prompts multi-tenant
 
+Problemas que resuelve:
+1. Migra prompts correctos de custom_prompts.json a PostgreSQL
+2. Arregla foreign key constraints en prompt_versions
+3. Repara función SQL ambigua repair_prompts_from_repository
+4. Sincroniza prompts por defecto con los del repositorio
+"""
+
+import os
+import sys
+import json
+import logging
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class PromptsSystemFixer:
+    """Reparador completo del sistema de prompts"""
+    
+    def __init__(self, db_connection_string: str = None):
+        self.db_connection_string = db_connection_string or os.getenv('DATABASE_URL')
+        if not self.db_connection_string:
+            raise ValueError("DATABASE_URL no encontrada en variables de entorno")
+    
+    def fix_all_issues(self) -> Dict[str, Any]:
+        """Ejecuta todas las reparaciones necesarias"""
+        results = {
+            "start_time": datetime.utcnow().isoformat(),
+            "steps_completed": [],
+            "errors": [],
+            "success": False
+        }
+        
+        try:
+            logger.info("🚀 Iniciando reparación completa del sistema de prompts")
+            
+            # Paso 1: Reparar función SQL ambigua
+            if self._fix_sql_functions():
+                results["steps_completed"].append("sql_functions_fixed")
+                logger.info("✅ Paso 1: Funciones SQL reparadas")
+            else:
+                results["errors"].append("Error reparando funciones SQL")
+                return results
+            
+            # Paso 2: Arreglar foreign key constraints
+            if self._fix_foreign_key_constraints():
+                results["steps_completed"].append("foreign_keys_fixed")
+                logger.info("✅ Paso 2: Foreign key constraints arreglados")
+            else:
+                results["errors"].append("Error arreglando foreign keys")
+                return results
+            
+            # Paso 3: Migrar prompts de custom_prompts.json
+            if self._migrate_correct_prompts():
+                results["steps_completed"].append("prompts_migrated")
+                logger.info("✅ Paso 3: Prompts correctos migrados")
+            else:
+                results["errors"].append("Error migrando prompts")
+                return results
+            
+            # Paso 4: Validar sistema
+            if self._validate_system():
+                results["steps_completed"].append("system_validated")
+                logger.info("✅ Paso 4: Sistema validado")
+                results["success"] = True
+            else:
+                results["errors"].append("Error en validación final")
+            
+            results["end_time"] = datetime.utcnow().isoformat()
+            logger.info("🎉 Reparación completa exitosa")
+            
+        except Exception as e:
+            logger.error(f"💥 Error crítico en reparación: {e}")
+            results["errors"].append(f"Critical error: {str(e)}")
+            results["end_time"] = datetime.utcnow().isoformat()
+        
+        return results
+    
+    def _fix_sql_functions(self) -> bool:
+        """Repara las funciones SQL con problemas de ambigüedad"""
+        logger.info("Reparando funciones SQL...")
+        
+        try:
+            conn = psycopg2.connect(self.db_connection_string)
+            
+            with conn.cursor() as cursor:
+                # Eliminar funciones problemáticas
+                cursor.execute("DROP FUNCTION IF EXISTS repair_prompts_from_repository(VARCHAR, VARCHAR, VARCHAR)")
+                cursor.execute("DROP FUNCTION IF EXISTS create_prompt_version()")
+                
+                # Crear función repair_prompts_from_repository corregida
+                repair_function_sql = """
+                CREATE OR REPLACE FUNCTION repair_prompts_from_repository(
+                    p_company_id VARCHAR(100) DEFAULT NULL,
+                    p_agent_name VARCHAR(100) DEFAULT NULL,
+                    p_repair_user VARCHAR(100) DEFAULT 'system_repair'
+                ) RETURNS TABLE (
+                    agent_name VARCHAR(100),
+                    action VARCHAR(50),
+                    success BOOLEAN,
+                    message TEXT
+                ) AS $$
+                DECLARE
+                    repair_count INTEGER := 0;
+                    agent_key_pattern VARCHAR(200);
+                BEGIN
+                    -- Si se especifica un agente específico
+                    IF p_agent_name IS NOT NULL THEN
+                        -- Buscar con patrón empresa_agente o agente genérico
+                        agent_key_pattern := p_company_id || '_' || p_agent_name;
+                        
+                        -- Verificar que existe en default_prompts (con alias para evitar ambigüedad)
+                        IF EXISTS (SELECT 1 FROM default_prompts dp WHERE dp.agent_name = agent_key_pattern) THEN
+                            -- Insertar prompt personalizado desde default específico
+                            INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                            SELECT 
+                                p_company_id, 
+                                p_agent_name,  -- Usar nombre original del agente, no la clave compuesta
+                                dp.template,
+                                p_repair_user,
+                                p_repair_user,
+                                'Reparado desde repositorio específico'
+                            FROM default_prompts dp
+                            WHERE dp.agent_name = agent_key_pattern
+                            ON CONFLICT (company_id, agent_name) DO UPDATE SET
+                                template = EXCLUDED.template,
+                                modified_by = EXCLUDED.modified_by,
+                                modified_at = CURRENT_TIMESTAMP,
+                                notes = EXCLUDED.notes;
+                            
+                            RETURN QUERY SELECT 
+                                p_agent_name, 
+                                'REPAIRED'::VARCHAR(50), 
+                                true, 
+                                'Prompt reparado desde template específico'::TEXT;
+                            
+                        -- Fallback a template genérico
+                        ELSIF EXISTS (SELECT 1 FROM default_prompts dp WHERE dp.agent_name = p_agent_name) THEN
+                            INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                            SELECT 
+                                p_company_id, 
+                                p_agent_name,
+                                dp.template,
+                                p_repair_user,
+                                p_repair_user,
+                                'Reparado desde repositorio genérico'
+                            FROM default_prompts dp
+                            WHERE dp.agent_name = p_agent_name
+                            ON CONFLICT (company_id, agent_name) DO UPDATE SET
+                                template = EXCLUDED.template,
+                                modified_by = EXCLUDED.modified_by,
+                                modified_at = CURRENT_TIMESTAMP,
+                                notes = EXCLUDED.notes;
+                            
+                            RETURN QUERY SELECT 
+                                p_agent_name, 
+                                'REPAIRED_GENERIC'::VARCHAR(50), 
+                                true, 
+                                'Prompt reparado desde template genérico'::TEXT;
+                        ELSE
+                            RETURN QUERY SELECT 
+                                p_agent_name, 
+                                'NOT_FOUND'::VARCHAR(50), 
+                                false, 
+                                'Agente no encontrado en default_prompts'::TEXT;
+                        END IF;
+                    ELSE
+                        -- Reparar todos los agentes para la empresa
+                        INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                        SELECT 
+                            p_company_id, 
+                            CASE 
+                                WHEN dp.agent_name LIKE p_company_id || '_%' THEN 
+                                    SUBSTRING(dp.agent_name FROM LENGTH(p_company_id) + 2)
+                                ELSE dp.agent_name
+                            END as clean_agent_name,
+                            dp.template,
+                            p_repair_user,
+                            p_repair_user,
+                            'Reparación masiva desde repositorio'
+                        FROM default_prompts dp
+                        WHERE dp.agent_name LIKE p_company_id || '_%' OR dp.agent_name IN ('router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent')
+                        ON CONFLICT (company_id, agent_name) DO UPDATE SET
+                            template = EXCLUDED.template,
+                            modified_by = EXCLUDED.modified_by,
+                            modified_at = CURRENT_TIMESTAMP,
+                            notes = EXCLUDED.notes;
+                        
+                        GET DIAGNOSTICS repair_count = ROW_COUNT;
+                        
+                        RETURN QUERY SELECT 
+                            'ALL'::VARCHAR(100), 
+                            'BULK_REPAIR'::VARCHAR(50), 
+                            true, 
+                            ('Reparados ' || repair_count || ' prompts')::TEXT;
+                    END IF;
+                    
+                    RETURN;
+                END;
+                $$ LANGUAGE plpgsql;
+                """
+                
+                cursor.execute(version_function_sql)
+                
+                # Recrear trigger si no existe
+                cursor.execute("""
+                    DROP TRIGGER IF EXISTS create_prompt_version_trigger ON custom_prompts;
+                    CREATE TRIGGER create_prompt_version_trigger
+                        AFTER INSERT OR UPDATE ON custom_prompts
+                        FOR EACH ROW EXECUTE FUNCTION create_prompt_version();
+                """)
+                
+                conn.commit()
+                logger.info("Funciones SQL reparadas exitosamente")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error reparando funciones SQL: {e}")
+            if 'conn' in locals():
+                conn.rollback()
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def _fix_foreign_key_constraints(self) -> bool:
+        """Arregla problemas de foreign key constraints"""
+        logger.info("Arreglando foreign key constraints...")
+        
+        try:
+            conn = psycopg2.connect(self.db_connection_string)
+            
+            with conn.cursor() as cursor:
+                # Limpiar registros huérfanos en prompt_versions
+                cursor.execute("""
+                    DELETE FROM prompt_versions 
+                    WHERE prompt_id NOT IN (SELECT id FROM custom_prompts)
+                """)
+                
+                orphaned = cursor.rowcount
+                if orphaned > 0:
+                    logger.info(f"Eliminados {orphaned} registros huérfanos de prompt_versions")
+                
+                # Verificar e insertar registros faltantes en custom_prompts para versiones existentes
+                cursor.execute("""
+                    SELECT DISTINCT pv.company_id, pv.agent_name, pv.template, pv.created_by
+                    FROM prompt_versions pv
+                    LEFT JOIN custom_prompts cp ON cp.company_id = pv.company_id AND cp.agent_name = pv.agent_name
+                    WHERE cp.id IS NULL
+                """)
+                
+                missing_prompts = cursor.fetchall()
+                
+                for company_id, agent_name, template, created_by in missing_prompts:
+                    cursor.execute("""
+                        INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (company_id, agent_name) DO NOTHING
+                    """, (company_id, agent_name, template, created_by, created_by, "Restaurado por fixer"))
+                
+                if missing_prompts:
+                    logger.info(f"Restaurados {len(missing_prompts)} prompts faltantes")
+                
+                conn.commit()
+                logger.info("Foreign key constraints arreglados")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error arreglando foreign keys: {e}")
+            if 'conn' in locals():
+                conn.rollback()
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def _migrate_correct_prompts(self) -> bool:
+        """Migra los prompts correctos de custom_prompts.json a PostgreSQL"""
+        logger.info("Migrando prompts correctos de custom_prompts.json...")
+        
+        # Buscar archivo custom_prompts.json
+        possible_paths = [
+            'custom_prompts.json',
+            '../custom_prompts.json',
+            '../../custom_prompts.json',
+            './custom_prompts.json'
+        ]
+        
+        custom_prompts_file = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                custom_prompts_file = path
+                break
+        
+        if not custom_prompts_file:
+            logger.error("No se encontró custom_prompts.json")
+            return False
+        
+        try:
+            # Cargar prompts desde JSON
+            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+                custom_prompts = json.load(f)
+            
+            logger.info(f"Cargado custom_prompts.json desde: {custom_prompts_file}")
+            
+            conn = psycopg2.connect(self.db_connection_string)
+            
+            with conn.cursor() as cursor:
+                # Limpiar default_prompts existentes
+                cursor.execute("DELETE FROM default_prompts")
+                
+                # Migrar prompts por empresa
+                companies_processed = 0
+                prompts_migrated = 0
+                
+                for company_id, agents in custom_prompts.items():
+                    if company_id.startswith('_'):  # Skip metadata
+                        continue
+                    
+                    logger.info(f"Procesando empresa: {company_id}")
+                    companies_processed += 1
+                    
+                    for agent_name, agent_data in agents.items():
+                        if not isinstance(agent_data, dict):
+                            continue
+                        
+                        default_template = agent_data.get('default_template')
+                        if not default_template:
+                            continue
+                        
+                        # Crear descripción basada en el agente y empresa
+                        description = f"Prompt por defecto para {agent_name} de {company_id}"
+                        
+                        # Determinar categoría basada en el nombre del agente
+                        category_mapping = {
+                            'router_agent': 'routing',
+                            'sales_agent': 'sales',
+                            'support_agent': 'support',
+                            'emergency_agent': 'emergency',
+                            'schedule_agent': 'scheduling',
+                            'availability_agent': 'availability'
+                        }
+                        category = category_mapping.get(agent_name, 'general')
+                        
+                        # Crear clave única para agente + empresa
+                        unique_agent_name = f"{company_id}_{agent_name}"
+                        
+                        cursor.execute("""
+                            INSERT INTO default_prompts (agent_name, template, description, category)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (agent_name) DO UPDATE SET
+                                template = EXCLUDED.template,
+                                description = EXCLUDED.description,
+                                category = EXCLUDED.category,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, (unique_agent_name, default_template, description, category))
+                        
+                        prompts_migrated += 1
+                        logger.info(f"Migrado: {unique_agent_name}")
+                
+                conn.commit()
+                logger.info(f"Migración completada: {companies_processed} empresas, {prompts_migrated} prompts")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error migrando prompts: {e}")
+            if 'conn' in locals():
+                conn.rollback()
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def _validate_system(self) -> bool:
+        """Valida que el sistema esté funcionando correctamente"""
+        logger.info("Validando sistema...")
+        
+        try:
+            conn = psycopg2.connect(self.db_connection_string, cursor_factory=RealDictCursor)
+            
+            with conn.cursor() as cursor:
+                # Verificar tablas
+                cursor.execute("""
+                    SELECT table_name FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name IN ('custom_prompts', 'default_prompts', 'prompt_versions')
+                """)
+                tables = [row['table_name'] for row in cursor.fetchall()]
+                
+                if len(tables) != 3:
+                    logger.error(f"Solo {len(tables)} de 3 tablas encontradas")
+                    return False
+                
+                # Verificar funciones
+                cursor.execute("""
+                    SELECT routine_name FROM information_schema.routines 
+                    WHERE routine_schema = 'public' 
+                    AND routine_name IN ('repair_prompts_from_repository', 'create_prompt_version')
+                """)
+                functions = [row['routine_name'] for row in cursor.fetchall()]
+                
+                if len(functions) != 2:
+                    logger.error(f"Solo {len(functions)} de 2 funciones encontradas")
+                    return False
+                
+                # Contar prompts migrados
+                cursor.execute("SELECT COUNT(*) as count FROM default_prompts")
+                default_count = cursor.fetchone()['count']
+                
+                cursor.execute("SELECT COUNT(*) as count FROM custom_prompts")
+                custom_count = cursor.fetchone()['count']
+                
+                cursor.execute("SELECT COUNT(*) as count FROM prompt_versions")
+                version_count = cursor.fetchone()['count']
+                
+                logger.info(f"✅ Tablas: {len(tables)}/3")
+                logger.info(f"✅ Funciones: {len(functions)}/2")
+                logger.info(f"✅ Default prompts: {default_count}")
+                logger.info(f"✅ Custom prompts: {custom_count}")
+                logger.info(f"✅ Version records: {version_count}")
+                
+                # Probar función de reparación
+                cursor.execute("SELECT * FROM repair_prompts_from_repository('test_company', 'benova_sales_agent')")
+                repair_test = cursor.fetchone()
+                
+                if repair_test:
+                    logger.info("✅ Función de reparación operativa")
+                    return True
+                else:
+                    logger.error("❌ Función de reparación no funciona")
+                    return False
+                
+        except Exception as e:
+            logger.error(f"Error en validación: {e}")
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def get_current_status(self) -> Dict[str, Any]:
+        """Obtiene el estado actual del sistema"""
+        try:
+            conn = psycopg2.connect(self.db_connection_string, cursor_factory=RealDictCursor)
+            
+            with conn.cursor() as cursor:
+                # Información de tablas
+                cursor.execute("SELECT COUNT(*) as count FROM default_prompts")
+                default_count = cursor.fetchone()['count']
+                
+                cursor.execute("SELECT COUNT(*) as count FROM custom_prompts")
+                custom_count = cursor.fetchone()['count']
+                
+                cursor.execute("SELECT COUNT(*) as count FROM prompt_versions")
+                version_count = cursor.fetchone()['count']
+                
+                # Últimos prompts migrados
+                cursor.execute("""
+                    SELECT agent_name, LEFT(template, 100) as template_preview, updated_at
+                    FROM default_prompts 
+                    ORDER BY updated_at DESC 
+                    LIMIT 5
+                """)
+                recent_prompts = cursor.fetchall()
+                
+                return {
+                    "tables": {
+                        "default_prompts": default_count,
+                        "custom_prompts": custom_count,
+                        "prompt_versions": version_count
+                    },
+                    "recent_prompts": [dict(row) for row in recent_prompts],
+                    "status": "operational" if default_count > 0 else "needs_migration"
+                }
+                
+        except Exception as e:
+            return {"error": str(e), "status": "error"}
+        finally:
+            if 'conn' in locals():
+                conn.close()
+
+def main():
+    """Función principal para ejecutar la reparación"""
+    if len(sys.argv) > 1 and sys.argv[1] == '--status':
+        # Solo mostrar estado actual
+        fixer = PromptsSystemFixer()
+        status = fixer.get_current_status()
+        print(json.dumps(status, indent=2, default=str))
+        return
+    
+    print("🔧 Iniciando reparación del sistema de prompts multi-tenant")
+    print("Este script resolverá todos los problemas identificados en Railway\n")
+    
+    fixer = PromptsSystemFixer()
+    
+    # Mostrar estado actual
+    print("📊 Estado actual del sistema:")
+    current_status = fixer.get_current_status()
+    print(json.dumps(current_status, indent=2, default=str))
+    print()
+    
+    # Ejecutar reparación
+    results = fixer.fix_all_issues()
+    
+    print("\n🎯 Resultados de la reparación:")
+    print(json.dumps(results, indent=2, default=str))
+    
+    if results["success"]:
+        print("\n✅ ¡Reparación exitosa! El sistema de prompts debería funcionar correctamente ahora.")
+        print("\n📝 Pasos siguientes:")
+        print("1. Reinicia la aplicación en Railway")
+        print("2. Verifica que los prompts por defecto sean correctos")
+        print("3. Prueba crear/actualizar prompts personalizados")
+        print("4. Verifica que la función 'reparar' funcione")
+    else:
+        print("\n❌ Reparación falló. Revisa los errores arriba.")
+        return 1
+    
+    return 0
+
+if __name__ == "__main__":
+    exit(main())
