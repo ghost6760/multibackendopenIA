@@ -40,6 +40,10 @@ class PromptMigrationManager:
             "start_time": None,
             "end_time": None
         }
+        
+        # Configuración válida del sistema
+        self.valid_companies = ['benova', 'spa_wellness', 'medispa', 'dental_clinic']
+        self.valid_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
     
     def run_complete_migration(self) -> Dict[str, Any]:
         """
@@ -244,8 +248,8 @@ class PromptMigrationManager:
         """
     
     def _populate_default_prompts(self) -> bool:
-        """Poblar default_prompts desde custom_prompts.json (INTELIGENTE)"""
-        logger.info("Poblando default_prompts desde custom_prompts.json...")
+        """Poblar SOLO prompts específicos por empresa desde custom_prompts.json (CORREGIDO)"""
+        logger.info("Poblando prompts específicos por empresa desde custom_prompts.json...")
         
         try:
             conn = psycopg2.connect(self.db_connection_string)
@@ -256,9 +260,10 @@ class PromptMigrationManager:
                 existing_count = cursor.fetchone()[0]
                 
                 if existing_count > 0:
-                    logger.info(f"Ya existen {existing_count} default prompts, actualizando...")
-                else:
-                    logger.info("No hay default prompts, creando desde custom_prompts.json...")
+                    logger.info(f"Ya existen {existing_count} default prompts, LIMPIANDO para migración correcta...")
+                    # LIMPIAR COMPLETAMENTE para empezar correcto
+                    cursor.execute("DELETE FROM default_prompts")
+                    logger.info("✅ Tabla default_prompts limpiada")
                 
                 # Buscar archivo custom_prompts.json
                 custom_prompts_file = os.path.join(
@@ -278,22 +283,45 @@ class PromptMigrationManager:
                 
                 prompts_count = 0
                 
-                # Extraer default_template de cada empresa/agente
+                # Extraer SOLO default_template de cada empresa/agente válido
                 for company_id, agents in custom_prompts.items():
-                    if company_id.startswith('_'):  # Skip metadata
+                    # FILTRO 1: Saltar metadata
+                    if company_id.startswith('_') or company_id == 'metadata':
+                        logger.debug(f"Saltando metadata: {company_id}")
                         continue
                     
+                    # FILTRO 2: Solo empresas válidas
+                    if company_id not in self.valid_companies:
+                        logger.warning(f"Empresa no válida: {company_id}")
+                        continue
+                    
+                    # FILTRO 3: Solo objetos válidos
+                    if not isinstance(agents, dict):
+                        logger.warning(f"Datos de empresa no válidos: {company_id}")
+                        continue
+                    
+                    logger.info(f"Procesando empresa: {company_id}")
+                    
                     for agent_name, agent_data in agents.items():
+                        # FILTRO 4: Solo agentes válidos
+                        if agent_name not in self.valid_agents:
+                            logger.debug(f"Agente no válido: {agent_name}")
+                            continue
+                        
+                        # FILTRO 5: Solo datos de agente válidos
                         if not isinstance(agent_data, dict):
+                            logger.debug(f"Datos de agente no válidos: {company_id}/{agent_name}")
                             continue
                         
+                        # EXTRAER DEFAULT_TEMPLATE
                         default_template = agent_data.get('default_template')
-                        if not default_template:
+                        if not default_template or len(default_template.strip()) == 0:
+                            logger.debug(f"Sin default_template: {company_id}/{agent_name}")
                             continue
                         
-                        # Crear entrada única para empresa + agente
+                        # CREAR CLAVE ESPECÍFICA POR EMPRESA (como buscan los agentes)
                         unique_agent_key = f"{company_id}_{agent_name}"
-                        description = f"Prompt por defecto para {agent_name} de {company_id}"
+                        description = f"Prompt personalizado para {agent_name} de {company_id}"
                         
                         # Determinar categoría
                         category_mapping = {
@@ -320,8 +348,15 @@ class PromptMigrationManager:
                         logger.info(f"Migrado default_template: {unique_agent_key}")
                 
                 conn.commit()
-                logger.info(f"✅ Default prompts poblados: {prompts_count} prompts específicos por empresa")
-                return True
+                
+                # Validar resultado
+                expected_prompts = len(self.valid_companies) * len(self.valid_agents)
+                if prompts_count == expected_prompts:
+                    logger.info(f"✅ Migración PERFECTA: {prompts_count}/{expected_prompts} prompts específicos por empresa")
+                else:
+                    logger.warning(f"⚠️ Migración parcial: {prompts_count}/{expected_prompts} prompts")
+                
+                return prompts_count > 0
                 
         except Exception as e:
             logger.error(f"Error poblando default prompts desde JSON: {e}")
@@ -332,7 +367,7 @@ class PromptMigrationManager:
                 conn.close()
 
     def _migrate_custom_prompts_file(self) -> bool:
-        """Migrar custom_prompts.json existente a PostgreSQL"""
+        """Migrar custom_prompts.json existente a PostgreSQL (CORREGIDO - FILTRA METADATA)"""
         logger.info("Migrando custom_prompts.json...")
         
         custom_prompts_file = os.path.join(
@@ -356,7 +391,17 @@ class PromptMigrationManager:
             
             with conn.cursor() as cursor:
                 for company_id, company_data in custom_prompts.items():
+                    # FILTRO AGREGADO: Saltar metadata
+                    if company_id.startswith('_') or company_id == 'metadata':
+                        logger.debug(f"Saltando metadata en custom_prompts: {company_id}")
+                        continue
+                    
                     if not isinstance(company_data, dict):
+                        continue
+                    
+                    # FILTRO AGREGADO: Solo empresas válidas
+                    if company_id not in self.valid_companies:
+                        logger.warning(f"Empresa no válida en custom_prompts: {company_id}")
                         continue
                     
                     self.migration_stats["companies_processed"] += 1
@@ -364,6 +409,11 @@ class PromptMigrationManager:
                     
                     for agent_name, agent_data in company_data.items():
                         if not isinstance(agent_data, dict):
+                            continue
+                        
+                        # FILTRO AGREGADO: Solo agentes válidos
+                        if agent_name not in self.valid_agents:
+                            logger.debug(f"Agente no válido en custom_prompts: {agent_name}")
                             continue
                         
                         # Solo migrar si es personalizado y tiene template
@@ -407,7 +457,7 @@ class PromptMigrationManager:
                 conn.close()
     
     def _validate_migration(self) -> bool:
-        """Validar que la migración fue exitosa"""
+        """Validar que la migración fue exitosa (MEJORADO - VALIDA FORMATO CORRECTO)"""
         logger.info("Validando migración...")
         
         try:
@@ -436,6 +486,20 @@ class PromptMigrationManager:
                 cursor.execute("SELECT COUNT(*) as count FROM prompt_versions")
                 version_count = cursor.fetchone()['count']
                 
+                # VALIDACIÓN AGREGADA: Verificar que NO hay prompts genéricos
+                cursor.execute("""
+                    SELECT COUNT(*) as count FROM default_prompts 
+                    WHERE agent_name IN ('router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent')
+                """)
+                generic_count = cursor.fetchone()['count']
+                
+                # VALIDACIÓN AGREGADA: Verificar que todos los prompts tienen formato empresa_agente
+                cursor.execute("""
+                    SELECT COUNT(*) as count FROM default_prompts 
+                    WHERE agent_name LIKE '%_%' AND agent_name NOT LIKE '\\_%'
+                """)
+                company_specific_count = cursor.fetchone()['count']
+                
                 # Verificar funciones (opcional, no crítico si fallan)
                 try:
                     cursor.execute("""
@@ -454,6 +518,25 @@ class PromptMigrationManager:
                 logger.info(f"✅ Custom prompts: {custom_count}")
                 logger.info(f"✅ Version records: {version_count}")
                 logger.info(f"✅ Funciones: {function_count}/2")
+                
+                # VALIDACIONES AGREGADAS
+                if generic_count > 0:
+                    logger.error(f"❌ FALLO: {generic_count} prompts genéricos encontrados (deberían ser 0)")
+                    return False
+                else:
+                    logger.info(f"✅ Sin prompts genéricos: {generic_count}")
+                
+                if company_specific_count != default_count:
+                    logger.error(f"❌ FALLO: No todos los prompts son específicos por empresa")
+                    return False
+                else:
+                    logger.info(f"✅ Todos los prompts son específicos por empresa: {company_specific_count}")
+                
+                expected_prompts = len(self.valid_companies) * len(self.valid_agents)
+                if default_count == expected_prompts:
+                    logger.info(f"✅ Cantidad perfecta: {default_count}/{expected_prompts} prompts")
+                else:
+                    logger.warning(f"⚠️ Cantidad diferente a la esperada: {default_count}/{expected_prompts}")
                 
                 # Validación básica: verificar que hay defaults
                 if default_count > 0:
