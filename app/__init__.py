@@ -13,6 +13,11 @@ from app.services.prompt_service import get_prompt_service
 # Importar blueprints existentes
 from app.routes import webhook, documents, conversations, health, multimedia
 
+# Importar blueprint de diagnóstico (TEMPORAL)
+from app.routes.diagnostic import diagnostic_bp
+
+
+
 # Importar nuevos blueprints integrados
 from app.routes.admin import bp as admin_bp
 from app.routes.companies import bp as companies_bp
@@ -140,6 +145,9 @@ def create_app(config_class=Config):
     app.register_blueprint(companies_bp)  # Ya tiene prefix /api/companies
     app.register_blueprint(documents_extended_bp)  # Ya tiene prefix /api/documents
     app.register_blueprint(conversations_extended_bp)  # Ya tiene prefix /api/conversations
+
+    # Registrar blueprint temporal
+    app.register_blueprint(diagnostic_bp)  # /api/diagnostic
     
     logger.info("✅ All blueprints registered successfully")
     
