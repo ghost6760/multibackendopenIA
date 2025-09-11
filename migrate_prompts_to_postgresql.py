@@ -215,7 +215,7 @@ class PromptMigrationManager:
                 
                 # Buscar archivo custom_prompts.json
                 custom_prompts_file = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)), 
+                    os.path.dirname(__file__), 
                     'custom_prompts.json'
                 )
                 
@@ -289,7 +289,7 @@ class PromptMigrationManager:
         logger.info("Migrando custom_prompts.json...")
         
         custom_prompts_file = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), 
+            os.path.dirname(__file__), 
             'custom_prompts.json'
         )
         
@@ -477,7 +477,7 @@ class PromptMigrationManager:
         """Crear backup del archivo JSON antes de migrar"""
         try:
             custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), 
+                os.path.dirname(__file__), 
                 'custom_prompts.json'
             )
             
