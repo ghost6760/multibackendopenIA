@@ -146,6 +146,56 @@ class PromptMigrationManager:
             if 'conn' in locals():
                 conn.close()
     
+    def _get_embedded_schema_sql_safe(self) -> str:
+        """Schema SQL embebido con IF NOT EXISTS"""
+        return """
+        -- Schema seguro con IF NOT EXISTS
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        
+        CREATE TABLE IF NOT EXISTS custom_prompts (
+            id BIGSERIAL PRIMARY KEY,
+            company_id VARCHAR(100) NOT NULL,
+            agent_name VARCHAR(100) NOT NULL,
+            template TEXT NOT NULL,
+            is_active BOOLEAN DEFAULT true,
+            version INTEGER DEFAULT 1,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            modified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR(100) DEFAULT 'admin',
+            modified_by VARCHAR(100) DEFAULT 'admin',
+            notes TEXT,
+            CONSTRAINT unique_active_prompt UNIQUE (company_id, agent_name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS prompt_versions (
+            id BIGSERIAL PRIMARY KEY,
+            prompt_id BIGINT REFERENCES custom_prompts(id) ON DELETE CASCADE,
+            company_id VARCHAR(100) NOT NULL,
+            agent_name VARCHAR(100) NOT NULL,
+            template TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            action VARCHAR(50) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR(100) DEFAULT 'admin',
+            notes TEXT
+        );
+        
+        CREATE TABLE IF NOT EXISTS default_prompts (
+            id BIGSERIAL PRIMARY KEY,
+            agent_name VARCHAR(100) UNIQUE NOT NULL,
+            template TEXT NOT NULL,
+            description TEXT,
+            category VARCHAR(50) DEFAULT 'general',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        -- Índices solo si no existen
+        CREATE INDEX IF NOT EXISTS idx_custom_prompts_company_agent ON custom_prompts(company_id, agent_name);
+        CREATE INDEX IF NOT EXISTS idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
+        CREATE INDEX IF NOT EXISTS idx_default_prompts_agent ON default_prompts(agent_name);
+        """
+    
     def _populate_default_prompts(self) -> bool:
         """Poblar default_prompts desde custom_prompts.json (INTELIGENTE)"""
         logger.info("Poblando default_prompts desde custom_prompts.json...")
@@ -234,56 +284,6 @@ class PromptMigrationManager:
             if 'conn' in locals():
                 conn.close()
 
-def _get_embedded_schema_sql_safe(self) -> str:
-    """Schema SQL embebido con IF NOT EXISTS"""
-    return """
-    -- Schema seguro con IF NOT EXISTS
-    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-    
-    CREATE TABLE IF NOT EXISTS custom_prompts (
-        id BIGSERIAL PRIMARY KEY,
-        company_id VARCHAR(100) NOT NULL,
-        agent_name VARCHAR(100) NOT NULL,
-        template TEXT NOT NULL,
-        is_active BOOLEAN DEFAULT true,
-        version INTEGER DEFAULT 1,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        modified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        created_by VARCHAR(100) DEFAULT 'admin',
-        modified_by VARCHAR(100) DEFAULT 'admin',
-        notes TEXT,
-        CONSTRAINT unique_active_prompt UNIQUE (company_id, agent_name)
-    );
-    
-    CREATE TABLE IF NOT EXISTS prompt_versions (
-        id BIGSERIAL PRIMARY KEY,
-        prompt_id BIGINT REFERENCES custom_prompts(id) ON DELETE CASCADE,
-        company_id VARCHAR(100) NOT NULL,
-        agent_name VARCHAR(100) NOT NULL,
-        template TEXT NOT NULL,
-        version INTEGER NOT NULL,
-        action VARCHAR(50) NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        created_by VARCHAR(100) DEFAULT 'admin',
-        notes TEXT
-    );
-    
-    CREATE TABLE IF NOT EXISTS default_prompts (
-        id BIGSERIAL PRIMARY KEY,
-        agent_name VARCHAR(100) UNIQUE NOT NULL,
-        template TEXT NOT NULL,
-        description TEXT,
-        category VARCHAR(50) DEFAULT 'general',
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
-    
-    -- Índices solo si no existen
-    CREATE INDEX IF NOT EXISTS idx_custom_prompts_company_agent ON custom_prompts(company_id, agent_name);
-    CREATE INDEX IF NOT EXISTS idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
-    CREATE INDEX IF NOT EXISTS idx_default_prompts_agent ON default_prompts(agent_name);
-    """
-    
     def _migrate_custom_prompts_file(self) -> bool:
         """Migrar custom_prompts.json existente a PostgreSQL"""
         logger.info("Migrando custom_prompts.json...")
