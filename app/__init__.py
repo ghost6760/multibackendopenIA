@@ -5,7 +5,7 @@ from app.config import Config
 from app.utils.error_handlers import register_error_handlers
 from app.services.redis_service import init_redis
 from app.services.vectorstore_service import init_vectorstore
-from .openai_service import OpenAIService, init_openai, get_openai_service
+from app.services.openai_service import init_openai
 from app.config.company_config import get_company_manager
 from app.services.multi_agent_factory import get_multi_agent_factory
 from app.services.prompt_service import get_prompt_service
