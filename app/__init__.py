@@ -24,7 +24,6 @@ import sys
 import threading
 import time
 import os
-import subprocess
 
 def create_app(config_class=Config):
     """Factory pattern para crear la aplicación Flask multi-tenant"""
@@ -490,57 +489,13 @@ def startup_checks(app):
         raise
 
 def delayed_multitenant_initialization(app):
-    """Inicialización inteligente multi-tenant en background - CON MIGRACIÓN DE PROMPTS"""
+    """Inicialización inteligente multi-tenant en background"""
     max_attempts = 5
     attempt = 0
     
     with app.app_context():
         logger = app.logger
         
-        # 🆕 NUEVO: Ejecutar migración de prompts al inicio
-        try:
-            logger.info("🔄 Ejecutando migración automática de prompts...")
-            
-            # Ejecutar migración de prompts
-            migration_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'migrate_prompts_to_postgresql.py')
-            if os.path.exists(migration_script):
-                result = subprocess.run([
-                    'python', migration_script, '--auto'
-                ], capture_output=True, text=True, timeout=60)
-                
-                if result.returncode == 0:
-                    logger.info("✅ Migración de prompts completada exitosamente")
-                else:
-                    logger.warning(f"⚠️ Migración de prompts con advertencias: {result.stderr}")
-            else:
-                # Fallback: ejecutar migración directamente
-                logger.info("Ejecutando migración directa de prompts...")
-                
-                # Añadir ruta raíz del proyecto al sys.path
-                import sys
-                root_path = os.path.dirname(os.path.dirname(__file__))
-                if root_path not in sys.path:
-                    sys.path.insert(0, root_path)
-                
-                try:
-                    from migrate_prompts_to_postgresql import PromptMigrationManager
-                    migrator = PromptMigrationManager()
-                    stats = migrator.run_complete_migration()
-                    
-                    if stats.get("success", False):
-                        logger.info("✅ Migración directa de prompts exitosa")
-                    else:
-                        logger.warning(f"⚠️ Migración directa con errores: {stats.get('errors', [])}")
-                except ImportError as ie:
-                    logger.error(f"❌ No se pudo importar migración: {ie}")
-                except Exception as e:
-                    logger.error(f"❌ Error en migración directa: {e}")
-        
-        except Exception as e:
-            logger.error(f"❌ Error en migración automática de prompts: {e}")
-            # Continuar con el startup aunque falle la migración
-        
-        # Resto del código de inicialización multi-tenant existente...
         while attempt < max_attempts:
             try:
                 attempt += 1
@@ -580,7 +535,6 @@ def delayed_multitenant_initialization(app):
         
         if attempt >= max_attempts:
             logger.warning("⚠️ Multi-tenant initialization completed with limited companies")
-
 
 def start_background_initialization(app):
     """Iniciar proceso de inicialización multi-tenant en background"""
