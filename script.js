@@ -2662,8 +2662,8 @@ async function resetPrompt(agentName) {
 }
 
 /**
- * MANTENER EXACTAMENTE - Vista previa de prompt
- * NO CAMBIAR: Lógica, validaciones, formato de request
+ * FUNCIÓN previewPrompt CORREGIDA PARA EL FORMATO REAL DEL BACKEND
+ * Basada en las imágenes del Network tab que muestran el formato directo
  */
 async function previewPrompt(agentName = null) {
     console.log('🔍 previewPrompt called with agent:', agentName);
@@ -2687,7 +2687,7 @@ async function previewPrompt(agentName = null) {
             return;
         }
     } 
-    // CASO 2: Llamada desde modal de edición (sin agentName - buscar en DOM)
+    // CASO 2: Llamada desde modal de edición (sin agentName)
     else {
         const agentSelect = document.getElementById('editAgent');
         const promptTextarea = document.getElementById('editPrompt');
@@ -2723,9 +2723,13 @@ async function previewPrompt(agentName = null) {
             promptLength: promptTemplate.length 
         });
         
-        // ✅ FORMATO CORRECTO: Igual al test de conversaciones
-        const response = await apiRequest('/api/admin/prompts/preview', {
+        // HACER REQUEST DIRECTO (sin usar apiRequest que espera formato success/data)
+        const response = await fetch(`${API_BASE_URL}/api/admin/prompts/preview`, {
             method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Company-ID': currentCompanyId
+            },
             body: JSON.stringify({
                 agent_name: agentName,
                 company_id: currentCompanyId,
@@ -2734,29 +2738,74 @@ async function previewPrompt(agentName = null) {
             })
         });
         
-        console.log('✅ Preview response received:', response);
+        console.log('✅ Preview response status:', response.status);
         
-        // ✅ VALIDACIÓN DE RESPUESTA
-        if (!response || !response.success) {
-            throw new Error(response?.error || 'Invalid response format');
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
         
-        const data = response.data;
-        if (!data || !data.preview) {
+        const data = await response.json();
+        console.log('✅ Preview response received:', data);
+        
+        // VALIDACIÓN PARA EL FORMATO DIRECTO (según las imágenes)
+        if (data.status !== 'success') {
+            throw new Error(data.error || 'Preview failed');
+        }
+        
+        if (!data.preview) {
             throw new Error('No preview content received');
         }
         
-        // ✅ MOSTRAR EN MODAL (consistente con test de conversaciones)
+        // MOSTRAR EN MODAL - usar los campos directos del backend
         showPreviewModal(agentName, testMessage, data);
         
     } catch (error) {
         console.error('❌ Error in preview:', error);
+        
+        // MOSTRAR ERROR DETALLADO
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+                    <h3>❌ Error en Vista Previa</h3>
+                    <button onclick="closeModal()" class="modal-close">&times;</button>
+                </div>
+                
+                <div class="preview-content">
+                    <div class="preview-section">
+                        <h4>📋 Información del Error</h4>
+                        <p><strong>Agente:</strong> ${escapeHTML(agentName)}</p>
+                        <p><strong>Empresa:</strong> ${escapeHTML(currentCompanyId)}</p>
+                        <p><strong>Mensaje de prueba:</strong></p>
+                        <div class="test-message-box">${escapeHTML(testMessage)}</div>
+                    </div>
+                    
+                    <div class="preview-section">
+                        <h4>🚨 Detalles del Error</h4>
+                        <div style="background: #fef2f2; border: 1px solid #fecaca; border-left: 4px solid #ef4444; padding: 15px; border-radius: 8px;">
+                            <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+                            <p><strong>Tiempo:</strong> ${new Date().toLocaleTimeString()}</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button onclick="closeModal()" class="btn-primary">Cerrar</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+        
         showNotification('Error en vista previa: ' + error.message, 'error');
+        
     } finally {
         toggleLoadingOverlay(false);
     }
 }
-
 
 // ============================================================================
 // 🆕 NUEVAS FUNCIONES - REPARAR Y MIGRACIÓN
@@ -2930,6 +2979,9 @@ function updateSystemStatusDisplay(systemStatus, fallbackUsed = null) {
     dbStatus.className = `status-indicator ${statusClass}`;
 }
 
+ * MODAL ACTUALIZADO PARA FORMATO DIRECTO DEL BACKEND
+ * Usa los campos exactos que se ven en las imágenes del Network tab
+ */
 function showPreviewModal(agentName, testMessage, data) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -2945,10 +2997,11 @@ function showPreviewModal(agentName, testMessage, data) {
                 <div class="preview-section">
                     <h4>📋 Información del Test</h4>
                     <p><strong>Agente:</strong> ${escapeHTML(data.agent_name || agentName)}</p>
+                    <p><strong>Agente usado:</strong> ${escapeHTML(data.agent_used || 'desconocido')}</p>
                     <p><strong>Empresa:</strong> ${escapeHTML(data.company_id || currentCompanyId)}</p>
                     <p><strong>Mensaje de prueba:</strong></p>
-                    <div class="test-message-box">${escapeHTML(testMessage)}</div>
-                    ${data.debug_info ? `<p><strong>Origen del prompt:</strong> ${escapeHTML(data.debug_info.prompt_source)}</p>` : ''}
+                    <div class="test-message-box">${escapeHTML(data.test_message || testMessage)}</div>
+                    ${data.debug_info?.prompt_source ? `<p><strong>Origen del prompt:</strong> ${escapeHTML(data.debug_info.prompt_source)}</p>` : ''}
                 </div>
                 
                 <!-- Respuesta generada -->
@@ -2964,11 +3017,23 @@ function showPreviewModal(agentName, testMessage, data) {
                     <h4>🔧 Información Técnica</h4>
                     <div class="info-grid">
                         <span><strong>Método:</strong> ${data.method || 'API'}</span>
-                        <span><strong>Tiempo:</strong> ${new Date().toLocaleTimeString()}</span>
+                        <span><strong>Tiempo:</strong> ${new Date(data.timestamp * 1000).toLocaleTimeString()}</span>
+                        <span><strong>Estado:</strong> ${data.status}</span>
                         ${data.debug_info?.response_length ? `<span><strong>Longitud:</strong> ${data.debug_info.response_length} caracteres</span>` : ''}
+                        ${data.debug_info?.agent_key ? `<span><strong>Agent Key:</strong> ${data.debug_info.agent_key}</span>` : ''}
                         ${data.debug_info?.prompt_source ? `<span><strong>Fuente:</strong> ${data.debug_info.prompt_source}</span>` : ''}
                     </div>
                 </div>
+                
+                <!-- Prompt preview si está disponible -->
+                ${data.prompt_preview ? `
+                <div class="preview-section technical-info">
+                    <h4>📝 Preview del Prompt</h4>
+                    <div style="background: #f8f9fa; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 0.9em;">
+                        ${escapeHTML(data.prompt_preview)}
+                    </div>
+                </div>
+                ` : ''}
             </div>
             
             <div class="modal-footer">
