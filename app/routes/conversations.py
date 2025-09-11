@@ -118,8 +118,22 @@ def test_conversation(user_id):
         message = data['message'].strip()
         if not message:
             return create_error_response("Message cannot be empty", 400)
+
+        # 🆕 LOGS DETALLADOS COMO VISTA PREVIA
+        logger.info(f"Getting prompts for company: {company_id}")
+        
+        # Verificar prompts disponibles
+        from app.services.prompt_service import get_prompt_service
+        prompt_service = get_prompt_service()
+        agents_data = prompt_service.get_company_prompts(company_id)
+        logger.debug(f"Retrieved prompts for {company_id}: {len(agents_data)} agents")
+        
+        logger.info(f"🔍 [TESTER] Testing conversation for {company_id}")
+        logger.info(f"   → User: {user_id}")
+        logger.info(f"   → Message: {message[:100]}...")
         
         # Servicios específicos de empresa
+        logger.info(f"ConversationManager initialized for company: {company_id}")
         manager = ConversationManager(company_id=company_id)
         factory = get_multi_agent_factory()
         orchestrator = factory.get_orchestrator(company_id)
