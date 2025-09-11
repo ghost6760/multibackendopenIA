@@ -264,8 +264,8 @@ def repair_prompts():
 @handle_errors
 def preview_prompt():
     """
-    Generar vista previa de prompt usando el MISMO FLUJO que el tester de conversaciones
-    REEMPLAZA: La función anterior que usaba _simulate_agent_response
+    Generar vista previa con logging de origen de prompts
+    MEJORADO: Identifica si usa PostgreSQL o JSON
     """
     try:
         data = request.get_json()
@@ -286,7 +286,20 @@ def preview_prompt():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # ✅ NUEVO: Usar el MISMO FLUJO que testConversation()
+        # ✅ NUEVO: Verificar origen de prompts ANTES de la vista previa
+        prompt_service = get_prompt_service()
+        agents_data = prompt_service.get_company_prompts(company_id)
+        agent_data = agents_data.get(agent_name, {})
+        
+        prompt_source = agent_data.get('source', 'unknown')
+        current_prompt_preview = agent_data.get('current_prompt', '')[:100] + "..." if agent_data.get('current_prompt') else 'No prompt found'
+        
+        logger.info(f"🔍 [PREVIEW] Testing {agent_name} for {company_id}")
+        logger.info(f"   → Prompt source: {prompt_source}")
+        logger.info(f"   → Current prompt preview: {current_prompt_preview}")
+        logger.info(f"   → Custom prompt preview: {custom_prompt[:100]}...")
+        
+        # ✅ Usar el MISMO FLUJO que testConversation()
         from app.models.conversation import ConversationManager
         
         # 1. Usar factory y orchestrator REAL (igual que el tester)
@@ -328,6 +341,8 @@ def preview_prompt():
             # 5. Inyectar temporalmente el prompt personalizado
             real_agent.prompt_template = temp_template
             
+            logger.info(f"🔧 [PREVIEW] Temporarily injected custom prompt for {agent_key}")
+            
             # 6. Usar el método REAL del orchestrator (igual que test_conversation)
             preview_response, agent_used = orchestrator.get_response(
                 test_message, 
@@ -335,25 +350,36 @@ def preview_prompt():
                 manager
             )
             
+            logger.info(f"✅ [PREVIEW] Generated response: {len(preview_response)} chars")
+            
         finally:
             # 7. Restaurar prompt original
             if original_prompt_template is not None:
                 real_agent.prompt_template = original_prompt_template
+                logger.info(f"🔄 [PREVIEW] Restored original prompt for {agent_key}")
         
-        # Truncar respuesta si es muy larga
-        if len(preview_response) > 300:
-            preview_response = preview_response[:300] + "..."
-        
-        return create_success_response({
-            "preview": preview_response,
+        # ✅ NUEVO: Respuesta con información detallada
+        response_data = {
+            "preview": preview_response,  # ✅ ASEGURAR que no se trunque aquí
             "agent_name": agent_name,
             "agent_used": agent_used,
             "company_id": company_id,
             "test_message": test_message,
             "prompt_preview": custom_prompt[:150] + "..." if len(custom_prompt) > 150 else custom_prompt,
-            "method": "real_agent_system",  # Indicar que usamos el sistema real
-            "timestamp": time.time()
-        })
+            "method": "real_agent_system",
+            "timestamp": time.time(),
+            # ✅ NUEVO: Información de debugging
+            "debug_info": {
+                "prompt_source": prompt_source,
+                "agent_key": agent_key,
+                "response_length": len(preview_response),
+                "temp_user_id": temp_user_id
+            }
+        }
+        
+        logger.info(f"🎯 [PREVIEW] Returning response with {len(preview_response)} characters")
+        
+        return create_success_response(response_data)
         
     except Exception as e:
         logger.error(f"Error previewing prompt: {e}", exc_info=True)
@@ -434,10 +460,10 @@ def _get_prompt_modification_date(company_id: str, agent_name: str) -> Optional[
 @bp.route('/status', methods=['GET'])
 @handle_errors
 def get_admin_status():
-    """Estado del sistema administrativo"""
+    """Estado del sistema administrativo - CORREGIDO"""
     try:
         company_manager = get_company_manager()
-        companies = company_manager.get_all_companies()
+        companies_dict = company_manager.get_all_companies()  # ✅ Es un diccionario
         
         # 🆕 INCLUIR ESTADO DEL SISTEMA DE PROMPTS
         prompt_service = get_prompt_service()
@@ -445,7 +471,7 @@ def get_admin_status():
         
         status_data = {
             "system_status": "operational",
-            "companies_configured": len(companies),
+            "companies_configured": len(companies_dict),
             "multi_tenant_mode": True,
             "prompt_system": {
                 "postgresql_available": db_status['postgresql_available'],
@@ -456,11 +482,11 @@ def get_admin_status():
             },
             "companies": [
                 {
-                    "company_id": comp.company_id,
-                    "company_name": comp.company_name,
+                    "company_id": company_id,  # ✅ CORREGIDO: usar la key del diccionario
+                    "company_name": config.company_name,  # ✅ CORREGIDO: usar el objeto config
                     "status": "active"
                 }
-                for comp in companies
+                for company_id, config in companies_dict.items()  # ✅ CORREGIDO: iterar correctamente
             ]
         }
         
@@ -469,7 +495,7 @@ def get_admin_status():
     except Exception as e:
         logger.error(f"Error getting admin status: {e}")
         return create_error_response(f"Failed to get admin status: {str(e)}", 500)
-
+        
 @bp.route('/companies/export', methods=['GET'])
 @handle_errors
 def export_companies_configuration():
