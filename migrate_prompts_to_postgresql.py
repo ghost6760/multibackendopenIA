@@ -127,7 +127,12 @@ class PromptMigrationManager:
                 logger.info(f"Tablas existentes encontradas: {existing_tables}")
                 
                 if len(existing_tables) == 3:
-                    logger.info("✅ Todas las tablas ya existen, saltando creación de schema")
+                    logger.info("✅ Todas las tablas ya existen, verificando arquitectura...")
+                    # Verificar si default_prompts tiene la arquitectura correcta
+                    if self._verify_and_update_architecture():
+                        logger.info("✅ Arquitectura verificada/actualizada")
+                    else:
+                        logger.warning("⚠️ Problemas actualizando arquitectura")
                     return True
                 
                 # Solo ejecutar schema si las tablas no existen
@@ -154,6 +159,47 @@ class PromptMigrationManager:
         except Exception as e:
             logger.error(f"Error verificando/creando schema: {e}")
             self.migration_stats["errors"].append(f"Schema creation failed: {str(e)}")
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def _verify_and_update_architecture(self) -> bool:
+        """Verificar y actualizar arquitectura de default_prompts para company_id separado"""
+        try:
+            conn = psycopg2.connect(self.db_connection_string)
+            
+            with conn.cursor() as cursor:
+                # Verificar si company_id ya existe
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = 'default_prompts' 
+                    AND column_name = 'company_id'
+                """)
+                company_id_exists = cursor.fetchone() is not None
+                
+                if not company_id_exists:
+                    logger.info("🔧 Actualizando arquitectura: agregando company_id")
+                    
+                    # Agregar columna company_id
+                    cursor.execute("""
+                        ALTER TABLE default_prompts 
+                        ADD COLUMN company_id VARCHAR(100)
+                    """)
+                    
+                    # Remover constraint único en agent_name si existe
+                    cursor.execute("""
+                        ALTER TABLE default_prompts 
+                        DROP CONSTRAINT IF EXISTS default_prompts_agent_name_key
+                    """)
+                    
+                    logger.info("✅ Columna company_id agregada y constraints actualizados")
+                
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error actualizando arquitectura: {e}")
             return False
         finally:
             if 'conn' in locals():
@@ -186,6 +232,12 @@ class PromptMigrationManager:
                 else:
                     logger.info("ℹ️ Constraint 'valid_agent_name' no existe, no es necesario removerlo")
                 
+                # También remover constraint único de agent_name si existe
+                cursor.execute("""
+                    ALTER TABLE default_prompts 
+                    DROP CONSTRAINT IF EXISTS default_prompts_agent_name_key
+                """)
+                
                 conn.commit()
                 return True
                 
@@ -198,9 +250,9 @@ class PromptMigrationManager:
                 conn.close()
     
     def _get_embedded_schema_sql_safe(self) -> str:
-        """Schema SQL embebido con IF NOT EXISTS - SIN CONSTRAINT RESTRICTIVO"""
+        """Schema SQL embebido con company_id separado - ARQUITECTURA CORREGIDA"""
         return """
-        -- Schema seguro con IF NOT EXISTS
+        -- Schema con arquitectura corregida: company_id + agent_name separados
         CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
         
         CREATE TABLE IF NOT EXISTS custom_prompts (
@@ -233,23 +285,25 @@ class PromptMigrationManager:
         
         CREATE TABLE IF NOT EXISTS default_prompts (
             id BIGSERIAL PRIMARY KEY,
-            agent_name VARCHAR(100) UNIQUE NOT NULL,
+            company_id VARCHAR(100) NOT NULL,
+            agent_name VARCHAR(100) NOT NULL,
             template TEXT NOT NULL,
             description TEXT,
             category VARCHAR(50) DEFAULT 'general',
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT unique_company_agent UNIQUE (company_id, agent_name)
         );
         
-        -- Índices solo si no existen
+        -- Índices optimizados para nueva arquitectura
         CREATE INDEX IF NOT EXISTS idx_custom_prompts_company_agent ON custom_prompts(company_id, agent_name);
         CREATE INDEX IF NOT EXISTS idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
-        CREATE INDEX IF NOT EXISTS idx_default_prompts_agent ON default_prompts(agent_name);
+        CREATE INDEX IF NOT EXISTS idx_default_prompts_company_agent ON default_prompts(company_id, agent_name);
         """
     
     def _populate_default_prompts(self) -> bool:
-        """Poblar SOLO prompts específicos por empresa desde custom_prompts.json (CORREGIDO)"""
-        logger.info("Poblando prompts específicos por empresa desde custom_prompts.json...")
+        """Poblar default_prompts con arquitectura company_id + agent_name separados (CORREGIDO)"""
+        logger.info("Poblando prompts con arquitectura separada desde custom_prompts.json...")
         
         try:
             conn = psycopg2.connect(self.db_connection_string)
@@ -319,8 +373,7 @@ class PromptMigrationManager:
                             logger.debug(f"Sin default_template: {company_id}/{agent_name}")
                             continue
                         
-                        # CREAR CLAVE ESPECÍFICA POR EMPRESA (como buscan los agentes)
-                        unique_agent_key = f"{company_id}_{agent_name}"
+                        # ARQUITECTURA CORREGIDA: company_id y agent_name separados
                         description = f"Prompt personalizado para {agent_name} de {company_id}"
                         
                         # Determinar categoría
@@ -334,18 +387,19 @@ class PromptMigrationManager:
                         }
                         category = category_mapping.get(agent_name, 'general')
                         
+                        # INSERTAR CON ARQUITECTURA SEPARADA
                         cursor.execute("""
-                            INSERT INTO default_prompts (agent_name, template, description, category)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (agent_name) DO UPDATE SET
+                            INSERT INTO default_prompts (company_id, agent_name, template, description, category)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (company_id, agent_name) DO UPDATE SET
                                 template = EXCLUDED.template,
                                 description = EXCLUDED.description,
                                 category = EXCLUDED.category,
                                 updated_at = CURRENT_TIMESTAMP
-                        """, (unique_agent_key, default_template, description, category))
+                        """, (company_id, agent_name, default_template, description, category))
                         
                         prompts_count += 1
-                        logger.info(f"Migrado default_template: {unique_agent_key}")
+                        logger.info(f"Migrado default_template: {company_id}/{agent_name}")
                 
                 conn.commit()
                 
@@ -457,7 +511,7 @@ class PromptMigrationManager:
                 conn.close()
     
     def _validate_migration(self) -> bool:
-        """Validar que la migración fue exitosa (MEJORADO - VALIDA FORMATO CORRECTO)"""
+        """Validar que la migración fue exitosa con arquitectura separada (MEJORADO)"""
         logger.info("Validando migración...")
         
         try:
@@ -476,6 +530,20 @@ class PromptMigrationManager:
                     logger.error(f"Faltan tablas: {set(['custom_prompts', 'prompt_versions', 'default_prompts']) - set(tables)}")
                     return False
                 
+                # Verificar que default_prompts tiene company_id
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = 'default_prompts' 
+                    AND column_name = 'company_id'
+                """)
+                company_id_exists = cursor.fetchone() is not None
+                
+                if not company_id_exists:
+                    logger.error("❌ FALLO: default_prompts no tiene columna company_id")
+                    return False
+                else:
+                    logger.info("✅ Arquitectura separada: company_id existe")
+                
                 # Verificar conteos
                 cursor.execute("SELECT COUNT(*) as count FROM default_prompts")
                 default_count = cursor.fetchone()['count']
@@ -486,19 +554,21 @@ class PromptMigrationManager:
                 cursor.execute("SELECT COUNT(*) as count FROM prompt_versions")
                 version_count = cursor.fetchone()['count']
                 
-                # VALIDACIÓN AGREGADA: Verificar que NO hay prompts genéricos
+                # Verificar que NO hay prompts con formato combinado
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM default_prompts 
-                    WHERE agent_name IN ('router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent')
+                    WHERE agent_name LIKE '%_%'
                 """)
-                generic_count = cursor.fetchone()['count']
+                combined_format_count = cursor.fetchone()['count']
                 
-                # VALIDACIÓN AGREGADA: Verificar que todos los prompts tienen formato empresa_agente
+                # Verificar que todos los prompts tienen company_id y agent_name válidos
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM default_prompts 
-                    WHERE agent_name LIKE '%_%' AND agent_name NOT LIKE '\\_%'
+                    WHERE company_id IS NOT NULL AND agent_name IS NOT NULL
+                    AND company_id IN ('benova', 'spa_wellness', 'medispa', 'dental_clinic')
+                    AND agent_name IN ('router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent')
                 """)
-                company_specific_count = cursor.fetchone()['count']
+                valid_separated_count = cursor.fetchone()['count']
                 
                 # Verificar funciones (opcional, no crítico si fallan)
                 try:
@@ -519,18 +589,19 @@ class PromptMigrationManager:
                 logger.info(f"✅ Version records: {version_count}")
                 logger.info(f"✅ Funciones: {function_count}/2")
                 
-                # VALIDACIONES AGREGADAS
-                if generic_count > 0:
-                    logger.error(f"❌ FALLO: {generic_count} prompts genéricos encontrados (deberían ser 0)")
+                # VALIDACIONES DE ARQUITECTURA SEPARADA
+                if combined_format_count > 0:
+                    logger.error(f"❌ FALLO: {combined_format_count} prompts con formato combinado encontrados (deberían ser 0)")
                     return False
                 else:
-                    logger.info(f"✅ Sin prompts genéricos: {generic_count}")
+                    logger.info(f"✅ Sin formato combinado: {combined_format_count}")
                 
-                if company_specific_count != default_count:
-                    logger.error(f"❌ FALLO: No todos los prompts son específicos por empresa")
+                if valid_separated_count != default_count:
+                    logger.error(f"❌ FALLO: No todos los prompts tienen formato separado válido")
+                    logger.info(f"   Válidos: {valid_separated_count}, Total: {default_count}")
                     return False
                 else:
-                    logger.info(f"✅ Todos los prompts son específicos por empresa: {company_specific_count}")
+                    logger.info(f"✅ Todos los prompts tienen arquitectura separada: {valid_separated_count}")
                 
                 expected_prompts = len(self.valid_companies) * len(self.valid_agents)
                 if default_count == expected_prompts:
@@ -540,7 +611,7 @@ class PromptMigrationManager:
                 
                 # Validación básica: verificar que hay defaults
                 if default_count > 0:
-                    logger.info("✅ Migración validada: hay prompts por defecto")
+                    logger.info("✅ Migración validada: hay prompts por defecto con arquitectura separada")
                     return True
                 else:
                     logger.warning("⚠️ Migración parcial: no hay prompts por defecto")
@@ -555,9 +626,9 @@ class PromptMigrationManager:
                 conn.close()
     
     def _get_embedded_schema_sql(self) -> str:
-        """Schema SQL embebido como fallback"""
+        """Schema SQL embebido como fallback con arquitectura separada"""
         return """
-        -- Schema básico embebido
+        -- Schema básico embebido con arquitectura separada
         CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
         
         CREATE TABLE IF NOT EXISTS custom_prompts (
@@ -590,18 +661,20 @@ class PromptMigrationManager:
         
         CREATE TABLE IF NOT EXISTS default_prompts (
             id BIGSERIAL PRIMARY KEY,
-            agent_name VARCHAR(100) UNIQUE NOT NULL,
+            company_id VARCHAR(100) NOT NULL,
+            agent_name VARCHAR(100) NOT NULL,
             template TEXT NOT NULL,
             description TEXT,
             category VARCHAR(50) DEFAULT 'general',
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT unique_company_agent UNIQUE (company_id, agent_name)
         );
         
-        -- Índices básicos
+        -- Índices básicos optimizados
         CREATE INDEX IF NOT EXISTS idx_custom_prompts_company_agent ON custom_prompts(company_id, agent_name);
         CREATE INDEX IF NOT EXISTS idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
-        CREATE INDEX IF NOT EXISTS idx_default_prompts_agent ON default_prompts(agent_name);
+        CREATE INDEX IF NOT EXISTS idx_default_prompts_company_agent ON default_prompts(company_id, agent_name);
         """
     
     def create_backup(self) -> str:
