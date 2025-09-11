@@ -284,7 +284,7 @@ def preview_prompt():
             return create_error_response(f"Company {company_id} not found", 404)
         
         # ✅ CORREGIDO: Obtener openai_service
-        from app.services.openai_service import get_openai_service
+        from app.services.openai_service import OpenAIService
         openai_service = get_openai_service()
         
         # ✅ CORREGIDO: Pasar openai_service como parámetro
