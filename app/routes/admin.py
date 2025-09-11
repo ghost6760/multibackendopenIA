@@ -361,86 +361,102 @@ def migrate_prompts_to_postgresql():
 
 def _simulate_agent_response(agent_name: str, company_config, custom_prompt: str, 
                            test_message: str, openai_service) -> str:
-    """Simular respuesta de agente con prompt personalizado (CORREGIDO)"""
+    """Simular respuesta de agente con prompt personalizado (VERSIÓN CORREGIDA)"""
     try:
         from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
         from langchain.schema.output_parser import StrOutputParser
         
-        # ✅ CORREGIDO: Detectar qué variables necesita el template
-        required_vars = []
-        if '{question}' in custom_prompt:
-            required_vars.append('question')
-        if '{context}' in custom_prompt:
-            required_vars.append('context')
-        if '{chat_history}' in custom_prompt:
-            required_vars.append('chat_history')
-        if '{message}' in custom_prompt:
-            required_vars.append('message')
-        if '{schedule_context}' in custom_prompt:
-            required_vars.append('schedule_context')
-        if '{emergency_protocols}' in custom_prompt:
-            required_vars.append('emergency_protocols')
+        # ✅ MEJORADO: Detectar variables requeridas automáticamente
+        required_vars = set()
+        import re
         
-        # ✅ CORREGIDO: Crear template con soporte para chat_history
-        if '{chat_history}' in custom_prompt:
+        # Buscar todas las variables en el prompt
+        variables = re.findall(r'\{([^}]+)\}', custom_prompt)
+        for var in variables:
+            required_vars.add(var)
+        
+        logger.debug(f"Variables detectadas en prompt: {required_vars}")
+        
+        # ✅ CORREGIDO: Crear template adaptativo
+        if 'chat_history' in required_vars:
             template = ChatPromptTemplate.from_messages([
                 ("system", custom_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{question}" if '{question}' in custom_prompt else "{message}")
+                ("human", "{question}" if 'question' in required_vars else "{message}")
             ])
         else:
             template = ChatPromptTemplate.from_messages([
                 ("system", custom_prompt),
-                ("human", "{question}" if '{question}' in custom_prompt else "{message}")
+                ("human", "{question}" if 'question' in required_vars else "{message}")
             ])
         
-        # Crear cadena temporal
+        # Crear cadena
         chat_model = openai_service.get_chat_model()
         chain = template | chat_model | StrOutputParser()
         
-        # ✅ CORREGIDO: Preparar inputs con todas las variables necesarias
+        # ✅ MEJORADO: Preparar inputs dinámicamente
         inputs = {}
         
         # Variable principal del mensaje
-        if '{question}' in custom_prompt:
+        if 'question' in required_vars:
             inputs["question"] = test_message
-        elif '{message}' in custom_prompt:
+        elif 'message' in required_vars:
             inputs["message"] = test_message
         else:
-            inputs["question"] = test_message  # Fallback
+            # Fallback: añadir ambas por seguridad
+            inputs["question"] = test_message
+            inputs["message"] = test_message
         
-        # ✅ NUEVO: Variables de contexto
-        if '{context}' in custom_prompt:
-            inputs["context"] = f"Información de servicios de {company_config.company_name}:\n" + \
-                              f"- Servicios principales: {', '.join(company_config.services[:3])}\n" + \
-                              f"- Empresa: {company_config.company_name}\n" + \
-                              f"- Agente de prueba: {agent_name}"
+        # ✅ NUEVO: Variables de contexto específicas
+        if 'context' in required_vars:
+            services_text = ', '.join(company_config.services[:5])
+            inputs["context"] = f"""Servicios de {company_config.company_name}:
+- Servicios principales: {services_text}
+- Ubicación: Premium location
+- Especialidad: Tratamientos de alta calidad
+- Vista previa de contexto para prueba del prompt"""
         
-        # ✅ NUEVO: Historial de chat vacío para preview
-        if '{chat_history}' in custom_prompt:
+        if 'chat_history' in required_vars:
             inputs["chat_history"] = []
         
-        # ✅ NUEVO: Variables específicas por tipo de agente
-        if '{schedule_context}' in custom_prompt:
-            inputs["schedule_context"] = "Disponibilidad de ejemplo:\n- Lunes a Viernes: 9:00 AM - 6:00 PM\n- Próximas citas disponibles: Mañana, Pasado mañana"
+        if 'schedule_context' in required_vars:
+            inputs["schedule_context"] = f"""Disponibilidad de {company_config.company_name}:
+- Lunes a Viernes: 9:00 AM - 6:00 PM
+- Sábados: 9:00 AM - 2:00 PM
+- Próximas citas disponibles: Mañana 10:00 AM, Pasado mañana 2:00 PM
+- Citas de emergencia: Disponibles"""
         
-        if '{emergency_protocols}' in custom_prompt:
-            inputs["emergency_protocols"] = f"Protocolos de emergencia de {company_config.company_name}:\n- Contacto inmediato\n- Evaluación prioritaria\n- Escalación urgente"
+        if 'emergency_protocols' in required_vars:
+            inputs["emergency_protocols"] = f"""Protocolos de emergencia - {company_config.company_name}:
+1. Evaluación inmediata de la situación
+2. Contacto prioritario con especialista
+3. Escalación según severidad
+4. Seguimiento post-emergencia"""
         
-        # ✅ NUEVO: Variables adicionales de empresa
-        inputs.update({
-            "company_name": company_config.company_name,
-            "company_id": company_config.company_id,
-            "agent_name": getattr(company_config, f'{agent_name}_name', 'Asistente de Prueba')
-        })
+        # ✅ NUEVO: Variables adicionales comunes
+        company_name = company_config.company_name
+        if 'company_name' in required_vars:
+            inputs["company_name"] = company_name
+        if 'company_id' in required_vars:
+            inputs["company_id"] = company_config.company_id
+        if 'agent_name' in required_vars:
+            inputs["agent_name"] = f"Agente {agent_name} de {company_name}"
+        
+        # ✅ MEJORADO: Log de debug para troubleshooting
+        logger.debug(f"Inputs preparados: {list(inputs.keys())}")
+        logger.debug(f"Variables requeridas: {required_vars}")
         
         # Ejecutar simulación
         response = chain.invoke(inputs)
-        return response
+        
+        # ✅ NUEVO: Añadir contexto de preview
+        preview_note = f"\n\n[Vista previa generada para {agent_name} de {company_name}]"
+        return str(response) + preview_note
         
     except Exception as e:
         logger.error(f"Error simulating agent response: {e}")
-        return f"Error en la simulación: {str(e)}. Variables detectadas en template: {required_vars if 'required_vars' in locals() else 'No detectadas'}"
+        variables_found = re.findall(r'\{([^}]+)\}', custom_prompt) if 'custom_prompt' in locals() else []
+        return f"Error en la simulación: {str(e)}\n\nVariables detectadas en el prompt: {variables_found}\nPor favor verifica que el prompt tenga la sintaxis correcta."
 
 
 # ============================================================================
