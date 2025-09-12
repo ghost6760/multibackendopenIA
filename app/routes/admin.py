@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List
 from flask import Blueprint, request, jsonify
 
 from app.utils.helpers import create_success_response, create_error_response
-from app.utils.decorators import handle_errors
+from app.utils.decorators import handle_errors, require_api_key
 from app.config.company_config import get_company_manager
 from app.services.multi_agent_factory import get_multi_agent_factory
 from app.services.company_config_service import (
