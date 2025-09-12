@@ -14,6 +14,11 @@ from .vector_auto_recovery import (
     get_system_wide_health
 )
 from .prompt_service import PromptService, get_prompt_service, init_prompt_service
+from .company_config_service import (
+    EnterpriseCompanyConfigService,
+    get_enterprise_company_service,
+    EnterpriseCompanyConfig
+)
 
 __all__ = [
     # Basic services
@@ -44,6 +49,10 @@ __all__ = [
     'PromptService',
     'get_prompt_service',
     'init_prompt_service'
+
+    'EnterpriseCompanyConfigService',
+    'get_enterprise_company_service', 
+    'EnterpriseCompanyConfig'
 ]
 
 # Convenience functions for multi-tenant usage
