@@ -46,14 +46,29 @@ class ConversationManager:
         try:
             # Asegurar que user_id tenga prefijo de empresa
             company_user_id = self._ensure_company_prefix(user_id)
+            
+            # 🆕 LOGS DE REDIS RECOVERY
+            history_key = f"{self.redis_prefix}{company_user_id}"
+            logger.debug(f"📚 [{self.company_id}] Retrieving chat history:")
+            logger.debug(f"   → User: {user_id}")
+            logger.debug(f"   → Redis key: {history_key}")
+            
+            # Verificar si existe en Redis
+            exists_in_redis = self.redis_client.exists(history_key)
+            logger.debug(f"   → Exists in Redis: {exists_in_redis}")
+            
             redis_history = self._get_or_create_redis_history(company_user_id)
+            messages = redis_history.messages
+            
+            logger.debug(f"   → Messages found: {len(messages)}")
+            if messages:
+                logger.debug(f"   → Last message: {messages[-1].content[:50]}..." if messages else "No messages")
             
             if format_type == "langchain":
                 return redis_history
             elif format_type == "messages":
                 return redis_history.messages
             elif format_type == "dict":
-                messages = redis_history.messages
                 return [
                     {
                         "role": "user" if isinstance(msg, HumanMessage) else "assistant",
