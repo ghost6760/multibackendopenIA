@@ -10,6 +10,10 @@ from app.utils.helpers import create_success_response, create_error_response
 from app.utils.decorators import handle_errors
 from app.config.company_config import get_company_manager
 from app.services.multi_agent_factory import get_multi_agent_factory
+from app.services.company_config_service import (
+    get_enterprise_company_service, 
+    EnterpriseCompanyConfig
+)
 
 # 🆕 IMPORTAR NUEVO SERVICIO DE PROMPTS
 from app.services.prompt_service import get_prompt_service
@@ -956,3 +960,552 @@ def run_system_diagnostics():
     except Exception as e:
         logger.error(f"System diagnostics failed: {e}")
         return create_error_response(f"Failed to run diagnostics: {e}", 500)
+
+
+
+@bp.route('/companies/create', methods=['POST'])
+@handle_errors
+@require_api_key
+def create_new_company_enterprise():
+    """
+    ENDPOINT ENTERPRISE - Crear nueva empresa con PostgreSQL como source of truth
+    
+    Arquitectura de 3 niveles:
+    1. PostgreSQL (source of truth) - persistencia transaccional
+    2. Redis Cache (performance) - cache distribuido  
+    3. JSON Fallback (bootstrap) - solo para desarrollo/emergencia
+    
+    POST /api/admin/companies/create
+    {
+        "company_id": "spa_wellness",
+        "company_name": "Zen Spa & Wellness", 
+        "business_type": "beauty",
+        "services": "masajes, tratamientos faciales, aromaterapia",
+        "sales_agent_name": "Elena, especialista en bienestar",
+        "schedule_service_url": "http://127.0.0.1:4043",
+        "timezone": "America/Bogota",
+        "currency": "COP",
+        "treatment_durations": {
+            "masaje_relajante": 60,
+            "facial_hidratante": 90,
+            "tratamiento_corporal": 120
+        },
+        "schedule_keywords": ["agendar", "reservar", "programar"],
+        "emergency_keywords": ["reaccion_alergica", "irritacion_severa"],
+        "sales_keywords": ["precio", "promocion", "paquete"]
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        # Validar campos requeridos
+        required_fields = ['company_id', 'company_name', 'services']
+        for field in required_fields:
+            if not data.get(field):
+                return create_error_response(f"Missing required field: {field}", 400)
+        
+        company_id = data['company_id'].lower().strip()
+        
+        # Validar formato de company_id
+        import re
+        if not re.match(r'^[a-z0-9_]+$', company_id):
+            return create_error_response(
+                "company_id must contain only lowercase letters, numbers, and underscores", 
+                400
+            )
+        
+        # Obtener servicio enterprise
+        enterprise_service = get_enterprise_company_service()
+        
+        # Verificar que la empresa no existe
+        existing_config = enterprise_service.get_company_config(company_id, use_cache=False)
+        if existing_config and existing_config.notes != "Default emergency configuration":
+            return create_error_response(f"Company {company_id} already exists", 400)
+        
+        # 1. CREAR CONFIGURACIÓN ENTERPRISE
+        enterprise_config = EnterpriseCompanyConfig(
+            company_id=company_id,
+            company_name=data['company_name'],
+            business_type=data.get('business_type', 'general'),
+            services=data['services'],
+            
+            # Configuración de agentes
+            sales_agent_name=data.get('sales_agent_name', f"Asistente de {data['company_name']}"),
+            model_name=data.get('model_name', 'gpt-4o-mini'),
+            max_tokens=data.get('max_tokens', 1500),
+            temperature=data.get('temperature', 0.7),
+            max_context_messages=data.get('max_context_messages', 10),
+            
+            # Servicios externos
+            schedule_service_url=data.get('schedule_service_url', 'http://127.0.0.1:4040'),
+            schedule_integration_type=data.get('schedule_integration_type', 'basic'),
+            chatwoot_account_id=data.get('chatwoot_account_id'),
+            
+            # Configuración de negocio
+            treatment_durations=data.get('treatment_durations'),
+            schedule_keywords=data.get('schedule_keywords'),
+            emergency_keywords=data.get('emergency_keywords'),
+            sales_keywords=data.get('sales_keywords'),
+            required_booking_fields=data.get('required_booking_fields'),
+            
+            # Localización
+            timezone=data.get('timezone', 'America/Bogota'),
+            language=data.get('language', 'es'),
+            currency=data.get('currency', 'COP'),
+            
+            # Límites y suscripción
+            subscription_tier=data.get('subscription_tier', 'basic'),
+            max_documents=data.get('max_documents', 1000),
+            max_conversations=data.get('max_conversations', 10000),
+            
+            # Metadatos
+            created_by="admin_api",
+            modified_by="admin_api",
+            notes=f"Created via API on {datetime.now().isoformat()}"
+        )
+        
+        # 2. GUARDAR EN POSTGRESQL (Source of Truth)
+        postgresql_success = enterprise_service.create_company(
+            enterprise_config, 
+            created_by="admin_api"
+        )
+        
+        if not postgresql_success:
+            return create_error_response("Failed to save company configuration to PostgreSQL", 500)
+        
+        # 3. INICIALIZAR VECTOR STORE EN REDIS
+        vectorstore_status = "not_initialized"
+        try:
+            from app.services.vectorstore_service import VectorstoreService
+            vectorstore_service = VectorstoreService(company_id=company_id)
+            
+            health_status = vectorstore_service.check_health()
+            if health_status.get('index_exists'):
+                vectorstore_status = "initialized"
+            else:
+                vectorstore_status = "failed"
+        except Exception as e:
+            logger.warning(f"Could not initialize vectorstore for {company_id}: {e}")
+            vectorstore_status = f"failed: {str(e)}"
+        
+        # 4. CONFIGURAR PROMPTS EN POSTGRESQL
+        prompt_status = "not_configured"
+        try:
+            from app.services.prompt_service import get_prompt_service
+            prompt_service = get_prompt_service()
+            
+            # Prompts personalizados por empresa usando sus datos específicos
+            business_specific_prompts = _create_business_specific_prompts(
+                enterprise_config.company_name,
+                enterprise_config.services,
+                enterprise_config.sales_agent_name,
+                enterprise_config.business_type
+            )
+            
+            prompts_created = 0
+            for agent_name, template in business_specific_prompts.items():
+                if prompt_service.create_or_update_prompt(
+                    company_id=company_id,
+                    agent_name=agent_name,
+                    template=template,
+                    created_by="admin_api_enterprise"
+                ):
+                    prompts_created += 1
+            
+            prompt_status = f"configured ({prompts_created} prompts created)"
+            
+        except Exception as e:
+            logger.warning(f"Could not configure prompts for {company_id}: {e}")
+            prompt_status = f"failed: {str(e)}"
+        
+        # 5. INICIALIZAR ORQUESTADOR MULTI-AGENTE
+        orchestrator_status = "not_initialized"
+        try:
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            if orchestrator:
+                orchestrator_status = "initialized"
+            else:
+                orchestrator_status = "failed"
+        except Exception as e:
+            logger.warning(f"Could not initialize orchestrator for {company_id}: {e}")
+            orchestrator_status = f"failed: {str(e)}"
+        
+        # 6. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD)
+        json_fallback_status = "not_updated"
+        try:
+            config_file = os.getenv('COMPANIES_CONFIG_FILE', 'companies_config.json')
+            
+            # Leer configuración existente
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    existing_config = json.load(f)
+            else:
+                existing_config = {}
+            
+            # Agregar nueva empresa (formato legacy para compatibilidad)
+            existing_config[company_id] = {
+                "company_name": enterprise_config.company_name,
+                "business_type": enterprise_config.business_type,
+                "redis_prefix": enterprise_config.redis_prefix,
+                "vectorstore_index": enterprise_config.vectorstore_index,
+                "schedule_service_url": enterprise_config.schedule_service_url,
+                "sales_agent_name": enterprise_config.sales_agent_name,
+                "services": enterprise_config.services,
+                "model_name": enterprise_config.model_name,
+                "max_tokens": enterprise_config.max_tokens,
+                "temperature": enterprise_config.temperature,
+                "_source": "postgresql",  # Indicar que el source of truth es PostgreSQL
+                "_created_via": "enterprise_api"
+            }
+            
+            # Guardar archivo actualizado
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_config, f, indent=2, ensure_ascii=False)
+            
+            json_fallback_status = "updated"
+            
+        except Exception as e:
+            logger.warning(f"Could not update JSON fallback for {company_id}: {e}")
+            json_fallback_status = f"failed: {str(e)}"
+        
+        # 7. AGREGAR AL COMPANY MANAGER LEGACY (PARA COMPATIBILIDAD)
+        try:
+            company_manager = get_company_manager()
+            legacy_config = enterprise_config.to_legacy_config()
+            company_manager.add_company_config(legacy_config)
+        except Exception as e:
+            logger.warning(f"Could not update legacy company manager: {e}")
+        
+        logger.info(f"✅ Enterprise company created: {company_id} ({enterprise_config.company_name})")
+        
+        return create_success_response({
+            "message": f"Enterprise company {company_id} created successfully",
+            "company_id": company_id,
+            "company_name": enterprise_config.company_name,
+            "business_type": enterprise_config.business_type,
+            "architecture": "enterprise_postgresql",
+            "setup_status": {
+                "postgresql_config_saved": postgresql_success,
+                "vectorstore_initialized": vectorstore_status,
+                "prompts_configured": prompt_status,
+                "orchestrator_initialized": orchestrator_status,
+                "json_fallback_updated": json_fallback_status,
+                "legacy_compatibility": True
+            },
+            "configuration": {
+                "redis_prefix": enterprise_config.redis_prefix,
+                "vectorstore_index": enterprise_config.vectorstore_index,
+                "timezone": enterprise_config.timezone,
+                "language": enterprise_config.language,
+                "currency": enterprise_config.currency,
+                "subscription_tier": enterprise_config.subscription_tier,
+                "max_documents": enterprise_config.max_documents,
+                "max_conversations": enterprise_config.max_conversations
+            },
+            "endpoints_available": [
+                f"POST /documents (with X-Company-ID: {company_id})",
+                f"POST /conversations/{{user_id}}/test?company_id={company_id}",
+                f"POST /webhook/chatwoot (auto-detect company)",
+                f"GET /api/admin/companies/{company_id} (configuration)",
+                f"PUT /api/admin/companies/{company_id} (update configuration)"
+            ],
+            "next_steps": [
+                f"Upload documents: curl -X POST /documents -H 'X-Company-ID: {company_id}' -d '{{\"content\": \"...\"}}'",
+                f"Test chat: curl -X POST /conversations/test123/test?company_id={company_id} -d '{{\"message\": \"Hola\"}}'",
+                f"Update config: curl -X PUT /api/admin/companies/{company_id} -d '{{\"sales_agent_name\": \"New Name\"}}'",
+                "Configure Chatwoot webhook with company_id in conversation metadata"
+            ]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error creating enterprise company: {e}")
+        return create_error_response(f"Failed to create enterprise company: {str(e)}", 500)
+
+
+@bp.route('/companies/<company_id>', methods=['GET'])
+@handle_errors
+@require_api_key
+def get_company_configuration(company_id):
+    """
+    OBTENER configuración completa de empresa desde PostgreSQL
+    
+    GET /api/admin/companies/spa_wellness
+    """
+    try:
+        enterprise_service = get_enterprise_company_service()
+        config = enterprise_service.get_company_config(company_id, use_cache=False)
+        
+        if not config:
+            return create_error_response(f"Company {company_id} not found", 404)
+        
+        # Información adicional del estado
+        db_status = enterprise_service.get_db_status()
+        
+        return create_success_response({
+            "company_id": config.company_id,
+            "configuration": asdict(config),
+            "metadata": {
+                "source": "postgresql" if db_status.get('postgresql_available') else "json_fallback",
+                "version": config.version,
+                "last_modified": config.modified_by,
+                "is_enterprise": True,
+                "db_status": db_status.get('connection_status', 'unknown')
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting company configuration for {company_id}: {e}")
+        return create_error_response(f"Failed to get company configuration: {str(e)}", 500)
+
+
+@bp.route('/companies/<company_id>', methods=['PUT'])
+@handle_errors
+@require_api_key
+def update_company_configuration(company_id):
+    """
+    ACTUALIZAR configuración de empresa en PostgreSQL con versionado automático
+    
+    PUT /api/admin/companies/spa_wellness
+    {
+        "company_name": "Nuevo Nombre",
+        "services": "nuevos servicios actualizados",
+        "sales_agent_name": "Nuevo Agente",
+        "treatment_durations": {
+            "masaje_nuevo": 75
+        }
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return create_error_response("No data provided", 400)
+        
+        enterprise_service = get_enterprise_company_service()
+        
+        # Verificar que existe
+        existing_config = enterprise_service.get_company_config(company_id, use_cache=False)
+        if not existing_config:
+            return create_error_response(f"Company {company_id} not found", 404)
+        
+        # Filtrar campos que se pueden actualizar
+        updatable_fields = [
+            'company_name', 'business_type', 'services', 'sales_agent_name',
+            'model_name', 'max_tokens', 'temperature', 'max_context_messages',
+            'schedule_service_url', 'schedule_integration_type', 'chatwoot_account_id',
+            'treatment_durations', 'schedule_keywords', 'emergency_keywords', 
+            'sales_keywords', 'required_booking_fields', 'timezone', 'language', 
+            'currency', 'subscription_tier', 'max_documents', 'max_conversations', 'notes'
+        ]
+        
+        updates = {key: value for key, value in data.items() if key in updatable_fields}
+        
+        if not updates:
+            return create_error_response("No valid fields to update", 400)
+        
+        # Actualizar en PostgreSQL
+        success = enterprise_service.update_company(
+            company_id, 
+            updates, 
+            modified_by="admin_api"
+        )
+        
+        if not success:
+            return create_error_response("Failed to update company configuration", 500)
+        
+        # Invalidar cache del orquestador si cambió configuración de agentes
+        agent_related_fields = ['sales_agent_name', 'model_name', 'max_tokens', 'temperature']
+        if any(field in updates for field in agent_related_fields):
+            try:
+                factory = get_multi_agent_factory()
+                factory.clear_company_cache(company_id)
+                logger.info(f"Orchestrator cache cleared for {company_id} due to agent config changes")
+            except Exception as e:
+                logger.warning(f"Could not clear orchestrator cache: {e}")
+        
+        # Obtener configuración actualizada
+        updated_config = enterprise_service.get_company_config(company_id, use_cache=False)
+        
+        logger.info(f"✅ Company {company_id} configuration updated: {list(updates.keys())}")
+        
+        return create_success_response({
+            "message": f"Company {company_id} updated successfully",
+            "company_id": company_id,
+            "fields_updated": list(updates.keys()),
+            "new_version": updated_config.version if updated_config else "unknown",
+            "configuration": asdict(updated_config) if updated_config else None,
+            "cache_invalidated": True
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating company {company_id}: {e}")
+        return create_error_response(f"Failed to update company: {str(e)}", 500)
+
+
+@bp.route('/companies', methods=['GET'])
+@handle_errors
+@require_api_key
+def list_all_companies():
+    """
+    LISTAR todas las empresas desde PostgreSQL con filtros
+    
+    GET /api/admin/companies?active_only=true&business_type=healthcare
+    """
+    try:
+        # Parámetros de filtro
+        active_only = request.args.get('active_only', 'true').lower() == 'true'
+        business_type = request.args.get('business_type')
+        
+        enterprise_service = get_enterprise_company_service()
+        companies = enterprise_service.list_companies(
+            active_only=active_only,
+            business_type=business_type
+        )
+        
+        # Obtener estado de DB
+        db_status = enterprise_service.get_db_status()
+        
+        # Formatear respuesta
+        companies_data = []
+        for config in companies:
+            companies_data.append({
+                "company_id": config.company_id,
+                "company_name": config.company_name,
+                "business_type": config.business_type,
+                "services": config.services,
+                "is_active": config.is_active,
+                "subscription_tier": config.subscription_tier,
+                "version": config.version,
+                "created_by": config.created_by,
+                "modified_by": config.modified_by
+            })
+        
+        return create_success_response({
+            "total_companies": len(companies_data),
+            "filters_applied": {
+                "active_only": active_only,
+                "business_type": business_type
+            },
+            "companies": companies_data,
+            "source": "postgresql" if db_status.get('postgresql_available') else "json_fallback",
+            "db_status": db_status
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing companies: {e}")
+        return create_error_response(f"Failed to list companies: {str(e)}", 500)
+
+
+@bp.route('/companies/migrate-from-json', methods=['POST'])
+@handle_errors
+@require_api_key
+def migrate_companies_from_json():
+    """
+    MIGRAR configuraciones desde JSON hacia PostgreSQL
+    
+    POST /api/admin/companies/migrate-from-json
+    """
+    try:
+        enterprise_service = get_enterprise_company_service()
+        
+        # Verificar estado de PostgreSQL
+        db_status = enterprise_service.get_db_status()
+        if not db_status.get('postgresql_available'):
+            return create_error_response(
+                "PostgreSQL not available for migration", 
+                503
+            )
+        
+        # Ejecutar migración
+        migration_stats = enterprise_service.migrate_from_json()
+        
+        if migration_stats['success']:
+            return create_success_response({
+                "message": "Migration completed successfully",
+                "statistics": migration_stats,
+                "recommendation": "Consider using PostgreSQL as primary configuration source"
+            })
+        else:
+            return create_error_response(
+                "Migration completed with errors",
+                partial_data={
+                    "statistics": migration_stats,
+                    "recommendation": "Check logs and retry failed companies"
+                }
+            )
+        
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
+        return create_error_response(f"Migration failed: {str(e)}", 500)
+
+
+def _create_business_specific_prompts(company_name: str, services: str, agent_name: str, business_type: str) -> Dict[str, str]:
+    """Crear prompts específicos por tipo de negocio"""
+    
+    # Keywords específicos por tipo de negocio
+    business_keywords = {
+        'healthcare': 'salud, bienestar, tratamiento médico, consulta',
+        'beauty': 'belleza, relajación, tratamiento estético, bienestar',
+        'dental': 'salud dental, odontología, higiene oral, sonrisa',
+        'general': 'atención personalizada, servicio de calidad'
+    }
+    
+    specific_keywords = business_keywords.get(business_type, business_keywords['general'])
+    
+    return {
+        "router": f"""Eres un asistente especializado de {company_name}, una empresa dedicada a {services}.
+
+Tu función es clasificar las consultas de clientes en las siguientes categorías:
+- SALES: Consultas sobre {services}, precios, promociones o información comercial
+- SUPPORT: Dudas técnicas, problemas con servicios ya contratados
+- SCHEDULE: Solicitudes de agendamiento, cambio de citas, disponibilidad
+- EMERGENCY: Situaciones urgentes relacionadas con {specific_keywords}
+
+Siempre mantén un tono profesional y cálido, representando los valores de {company_name}.""",
+
+        "sales": f"""Eres {agent_name} de {company_name}, un asesor comercial especializado en {services}.
+
+Tu especialidad es brindar información detallada sobre nuestros servicios de {services}, ayudar a los clientes a elegir la mejor opción según sus necesidades, y cerrar ventas de manera consultiva.
+
+Características importantes:
+- Conoces profundamente todos los servicios relacionados con {services}
+- Puedes explicar beneficios, procesos y resultados esperados
+- Ofreces opciones personalizadas según el perfil del cliente
+- Mantienes un enfoque consultivo, no agresivo
+- Representas los valores de excelencia de {company_name}
+
+Siempre busca entender las necesidades específicas del cliente antes de hacer recomendaciones.""",
+
+        "support": f"""Eres un agente de soporte técnico especializado de {company_name}, experto en resolver dudas y problemas relacionados con {services}.
+
+Tu función es:
+- Resolver dudas técnicas sobre nuestros servicios de {services}
+- Ayudar con problemas post-servicio
+- Proporcionar instrucciones claras y precisas
+- Escalar a especialistas cuando sea necesario
+- Mantener la satisfacción del cliente
+
+Enfoque en la resolución efectiva y el seguimiento personalizado.""",
+
+        "emergency": f"""Eres un agente de emergencias especializadamente entrenado de {company_name}, especializado en situaciones urgentes relacionadas con {specific_keywords}.
+
+IMPORTANTE: 
+- Identifica rápidamente situaciones que requieren atención médica inmediata
+- En casos graves, siempre recomienda contactar servicios de emergencia (911)
+- Proporciona primeros auxilios básicos cuando sea apropiado
+- Documenta la situación para seguimiento
+- Mantén la calma y tranquiliza al cliente
+
+Tu prioridad es la seguridad y bienestar del cliente.""",
+
+        "schedule": f"""Eres un asistente de agendamiento especializado de {company_name}, experto en coordinar citas para servicios de {services}.
+
+Funciones principales:
+- Consultar disponibilidad de agenda
+- Agendar, modificar y cancelar citas
+- Proporcionar información sobre tiempos de servicios
+- Confirmar datos de contacto y preferencias
+- Enviar recordatorios y confirmaciones
+
+Siempre confirma todos los detalles importantes y proporciona información clara sobre políticas de cancelación."""
+    }
