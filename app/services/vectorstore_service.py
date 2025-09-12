@@ -66,14 +66,30 @@ class VectorstoreService:
     def search_by_company(self, query: str, company_id: str = None, k: int = 3) -> List[Any]:
         """Buscar documentos filtrados por empresa - CORREGIDO para devolver objetos LangChain"""
         try:
-            # Verificar que coincida la empresa
+            # 🆕 LOGS DE RAG DETALLADOS - INICIO
             target_company = company_id or self.company_id
+            logger.info(f"🔍 [{target_company}] RAG SEARCH START:")
+            logger.info(f"   → Query: {query[:100]}...")
+            logger.info(f"   → Requested documents: {k}")
+            logger.info(f"   → Target company: {target_company}")
+            logger.info(f"   → Current company: {self.company_id}")
+            if hasattr(self, 'vectorstore_index'):
+                logger.info(f"   → Vectorstore index: {self.vectorstore_index}")
+            
+            # Verificar que coincida la empresa
             if target_company != self.company_id:
-                logger.warning(f"Company ID mismatch: {target_company} != {self.company_id}")
+                logger.warning(f"❌ [{target_company}] Company ID mismatch: {target_company} != {self.company_id}")
+                return []
+            
+            if not self.vectorstore:
+                logger.warning(f"   → Vectorstore not available for {target_company}")
                 return []
             
             # Realizar búsqueda usando el vectorstore directamente
+            logger.info(f"   → Executing similarity search...")
             docs = self.vectorstore.similarity_search(query, k=k)
+            
+            logger.info(f"   → Initial documents retrieved: {len(docs)}")
             
             # CORREGIDO: Filtrar por empresa pero mantener objetos Document de LangChain
             filtered_docs = []
@@ -85,10 +101,22 @@ class VectorstoreService:
                 if doc_company == self.company_id:
                     filtered_docs.append(doc)
             
+            # 🆕 LOGS DE RAG DETALLADOS - RESULTADOS
+            logger.info(f"📄 [{self.company_id}] RAG RESULTS:")
+            logger.info(f"   → Documents found after filtering: {len(filtered_docs)}")
+            
+            for i, doc in enumerate(filtered_docs):
+                doc_preview = doc.page_content[:100].replace('\n', ' ') if hasattr(doc, 'page_content') else 'No content'
+                metadata = getattr(doc, 'metadata', {})
+                logger.info(f"   → Doc {i+1}: {doc_preview}...")
+                logger.info(f"      Metadata: {metadata}")
+            
+            logger.info(f"✅ [{self.company_id}] RAG search completed successfully")
             logger.info(f"Found {len(filtered_docs)} documents for company {self.company_id}")
             return filtered_docs
             
         except Exception as e:
+            logger.error(f"❌ [{target_company if 'target_company' in locals() else 'unknown'}] RAG search error: {e}")
             logger.error(f"Error searching documents for {self.company_id}: {e}")
             return []
     
