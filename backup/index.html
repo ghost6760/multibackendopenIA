@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benova Multi-Tenant Backend - Panel de Administración</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏥 Benova Multi-Tenant Backend</h1>
+            <p class="subtitle">Panel de Administración - Sistema Multi-Agente</p>
+        </div>
+        
+        <div class="company-selector">
+            <label for="companySelect">🏢 Empresa Activa:</label>
+            <select id="companySelect" onchange="handleCompanyChange(this.value)">
+                <option value="">Seleccionar empresa...</option>
+                <option value="benova" selected>Benova</option>
+                <option value="medispa">MediSpa Elite</option>
+                <option value="dental_clinic">Clínica Dental Sonríe</option>
+                <option value="spa_wellness">Wellness Spa & Relax</option>
+            </select>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="dashboard">📊 Dashboard</button>
+            <button class="tab" data-tab="documents">📄 Documentos</button>
+            <button class="tab" data-tab="conversations">💬 Conversaciones</button>
+            <button class="tab" data-tab="multimedia">🎤 Multimedia</button>
+            <button class="tab" data-tab="prompts">🤖 Prompts</button>
+            <button class="tab" data-tab="admin">🔧 Administración</button>
+            <button class="tab" data-tab="health">🏥 Health Check</button>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div class="tab-content active" id="dashboard">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalCompanies">-</div>
+                    <div class="stat-label">Empresas</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalDocuments">-</div>
+                    <div class="stat-label">Documentos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalConversations">-</div>
+                    <div class="stat-label">Conversaciones</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="systemStatus">✅</div>
+                    <div class="stat-label">Estado Sistema</div>
+                </div>
+            </div>
+
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>📊 Información del Sistema</h3>
+                    <div id="systemInfo">
+                        <p>Cargando información del sistema...</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="loadSystemInfo()">
+                        🔄 Actualizar Info
+                    </button>
+                </div>
+
+                <div class="card">
+                    <h3>🏢 Estado de Empresas</h3>
+                    <div id="companiesStatus">
+                        <p>Cargando estado de empresas...</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="loadCompaniesStatus()">
+                        🔄 Actualizar Estado
+                    </button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📝 Log del Sistema</h3>
+                <button class="btn btn-secondary" onclick="clearSystemLog()" style="float: right;">
+                    🗑️ Limpiar Log
+                </button>
+                <div class="log-container" id="systemLog">
+                    <div class="log-entry">
+                        <span class="log-timestamp">[2025-01-15 10:30:45]</span>
+                        <span class="log-level-info">[INFO]</span>
+                        Sistema multi-tenant inicializado correctamente
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Documents Tab -->
+        <div class="tab-content" id="documents">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>📄 Subir Documento</h3>
+                    <div class="form-group">
+                        <label for="documentTitle">Título del Documento</label>
+                        <input type="text" id="documentTitle" placeholder="Ej: Protocolo de tratamientos">
+                    </div>
+                    <div class="form-group">
+                        <label for="documentContent">Contenido</label>
+                        <textarea id="documentContent" placeholder="Contenido del documento..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="documentFile">O subir archivo</label>
+                        <div class="file-upload" onclick="document.getElementById('documentFile').click()">
+                            <input type="file" id="documentFile" style="display: none;" accept=".txt,.md,.pdf,.docx">
+                            📁 Hacer clic o arrastrar archivo aquí
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="uploadDocument()">
+                        📤 Subir Documento
+                    </button>
+                </div>
+
+                <div class="card">
+                    <h3>🔍 Buscar Documentos</h3>
+                    <div class="form-group">
+                        <label for="searchQuery">Buscar en documentos</label>
+                        <input type="text" id="searchQuery" placeholder="Ej: tratamientos faciales">
+                    </div>
+                    <button class="btn btn-primary" onclick="searchDocuments()">
+                        🔍 Buscar
+                    </button>
+                    <div id="searchResults" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📚 Lista de Documentos</h3>
+                <button class="btn btn-secondary" onclick="loadDocuments()">
+                    🔄 Actualizar Lista
+                </button>
+                <div class="data-list" id="documentsList">
+                    <p style="padding: 20px; text-align: center; color: #718096;">
+                        Selecciona una empresa y haz clic en "Actualizar Lista" para ver los documentos
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Conversations Tab -->
+        <div class="tab-content" id="conversations">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>💬 Probar Conversación</h3>
+                    <div class="form-group">
+                        <label for="testUserId">ID de Usuario</label>
+                        <input type="text" id="testUserId" placeholder="user123" value="user123">
+                    </div>
+                    <div class="form-group">
+                        <label for="testMessage">Mensaje de Prueba</label>
+                        <textarea id="testMessage" placeholder="Ej: ¿Cuánto cuesta un tratamiento de botox?"></textarea>
+                    </div>
+                    <button class="btn btn-primary" onclick="testConversation()">
+                        🧪 Probar Conversación
+                    </button>
+                    <div id="conversationResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>👤 Gestión de Conversaciones</h3>
+                    <div class="form-group">
+                        <label for="manageUserId">ID de Usuario</label>
+                        <input type="text" id="manageUserId" placeholder="user123">
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="getConversation()">
+                            📖 Ver Conversación
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteConversation()">
+                            🗑️ Eliminar
+                        </button>
+                    </div>
+                    <div id="conversationDetails" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📋 Lista de Conversaciones</h3>
+                <button class="btn btn-secondary" onclick="loadConversations()">
+                    🔄 Actualizar Lista
+                </button>
+                <div class="data-list" id="conversationsList">
+                    <p style="padding: 20px; text-align: center; color: #718096;">
+                        Selecciona una empresa y haz clic en "Actualizar Lista" para ver las conversaciones
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Multimedia Tab -->
+        <div class="tab-content" id="multimedia">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>🎤 Procesamiento de Audio</h3>
+                    <div class="form-group">
+                        <label for="audioFile">Archivo de Audio</label>
+                        <input type="file" id="audioFile" accept="audio/*">
+                    </div>
+                    <div class="form-group">
+                        <label for="audioUserId">ID de Usuario</label>
+                        <input type="text" id="audioUserId" placeholder="user123" value="user123">
+                    </div>
+                    <div class="form-group" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="processAudio()">
+                            🎵 Procesar Audio
+                        </button>
+                        <button id="recordVoiceButton" class="btn btn-primary" onclick="toggleVoiceRecording()">
+                            🎤 Grabar Voz
+                        </button>
+                    </div>
+                    <div id="audioResult" style="margin-top: 15px;"></div>
+                </div>
+                <div class="card">
+                    <h3>🖼️ Procesamiento de Imagen</h3>
+                    <div class="form-group">
+                        <label for="imageFile">Archivo de Imagen</label>
+                        <input type="file" id="imageFile" accept="image/*">
+                    </div>
+                    <div class="form-group">
+                        <label for="imageUserId">ID de Usuario</label>
+                        <input type="text" id="imageUserId" placeholder="user123" value="user123">
+                    </div>
+                    <div class="form-group" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="processImage()">
+                            📸 Procesar Imagen
+                        </button>
+                        <button class="btn btn-secondary" onclick="captureScreen()">
+                            📷 Capturar Pantalla
+                        </button>
+                    </div>
+                    <div id="imageResult" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>🧪 Test de Integración Multimedia</h3>
+                <button class="btn btn-success" onclick="testMultimediaIntegration()">
+                    ✅ Probar Integración
+                </button>
+                <div id="multimediaTestResult" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+
+        <!-- Prompts Tab - NUEVA PESTAÑA -->
+        <div class="tab-content" id="prompts">
+            <div id="promptsTabContent">
+                <p style="text-align: center; color: #718096; padding: 40px;">
+                    Selecciona una empresa para gestionar los prompts de los agentes...
+                </p>
+            </div>
+        </div>
+
+        <!-- Admin Tab -->
+        <div class="tab-content" id="admin">
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>🔧 Configuración de Google Calendar</h3>
+                    <div class="form-group">
+                        <label for="googleCalendarUrl">URL de Google Calendar</label>
+                        <input type="url" id="googleCalendarUrl" placeholder="https://calendar.google.com/...">
+                    </div>
+                    <button class="btn btn-primary" onclick="updateGoogleCalendarConfig()">
+                        📅 Actualizar Calendar
+                    </button>
+                </div>
+
+                <div class="card">
+                    <h3>⚙️ Configuración de Empresas</h3>
+                    <button class="btn btn-primary" onclick="reloadCompaniesConfig()">
+                        🔄 Recargar Configuración
+                    </button>
+                    <button class="btn btn-success" onclick="runSystemDiagnostics()">
+                        🔍 Ejecutar Diagnósticos
+                    </button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📊 Resultados de Administración</h3>
+                <div id="adminResults">
+                    <p style="text-align: center; color: #718096; padding: 20px;">
+                        Los resultados de las operaciones administrativas aparecerán aquí
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Check Tab -->
+        <div class="tab-content" id="health">
+            <div class="grid grid-3">
+                <div class="card">
+                    <h3>🏥 Health Check General</h3>
+                    <button class="btn btn-primary" onclick="performHealthCheck()">
+                        🔄 Verificar Estado
+                    </button>
+                    <div id="generalHealthResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>🏢 Health por Empresa</h3>
+                    <button class="btn btn-primary" onclick="performCompanyHealthCheck()">
+                        🔄 Verificar Empresas
+                    </button>
+                    <div id="companyHealthResult" style="margin-top: 15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h3>⚙️ Estado de Servicios</h3>
+                    <button class="btn btn-primary" onclick="checkServicesStatus()">
+                        🔄 Verificar Servicios
+                    </button>
+                    <div id="servicesStatusResult" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📈 Monitoreo del Sistema</h3>
+                <div class="grid grid-2">
+                    <div>
+                        <h4>🔍 Diagnósticos Automáticos</h4>
+                        <button class="btn btn-success" onclick="runAutoDiagnostics()">
+                            🚀 Ejecutar Auto-Diagnósticos
+                        </button>
+                    </div>
+                    <div>
+                        <h4>📊 Métricas en Tiempo Real</h4>
+                        <button class="btn btn-secondary" onclick="startRealTimeMonitoring()">
+                            ⏰ Iniciar Monitoreo
+                        </button>
+                        <button class="btn btn-danger" onclick="stopRealTimeMonitoring()">
+                            ⏹️ Detener
+                        </button>
+                    </div>
+                </div>
+                <div id="monitoringResults" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Procesando...</p>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
