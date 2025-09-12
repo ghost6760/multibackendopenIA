@@ -287,7 +287,8 @@ async function loadTabContent(tabName) {
                 break;
                 
             case 'admin':
-                await loadAdminTab();
+                // Solo cargar la sección básica por defecto
+                showAdminSection('basic');
                 break;
                 
             case 'health':
