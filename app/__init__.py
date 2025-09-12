@@ -10,13 +10,14 @@ from app.config.company_config import get_company_manager
 from app.services.multi_agent_factory import get_multi_agent_factory
 from app.services.prompt_service import get_prompt_service
 
+# 🆕 IMPORTAR SERVICIO ENTERPRISE
+from app.services.company_config_service import get_enterprise_company_service
+
 # Importar blueprints existentes
 from app.routes import webhook, documents, conversations, health, multimedia
 
 # Importar blueprint de diagnóstico (TEMPORAL)
 from app.routes.diagnostic import diagnostic_bp
-
-
 
 # Importar nuevos blueprints integrados
 from app.routes.admin import bp as admin_bp
@@ -60,6 +61,21 @@ def create_app(config_class=Config):
         init_redis(app)
         init_openai(app)
         # init_vectorstore se maneja por empresa ahora
+        
+        # 🆕 INICIALIZAR SERVICIO ENTERPRISE
+        try:
+            enterprise_service = get_enterprise_company_service()
+            logger.info("✅ Enterprise company service initialized")
+            
+            # Verificar conexión a PostgreSQL
+            db_status = enterprise_service.get_db_status()
+            if db_status.get('postgresql_available'):
+                logger.info("✅ PostgreSQL connection available for Enterprise features")
+            else:
+                logger.warning("⚠️ PostgreSQL not available, Enterprise service will use JSON fallback")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Enterprise service initialization failed: {e}")
     
     # ENHANCED: Middleware multi-tenant
     @app.before_request
@@ -164,6 +180,23 @@ def create_app(config_class=Config):
             company_manager = get_company_manager()
             companies = company_manager.get_all_companies()
             
+            # 🆕 AGREGAR INFO ENTERPRISE
+            enterprise_info = {}
+            try:
+                enterprise_service = get_enterprise_company_service()
+                db_status = enterprise_service.get_db_status()
+                enterprise_info = {
+                    "enterprise_enabled": True,
+                    "postgresql_available": db_status.get('postgresql_available', False),
+                    "connection_status": db_status.get('connection_status', 'unknown'),
+                    "fallback_mode": not db_status.get('postgresql_available', False)
+                }
+            except Exception as e:
+                enterprise_info = {
+                    "enterprise_enabled": False,
+                    "error": str(e)
+                }
+            
             return jsonify({
                 "status": "healthy",
                 "message": "Multi-Tenant Chatbot Backend API is running",
@@ -172,6 +205,7 @@ def create_app(config_class=Config):
                 "companies_configured": len(companies),
                 "available_companies": list(companies.keys()),
                 "frontend_type": "simple_static",
+                "enterprise": enterprise_info,  # 🆕 AGREGAR
                 "static_files": {
                     "exists": os.path.exists(STATIC_DIR),
                     "path": STATIC_DIR,
@@ -196,7 +230,8 @@ def create_app(config_class=Config):
                     "multimedia-processing",
                     "google-calendar-integration",
                     "auto-recovery",
-                    "redis-isolation"
+                    "redis-isolation",
+                    "enterprise-config"  # 🆕 AGREGAR
                 ]
             })
         except Exception as e:
@@ -222,6 +257,21 @@ def create_app(config_class=Config):
                 "static_files_ready": os.path.exists(os.path.join(STATIC_DIR, 'index.html'))
             }
             
+            # 🆕 AGREGAR HEALTH CHECK ENTERPRISE
+            try:
+                enterprise_service = get_enterprise_company_service()
+                db_status = enterprise_service.get_db_status()
+                health_data["enterprise"] = {
+                    "service_available": True,
+                    "postgresql_available": db_status.get('postgresql_available', False),
+                    "connection_status": db_status.get('connection_status', 'unknown')
+                }
+            except Exception as e:
+                health_data["enterprise"] = {
+                    "service_available": False,
+                    "error": str(e)
+                }
+            
             # Health check específico de empresa si se proporciona
             if company_id:
                 company_manager = get_company_manager()
@@ -235,6 +285,21 @@ def create_app(config_class=Config):
                         "vectorstore_ready": orchestrator.vectorstore_service is not None if orchestrator else False,
                         "agents_available": list(orchestrator.agents.keys()) if orchestrator else []
                     }
+                    
+                    # 🆕 AGREGAR INFO ENTERPRISE POR EMPRESA
+                    try:
+                        enterprise_service = get_enterprise_company_service()
+                        enterprise_config = enterprise_service.get_company_config(company_id, use_cache=False)
+                        company_health["enterprise_config"] = {
+                            "available": enterprise_config is not None,
+                            "source": "postgresql" if enterprise_config and hasattr(enterprise_config, 'notes') and 'postgresql' in enterprise_config.notes.lower() else "json_fallback"
+                        }
+                    except Exception as e:
+                        company_health["enterprise_config"] = {
+                            "available": False,
+                            "error": str(e)
+                        }
+                    
                     health_data["company_health"] = company_health
                 else:
                     health_data["company_health"] = {
@@ -423,6 +488,28 @@ def initialize_multitenant_system(app):
         logger.info(f"📊 Multi-tenant system initialized with {len(companies)} companies:")
         for company_id, config in companies.items():
             logger.info(f"   • {company_id}: {config.company_name} ({len(config.services)} services)")
+        
+        # 🆕 VERIFICAR SERVICIO ENTERPRISE EN INICIALIZACIÓN
+        try:
+            enterprise_service = get_enterprise_company_service()
+            db_status = enterprise_service.get_db_status()
+            
+            if db_status.get('postgresql_available'):
+                logger.info("🏢 Enterprise PostgreSQL service operational")
+                
+                # Listar empresas en PostgreSQL
+                try:
+                    pg_companies = enterprise_service.list_companies()
+                    logger.info(f"📊 PostgreSQL companies: {len(pg_companies)} found")
+                    for company in pg_companies[:3]:  # Log first 3
+                        logger.info(f"   • PG: {company.company_id} - {company.company_name}")
+                except Exception as e:
+                    logger.debug(f"Could not list PostgreSQL companies: {e}")
+            else:
+                logger.info("🏢 Enterprise service using JSON fallback mode")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Enterprise service check failed in initialization: {e}")
         
         # Inicializar factory de multi-agente
         factory = get_multi_agent_factory()
