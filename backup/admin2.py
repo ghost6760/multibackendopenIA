@@ -1,0 +1,958 @@
+import logging
+import json
+import os
+import time
+from datetime import datetime
+from typing import Dict, Any, Optional, List
+from flask import Blueprint, request, jsonify
+
+from app.utils.helpers import create_success_response, create_error_response
+from app.utils.decorators import handle_errors
+from app.config.company_config import get_company_manager
+from app.services.multi_agent_factory import get_multi_agent_factory
+
+# 🆕 IMPORTAR NUEVO SERVICIO DE PROMPTS
+from app.services.prompt_service import get_prompt_service
+
+# Importaciones existentes mantenidas
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema.output_parser import StrOutputParser
+
+logger = logging.getLogger(__name__)
+bp = Blueprint('admin', __name__, url_prefix='/api/admin')
+
+def _get_company_id_from_request():
+    """Obtener company_id desde request - COMPATIBLE con GET y POST"""
+    try:
+        # 1. Intentar desde query parameters (GET requests)
+        company_id = request.args.get('company_id')
+        if company_id:
+            return company_id.strip()
+        
+        # 2. Intentar desde JSON body (POST requests)
+        if request.get_json():
+            data = request.get_json()
+            company_id = data.get('company_id')
+            if company_id:
+                return company_id.strip()
+        
+        # 3. Intentar desde form data
+        company_id = request.form.get('company_id')
+        if company_id:
+            return company_id.strip()
+            
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error getting company_id from request: {e}")
+        return None
+
+# ============================================================================
+# ENDPOINTS PARA GESTIÓN DE PROMPTS - VERSIÓN REFACTORIZADA
+# MANTIENE 100% COMPATIBILIDAD CON FRONTEND EXISTENTE
+# ============================================================================
+
+@bp.route('/prompts', methods=['GET'])
+@handle_errors  
+def get_prompts():
+    """CORREGIDO: Obtener prompts de empresa desde query params"""
+    try:
+        # CORREGIDO: Usar query parameters para GET
+        company_id = request.args.get('company_id')
+        if not company_id or not company_id.strip():
+            return create_error_response("company_id is required in query parameters", 400)
+        
+        company_id = company_id.strip()
+        logger.info(f"Getting prompts for company: {company_id}")
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # NUEVA LÓGICA: Usar PromptService
+        prompt_service = get_prompt_service()
+        agents_data = prompt_service.get_company_prompts(company_id)
+        
+        # Obtener status de la base de datos
+        db_status = prompt_service.get_db_status()
+        fallback_info = prompt_service.get_last_fallback_info()
+        
+        response_data = {
+            "company_id": company_id,
+            "agents": agents_data,
+            "database_status": db_status,
+            "fallback_used": fallback_info.get("level", "none"),
+            "total_agents": len(agents_data),
+            "custom_prompts": len([a for a in agents_data.values() if a.get("is_custom", False)])
+        }
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error getting prompts: {e}", exc_info=True)
+        return create_error_response(f"Failed to get prompts: {str(e)}", 500)
+
+@bp.route('/prompts/<agent_name>', methods=['PUT'])
+@handle_errors  
+def update_agent_prompt(agent_name):
+    """
+    Actualizar prompt de agente - REFACTORIZADO CON POSTGRESQL
+    MANTIENE: Endpoint exacto, validaciones, formato de respuesta
+    MEJORA: PostgreSQL con versionado automático
+    """
+    try:
+        # MANTENER validación de entrada exacta
+        data = request.get_json()
+        if not data:
+            return create_error_response("JSON data is required", 400)
+        
+        company_id = data.get('company_id')
+        template = data.get('prompt_template')
+        modified_by = data.get('modified_by', 'admin')
+        
+        if not company_id or not template:
+            return create_error_response("company_id and prompt_template are required", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Validar agente
+        valid_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent']
+        if agent_name not in valid_agents:
+            return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        logger.info(f"Updating prompt for {agent_name} in company {company_id}")
+        
+        # 🆕 NUEVA LÓGICA: PostgreSQL con versionado automático
+        prompt_service = get_prompt_service()
+        success = prompt_service.save_custom_prompt(
+            company_id, 
+            agent_name, 
+            template, 
+            modified_by
+        )
+        
+        if not success:
+            return create_error_response("Failed to save prompt", 500)
+        
+        # MANTENER formato de respuesta exacto
+        response_data = {
+            "message": f"Prompt updated successfully for {agent_name}",
+            "company_id": company_id,
+            "agent_name": agent_name,
+            # 🆕 INFORMACIÓN ADICIONAL (no rompe compatibilidad)
+            "version": prompt_service.get_current_version(company_id, agent_name),
+            "database_status": prompt_service.get_db_status()
+        }
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error updating prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to update prompt: {str(e)}", 500)
+
+@bp.route('/prompts/<agent_name>', methods=['DELETE'])
+@handle_errors
+def reset_agent_prompt(agent_name):
+    """
+    Restaurar prompt a default - REFACTORIZADO CON POSTGRESQL
+    MANTIENE: Endpoint exacto, comportamiento idéntico
+    MEJORA: PostgreSQL con preservación de historial
+    """
+    try:
+        company_id = _get_company_id_from_request()
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Validar agente
+        valid_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent']
+        if agent_name not in valid_agents:
+            return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        logger.info(f"Resetting prompt for {agent_name} in company {company_id}")
+        
+        # 🆕 NUEVA LÓGICA: PostgreSQL con preservación de historial
+        prompt_service = get_prompt_service()
+        success = prompt_service.restore_default_prompt(
+            company_id, 
+            agent_name, 
+            modified_by="admin_reset"
+        )
+        
+        if not success:
+            return create_error_response("Failed to reset prompt", 500)
+        
+        # MANTENER formato de respuesta exacto
+        response_data = {
+            "message": f"Prompt reset to default for {agent_name}",
+            "company_id": company_id,
+            "agent_name": agent_name
+        }
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error resetting prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
+
+# 🆕 NUEVA FUNCIÓN PARA BOTÓN REPARAR DEL FRONTEND
+@bp.route('/prompts/repair', methods=['POST'])
+@handle_errors
+def repair_prompts():
+    """
+    Nueva función REPARAR - Restaura prompts desde repositorio
+    Endpoint nuevo que no rompe compatibilidad existente
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return create_error_response("JSON data is required", 400)
+        
+        company_id = data.get('company_id')
+        agent_name = data.get('agent_name')  # Opcional: reparar agente específico
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Validar agente si se especifica
+        if agent_name:
+            valid_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent']
+            if agent_name not in valid_agents:
+                return create_error_response(f"Invalid agent_name: {agent_name}", 400)
+        
+        logger.info(f"Repairing prompts for company {company_id}, agent: {agent_name or 'ALL'}")
+        
+        # Ejecutar reparación
+        prompt_service = get_prompt_service()
+        success = prompt_service.repair_from_repository(company_id, agent_name, "admin_repair")
+        
+        if not success:
+            return create_error_response("Repair operation failed", 500)
+        
+        repair_summary = prompt_service.get_repair_summary()
+        
+        response_data = {
+            "message": "Prompts reparados exitosamente desde repositorio",
+            "company_id": company_id,
+            "agent_name": agent_name,
+            "repaired_items": repair_summary,
+            "total_repaired": len([item for item in repair_summary if item['success']]),
+            "total_attempted": len(repair_summary)
+        }
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error in repair operation: {e}", exc_info=True)
+        return create_error_response(f"Repair operation failed: {str(e)}", 500)
+
+@bp.route('/prompts/preview', methods=['POST'])
+@handle_errors
+def preview_prompt():
+    """
+    Generar vista previa con logging de origen de prompts
+    MEJORADO: Identifica si usa PostgreSQL o JSON
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'agent_name' not in data or 'company_id' not in data:
+            return create_error_response("Missing agent_name or company_id", 400)
+        
+        agent_name = data['agent_name']
+        company_id = data['company_id']
+        custom_prompt = data.get('prompt_template', '')
+        test_message = data.get('message', '¿Cuánto cuesta un tratamiento?')
+        
+        if not custom_prompt.strip():
+            return create_error_response("Prompt template cannot be empty", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # ✅ NUEVO: Verificar origen de prompts ANTES de la vista previa
+        prompt_service = get_prompt_service()
+        agents_data = prompt_service.get_company_prompts(company_id)
+        agent_data = agents_data.get(agent_name, {})
+        
+        prompt_source = agent_data.get('source', 'unknown')
+        current_prompt_preview = agent_data.get('current_prompt', '')[:100] + "..." if agent_data.get('current_prompt') else 'No prompt found'
+        
+        logger.info(f"🔍 [PREVIEW] Testing {agent_name} for {company_id}")
+        logger.info(f"   → Prompt source: {prompt_source}")
+        logger.info(f"   → Current prompt preview: {current_prompt_preview}")
+        logger.info(f"   → Custom prompt preview: {custom_prompt[:100]}...")
+        
+        # ✅ Usar el MISMO FLUJO que testConversation()
+        from app.models.conversation import ConversationManager
+        
+        # 1. Usar factory y orchestrator REAL (igual que el tester)
+        factory = get_multi_agent_factory()
+        orchestrator = factory.get_orchestrator(company_id)
+        
+        if not orchestrator:
+            return create_error_response(f"Multi-agent system not available for company: {company_id}", 503)
+        
+        # 2. Crear manager para test temporal
+        manager = ConversationManager(company_id=company_id)
+        temp_user_id = f"preview_test_{int(time.time())}"
+        
+        # 3. TRUCO: Temporalmente inyectar prompt personalizado
+        agent_key = agent_name.replace('_agent', '')  # router_agent -> router
+        
+        if agent_key not in orchestrator.agents:
+            return create_error_response(f"Agent {agent_name} not found", 404)
+        
+        real_agent = orchestrator.agents[agent_key]
+        original_prompt_template = getattr(real_agent, 'prompt_template', None)
+        
+        try:
+            # 4. Crear template temporal con prompt personalizado
+            from langchain.prompts import ChatPromptTemplate
+            
+            # Detectar si el prompt necesita chat_history
+            if '{chat_history}' in custom_prompt:
+                temp_template = ChatPromptTemplate.from_messages([
+                    ("system", custom_prompt),
+                    ("human", "{question}")
+                ])
+            else:
+                temp_template = ChatPromptTemplate.from_messages([
+                    ("system", custom_prompt),
+                    ("human", "{question}")
+                ])
+            
+            # 5. Inyectar temporalmente el prompt personalizado
+            real_agent.prompt_template = temp_template
+            
+            logger.info(f"🔧 [PREVIEW] Temporarily injected custom prompt for {agent_key}")
+            
+            # 6. Usar el método REAL del orchestrator (igual que test_conversation)
+            preview_response, agent_used = orchestrator.get_response(
+                test_message, 
+                temp_user_id, 
+                manager
+            )
+            
+            logger.info(f"✅ [PREVIEW] Generated response: {len(preview_response)} chars")
+            
+        finally:
+            # 7. Restaurar prompt original
+            if original_prompt_template is not None:
+                real_agent.prompt_template = original_prompt_template
+                logger.info(f"🔄 [PREVIEW] Restored original prompt for {agent_key}")
+        
+        # ✅ NUEVO: Respuesta con información detallada
+        response_data = {
+            "preview": preview_response,  # ✅ ASEGURAR que no se trunque aquí
+            "agent_name": agent_name,
+            "agent_used": agent_used,
+            "company_id": company_id,
+            "test_message": test_message,
+            "prompt_preview": custom_prompt[:150] + "..." if len(custom_prompt) > 150 else custom_prompt,
+            "method": "real_agent_system",
+            "timestamp": time.time(),
+            # ✅ NUEVO: Información de debugging
+            "debug_info": {
+                "prompt_source": prompt_source,
+                "agent_key": agent_key,
+                "response_length": len(preview_response),
+                "temp_user_id": temp_user_id
+            }
+        }
+        
+        logger.info(f"🎯 [PREVIEW] Returning response with {len(preview_response)} characters")
+        
+        return create_success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error previewing prompt: {e}", exc_info=True)
+        return create_error_response(f"Failed to preview prompt: {str(e)}", 500)
+
+# 🆕 NUEVO ENDPOINT PARA MIGRACIÓN
+@bp.route('/prompts/migrate', methods=['POST'])
+@handle_errors
+def migrate_prompts_to_postgresql():
+    """
+    Migrar prompts existentes de JSON a PostgreSQL
+    Endpoint administrativo para transición
+    """
+    try:
+        data = request.get_json() or {}
+        force_migration = data.get('force', False)
+        
+        logger.info("Starting prompt migration from JSON to PostgreSQL")
+        
+        prompt_service = get_prompt_service()
+        
+        # Verificar estado de la base de datos
+        db_status = prompt_service.get_db_status()
+        if not db_status['postgresql_available']:
+            return create_error_response("PostgreSQL not available for migration", 503)
+        
+        # Ejecutar migración
+        migration_stats = prompt_service.migrate_from_json()
+        
+        if migration_stats['success']:
+            logger.info(f"Migration completed successfully: {migration_stats}")
+            return create_success_response({
+                "message": "Migration completed successfully",
+                "statistics": migration_stats,
+                "database_status": db_status
+            })
+        else:
+            logger.error(f"Migration failed: {migration_stats}")
+            return create_error_response("Migration failed", 500, {
+                "statistics": migration_stats,
+                "database_status": db_status
+            })
+        
+    except Exception as e:
+        logger.error(f"Error in migration: {e}", exc_info=True)
+        return create_error_response(f"Migration failed: {str(e)}", 500)
+
+
+# ============================================================================
+# FUNCIONES DE COMPATIBILIDAD - MANTENER PARA NO ROMPER CÓDIGO EXISTENTE
+# ============================================================================
+
+def _has_custom_prompt(company_id: str, agent_name: str) -> bool:
+    """Verificar si un agente tiene prompt personalizado - COMPATIBILIDAD"""
+    try:
+        prompt_service = get_prompt_service()
+        agents_data = prompt_service.get_company_prompts(company_id)
+        agent_data = agents_data.get(agent_name, {})
+        return agent_data.get('is_custom', False)
+    except Exception as e:
+        logger.warning(f"Error checking custom prompt: {e}")
+        return False
+
+def _get_prompt_modification_date(company_id: str, agent_name: str) -> Optional[str]:
+    """Obtener fecha de modificación del prompt - COMPATIBILIDAD"""
+    try:
+        prompt_service = get_prompt_service()
+        agents_data = prompt_service.get_company_prompts(company_id)
+        agent_data = agents_data.get(agent_name, {})
+        return agent_data.get('last_modified')
+    except Exception as e:
+        logger.warning(f"Error getting modification date: {e}")
+        return None
+# ============================================================================
+# OTROS ENDPOINTS EXISTENTES - MANTENER SIN CAMBIOS
+# ============================================================================
+
+@bp.route('/status', methods=['GET'])
+@handle_errors
+def get_admin_status():
+    """Estado del sistema administrativo - CORREGIDO"""
+    try:
+        company_manager = get_company_manager()
+        companies_dict = company_manager.get_all_companies()  # ✅ Es un diccionario
+        
+        # 🆕 INCLUIR ESTADO DEL SISTEMA DE PROMPTS
+        prompt_service = get_prompt_service()
+        db_status = prompt_service.get_db_status()
+        
+        status_data = {
+            "system_status": "operational",
+            "companies_configured": len(companies_dict),
+            "multi_tenant_mode": True,
+            "prompt_system": {
+                "postgresql_available": db_status['postgresql_available'],
+                "fallback_active": db_status.get('fallback_mode', 'none') != 'none',
+                "tables_status": db_status.get('tables_exist', False),
+                "total_custom_prompts": db_status.get('total_custom_prompts', 0),
+                "total_default_prompts": db_status.get('total_default_prompts', 0)
+            },
+            "companies": [
+                {
+                    "company_id": company_id,  # ✅ CORREGIDO: usar la key del diccionario
+                    "company_name": config.company_name,  # ✅ CORREGIDO: usar el objeto config
+                    "status": "active"
+                }
+                for company_id, config in companies_dict.items()  # ✅ CORREGIDO: iterar correctamente
+            ]
+        }
+        
+        return create_success_response(status_data)
+        
+    except Exception as e:
+        logger.error(f"Error getting admin status: {e}")
+        return create_error_response(f"Failed to get admin status: {str(e)}", 500)
+        
+@bp.route('/companies/export', methods=['GET'])
+@handle_errors
+def export_companies_configuration():
+    """Exportar configuración de empresas - MANTENER FUNCIONALIDAD EXISTENTE"""
+    try:
+        export_all = request.args.get('export_all', 'false').lower() == 'true'
+        company_id = request.args.get('company_id')
+        
+        company_manager = get_company_manager()
+        
+        if export_all:
+            # Exportar todas las empresas
+            companies = company_manager.get_all_companies()
+            export_data = {
+                "export_type": "all_companies",
+                "timestamp": time.time(),
+                "total_companies": len(companies),
+                "companies": {
+                    comp.company_id: {
+                        "company_name": comp.company_name,
+                        "business_type": getattr(comp, 'business_type', 'Unknown'),
+                        "services": comp.services,
+                        "agents": getattr(comp, 'agents', []),
+                        "vectorstore_index": comp.vectorstore_index,
+                        "redis_prefix": comp.redis_prefix
+                    }
+                    for comp in companies
+                }
+            }
+                
+        elif company_id:
+            # Exportar empresa específica
+            if not company_manager.validate_company_id(company_id):
+                return create_error_response(f"Invalid company_id: {company_id}", 400)
+            
+            config = company_manager.get_company_config(company_id)
+            export_data = {
+                "export_type": "single_company",
+                "timestamp": time.time(),
+                "company_id": company_id,
+                "configuration": {
+                    "company_name": config.company_name,
+                    "business_type": getattr(config, 'business_type', 'Unknown'),
+                    "services": config.services,
+                    "agents": getattr(config, 'agents', []),
+                    "vectorstore_index": config.vectorstore_index,
+                    "redis_prefix": config.redis_prefix
+                }
+            }
+        else:
+            return create_error_response("company_id required or use export_all=true", 400)
+        
+        return create_success_response(export_data)
+        
+    except Exception as e:
+        logger.error(f"Configuration export failed: {e}")
+        return create_error_response(f"Failed to export configuration: {e}", 500)
+
+# ============================================================================
+# ENDPOINTS ADICIONALES DEL ARCHIVO ORIGINAL - MANTENER SIN CAMBIOS
+# ============================================================================
+
+@bp.route('/config/google-calendar', methods=['POST'])
+@handle_errors
+def update_google_calendar_config():
+    """Actualizar configuración de Google Calendar para una empresa"""
+    try:
+        data = request.get_json()
+        company_id = data.get('company_id') or request.headers.get('X-Company-ID')
+        google_calendar_url = data.get('google_calendar_url')
+        
+        if not company_id:
+            return create_error_response("company_id is required", 400)
+        
+        if not google_calendar_url:
+            return create_error_response("google_calendar_url is required", 400)
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # TODO: Actualizar configuración real en extended_companies_config.json
+        # Por ahora, lo simulamos como exitoso
+        logger.info(f"Google Calendar URL updated for company {company_id}: {google_calendar_url}")
+        
+        return create_success_response({
+            "message": "Google Calendar configuration updated successfully",
+            "company_id": company_id,
+            "google_calendar_url": google_calendar_url
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating Google Calendar config: {e}")
+        return create_error_response(str(e), 500)
+
+@bp.route('/vectorstore/force-recovery', methods=['POST'])
+@handle_errors
+def force_vectorstore_recovery():
+    """Force vectorstore recovery - ENHANCED Multi-tenant"""
+    try:
+        from app.utils.decorators import require_api_key
+        
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        from app.services.vector_auto_recovery import get_auto_recovery_instance
+        
+        # Get company-specific auto-recovery instance
+        auto_recovery = get_auto_recovery_instance(company_id)
+        if not auto_recovery:
+            return create_error_response(f"Auto-recovery system not available for company: {company_id}", 500)
+        
+        logger.info(f"[{company_id}] Manual recovery initiated...")
+        
+        # Limpiar cache específico de empresa
+        auto_recovery.health_cache = {"last_check": 0, "status": None}
+        
+        success = auto_recovery.reconstruct_index_from_stored_data()
+        
+        if success:
+            return create_success_response({
+                "company_id": company_id,
+                "message": f"Index recovery completed successfully for {company_id}",
+                "new_health": auto_recovery.verify_index_health()
+            })
+        else:
+            return create_error_response(f"Index recovery failed for {company_id}", 500)
+            
+    except Exception as e:
+        return create_error_response(str(e), 500)
+
+@bp.route('/vectorstore/protection-status', methods=['GET'])
+@handle_errors
+def protection_status():
+    """Get protection status - Multi-tenant"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        from app.services.vector_auto_recovery import get_auto_recovery_instance
+        
+        auto_recovery = get_auto_recovery_instance(company_id)
+        if not auto_recovery:
+            return jsonify({
+                "company_id": company_id,
+                "auto_recovery_initialized": False,
+                "vectorstore_healthy": False,
+                "protection_active": False,
+                "error": "Auto-recovery system not initialized"
+            })
+        
+        status = auto_recovery.get_protection_status()
+        
+        return jsonify({
+            **status,
+            "company_id": company_id,
+            "auto_recovery_initialized": True,
+            "protection_active": True,
+            "system_type": "multi-tenant-with-recovery"
+        })
+        
+    except Exception as e:
+        return create_error_response(str(e), 500)
+
+@bp.route('/vectorstore/health', methods=['GET'])
+@handle_errors
+def vectorstore_health_check():
+    """Vectorstore health check - Multi-tenant"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        from app.services.vector_auto_recovery import get_auto_recovery_instance, get_health_recommendations
+        
+        auto_recovery = get_auto_recovery_instance(company_id)
+        if not auto_recovery:
+            return jsonify({
+                "status": "error",
+                "company_id": company_id,
+                "message": f"Auto-recovery system not initialized for {company_id}"
+            }), 500
+        
+        health = auto_recovery.verify_index_health()
+        status_code = 200 if health.get("healthy", False) else 503
+        
+        return jsonify({
+            "status": "healthy" if health.get("healthy") else "unhealthy",
+            "company_id": company_id,
+            "details": health,
+            "auto_recovery_available": True,
+            "auto_recovery_enabled": auto_recovery.auto_recovery_enabled,
+            "recommendations": get_health_recommendations(health),
+            "system_type": "multi-tenant-enhanced"
+        }), status_code
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error", 
+            "company_id": company_id,
+            "message": str(e)
+        }), 500
+
+@bp.route('/system/reset', methods=['POST'])
+@handle_errors
+def reset_system():
+    """Reset system caches - Multi-tenant Enhanced"""
+    try:
+        from app.utils.decorators import require_api_key
+        from app.services.redis_service import get_redis_client
+        
+        company_id = _get_company_id_from_request()
+        reset_all = request.json.get('reset_all', False) if request.is_json else False
+        
+        redis_client = get_redis_client()
+        cleared_count = 0
+        
+        if reset_all:
+            # Reset ALL companies
+            logger.info("Resetting ALL companies system caches")
+            patterns = ["processed_message:*", "*:bot_status:*", "cache:*", "*:conversation:*"]
+            
+            for pattern in patterns:
+                keys = redis_client.keys(pattern)
+                if keys:
+                    redis_client.delete(*keys)
+                    cleared_count += len(keys)
+        else:
+            # Reset specific company
+            company_manager = get_company_manager()
+            if not company_manager.validate_company_id(company_id):
+                return create_error_response(f"Invalid company_id: {company_id}", 400)
+            
+            config = company_manager.get_company_config(company_id)
+            prefix = config.redis_prefix
+            
+            logger.info(f"[{company_id}] Resetting company-specific caches")
+            
+            # Company-specific patterns
+            patterns = [
+                f"processed_message:*",  # Global pero filtrable
+                f"{prefix}bot_status:*",
+                f"cache:*", 
+                f"{prefix}conversation:*",
+                f"{prefix}document:*"
+            ]
+            
+            for pattern in patterns:
+                keys = redis_client.keys(pattern)
+                # Filter by company for global patterns
+                if pattern.startswith("processed_message:"):
+                    keys = [k for k in keys if company_id in (k.decode() if isinstance(k, bytes) else k)]
+                
+                if keys:
+                    redis_client.delete(*keys)
+                    cleared_count += len(keys)
+        
+        # Clear factory caches
+        try:
+            factory = get_multi_agent_factory()
+            if reset_all:
+                factory.clear_all_cache()
+                logger.info("All factory caches cleared")
+            else:
+                factory.clear_company_cache(company_id)
+                logger.info(f"[{company_id}] Company factory cache cleared")
+        except Exception as e:
+            logger.warning(f"Could not clear factory cache: {e}")
+        
+        # Clear auto-recovery cache
+        try:
+            from app.services.vector_auto_recovery import get_auto_recovery_instance
+            
+            if reset_all:
+                # Clear all auto-recovery instances
+                company_manager = get_company_manager()
+                for cid in company_manager.get_all_companies().keys():
+                    auto_recovery = get_auto_recovery_instance(cid)
+                    if auto_recovery:
+                        auto_recovery.health_cache = {"last_check": 0, "status": None}
+                logger.info("All auto-recovery caches cleared")
+            else:
+                auto_recovery = get_auto_recovery_instance(company_id)
+                if auto_recovery:
+                    auto_recovery.health_cache = {"last_check": 0, "status": None}
+                    logger.info(f"[{company_id}] Auto-recovery cache cleared")
+        except Exception as e:
+            logger.warning(f"Could not clear auto-recovery cache: {e}")
+        
+        scope = "ALL COMPANIES" if reset_all else company_id
+        logger.info(f"System reset completed for {scope}, cleared {cleared_count} keys")
+        
+        return create_success_response({
+            "message": f"System reset completed for {scope}",
+            "company_id": company_id if not reset_all else "ALL",
+            "keys_cleared": cleared_count,
+            "timestamp": time.time(),
+            "scope": "global" if reset_all else "company-specific"
+        })
+        
+    except Exception as e:
+        logger.error(f"System reset failed: {e}")
+        return create_error_response("Failed to reset system", 500)
+
+@bp.route('/companies/reload-config', methods=['POST'])
+@handle_errors
+def reload_companies_config():
+    """Reload companies configuration from file"""
+    try:
+        from app.utils.decorators import require_api_key
+        
+        # Clear current config
+        company_manager = get_company_manager()
+        company_manager._configs.clear()
+        
+        # Reload from file
+        company_manager._load_company_configs()
+        
+        # Clear factory caches to force recreation with new config
+        factory = get_multi_agent_factory()
+        factory.clear_all_cache()
+        
+        new_companies = company_manager.get_all_companies()
+        
+        logger.info(f"Companies configuration reloaded: {list(new_companies.keys())}")
+        
+        return create_success_response({
+            "message": "Companies configuration reloaded successfully",
+            "companies_loaded": len(new_companies),
+            "companies": list(new_companies.keys()),
+            "timestamp": time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to reload companies config: {e}")
+        return create_error_response("Failed to reload companies configuration", 500)
+
+@bp.route('/multimedia/test', methods=['POST'])
+@handle_errors
+def test_multimedia_integration():
+    """Test multimedia integration - Multi-tenant aware"""
+    try:
+        from flask import current_app
+        
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        from app.services.chatwoot_service import ChatwootService
+        
+        # Test multimedia methods with company context
+        chatwoot_service = ChatwootService(company_id=company_id)
+        
+        # Check if multimedia methods exist
+        has_transcribe = hasattr(chatwoot_service, 'transcribe_audio_from_url')
+        has_analyze = hasattr(chatwoot_service, 'analyze_image_from_url')
+        has_process_attachment = hasattr(chatwoot_service, 'process_attachment')
+        
+        return create_success_response({
+            "company_id": company_id,
+            "multimedia_integration": {
+                "transcribe_audio_from_url": has_transcribe,
+                "analyze_image_from_url": has_analyze,
+                "process_attachment": has_process_attachment,
+                "fully_integrated": has_transcribe and has_analyze and has_process_attachment
+            },
+            "openai_service_available": chatwoot_service.openai_service is not None,
+            "voice_enabled": current_app.config.get('VOICE_ENABLED', False),
+            "image_enabled": current_app.config.get('IMAGE_ENABLED', False),
+            "company_specific_config": True
+        })
+        
+    except Exception as e:
+        return create_error_response(f"Failed to test multimedia integration: {e}", 500)
+
+@bp.route('/diagnostics', methods=['GET'])
+@handle_errors
+def run_system_diagnostics():
+    """Ejecutar diagnósticos completos del sistema"""
+    try:
+        from flask import current_app
+        from app.services.redis_service import get_redis_client
+        
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa si se especifica
+        company_manager = get_company_manager()
+        if company_id and company_id != 'benova' and not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        diagnostics = {
+            "timestamp": time.time(),
+            "company_id": company_id,
+            "system_diagnostics": {
+                "redis_connection": False,
+                "openai_service": False,
+                "company_manager": False,
+                "multi_agent_factory": False
+            }
+        }
+        
+        # Test Redis connection
+        try:
+            redis_client = get_redis_client()
+            redis_client.ping()
+            diagnostics["system_diagnostics"]["redis_connection"] = True
+        except Exception as e:
+            diagnostics["redis_error"] = str(e)
+        
+        # Test Company Manager
+        try:
+            companies = company_manager.get_all_companies()
+            diagnostics["system_diagnostics"]["company_manager"] = True
+            diagnostics["companies_available"] = list(companies.keys())
+        except Exception as e:
+            diagnostics["company_manager_error"] = str(e)
+        
+        # Test Multi-Agent Factory
+        try:
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id or 'benova')
+            diagnostics["system_diagnostics"]["multi_agent_factory"] = True
+            diagnostics["orchestrator_available"] = orchestrator is not None
+        except Exception as e:
+            diagnostics["factory_error"] = str(e)
+        
+        # Test OpenAI (si está disponible)
+        try:
+            from app.services.openai_service import OpenAIService
+            openai_service = OpenAIService()
+            diagnostics["system_diagnostics"]["openai_service"] = True
+            diagnostics["openai_model"] = current_app.config.get('MODEL_NAME', 'Unknown')
+        except Exception as e:
+            diagnostics["openai_error"] = str(e)
+        
+        # Calcular score general
+        total_tests = len(diagnostics["system_diagnostics"])
+        passed_tests = sum(diagnostics["system_diagnostics"].values())
+        diagnostics["health_score"] = (passed_tests / total_tests) * 100
+        
+        return create_success_response(diagnostics)
+        
+    except Exception as e:
+        logger.error(f"System diagnostics failed: {e}")
+        return create_error_response(f"Failed to run diagnostics: {e}", 500)
