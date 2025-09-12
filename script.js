@@ -277,6 +277,10 @@ async function loadTabContent(tabName) {
             case 'conversations':
                 await loadConversationsTab();
                 break;
+
+            case 'enterprise':
+                await loadEnterpriseTab();
+                break;
                 
             case 'multimedia':
                 await loadMultimediaTab();
@@ -405,6 +409,128 @@ async function loadAdminTab() {
     }
     
     addToLog('Admin tab loaded', 'info');
+}
+
+
+/**
+ * Carga el contenido del tab enterprise
+ */
+async function loadEnterpriseTab() {
+    const container = document.getElementById('enterpriseTabContent');
+    if (container) {
+        container.innerHTML = `
+            <div class="enterprise-section">
+                <h3>🏢 Gestión Enterprise de Empresas</h3>
+                
+                <!-- Estadísticas -->
+                <div class="enterprise-stats">
+                    <div class="stat-card">
+                        <span class="stat-number" id="totalEnterpriseCompanies">0</span>
+                        <span class="stat-label">Empresas Enterprise</span>
+                    </div>
+                </div>
+                
+                <!-- Crear nueva empresa -->
+                <div class="enterprise-create">
+                    <h4>➕ Crear Nueva Empresa Enterprise</h4>
+                    <form id="enterpriseCreateForm" class="enterprise-form">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>ID de empresa (solo minúsculas, números y _):</label>
+                                <input type="text" id="newCompanyId" pattern="[a-z0-9_]+" required 
+                                       placeholder="ej: spa_wellness">
+                            </div>
+                            <div class="form-group">
+                                <label>Nombre de empresa:</label>
+                                <input type="text" id="newCompanyName" required 
+                                       placeholder="ej: Spa Wellness Center">
+                            </div>
+                            <div class="form-group">
+                                <label>Tipo de negocio:</label>
+                                <select id="newBusinessType">
+                                    <option value="general">General</option>
+                                    <option value="healthcare">Salud</option>
+                                    <option value="beauty">Belleza</option>
+                                    <option value="dental">Dental</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Nombre del agente:</label>
+                                <input type="text" id="newAgentName" 
+                                       placeholder="ej: Elena, especialista en bienestar">
+                            </div>
+                            <div class="form-group">
+                                <label>URL del servicio de agendamiento:</label>
+                                <input type="url" id="newScheduleUrl" 
+                                       value="http://127.0.0.1:4043">
+                            </div>
+                            <div class="form-group">
+                                <label>Zona horaria:</label>
+                                <select id="newTimezone">
+                                    <option value="America/Bogota">America/Bogota</option>
+                                    <option value="America/Mexico_City">America/Mexico_City</option>
+                                    <option value="America/Lima">America/Lima</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Moneda:</label>
+                                <select id="newCurrency">
+                                    <option value="COP">COP</option>
+                                    <option value="USD">USD</option>
+                                    <option value="MXN">MXN</option>
+                                    <option value="PEN">PEN</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Plan de suscripción:</label>
+                                <select id="newSubscriptionTier">
+                                    <option value="basic">Basic</option>
+                                    <option value="premium">Premium</option>
+                                    <option value="enterprise">Enterprise</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label>Servicios ofrecidos:</label>
+                            <textarea id="newServices" rows="3" required 
+                                      placeholder="ej: masajes, tratamientos faciales, aromaterapia"></textarea>
+                        </div>
+                        <button type="button" onclick="createEnterpriseCompany()" class="btn btn-primary">
+                            ➕ Crear Empresa Enterprise
+                        </button>
+                    </form>
+                    <div id="enterpriseCreateResult"></div>
+                </div>
+                
+                <!-- Herramientas de migración -->
+                <div class="enterprise-tools">
+                    <h4>🔧 Herramientas de Administración</h4>
+                    <div class="tool-actions">
+                        <button onclick="migrateCompaniesToPostgreSQL()" class="btn btn-secondary">
+                            📦 Migrar desde JSON a PostgreSQL
+                        </button>
+                        <button onclick="loadEnterpriseCompanies()" class="btn btn-info">
+                            🔄 Recargar Lista
+                        </button>
+                    </div>
+                    <div id="enterpriseMigrationResult"></div>
+                </div>
+                
+                <!-- Lista de empresas -->
+                <div class="enterprise-list">
+                    <h4>📋 Empresas Enterprise Configuradas</h4>
+                    <div id="enterpriseCompaniesList">
+                        <div class="loading">Cargando empresas...</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Cargar datos
+        await loadEnterpriseCompanies();
+    }
+    
+    addToLog('Enterprise tab loaded', 'info');
 }
 
 /**
@@ -823,6 +949,514 @@ async function updateStats() {
     } catch (error) {
         console.error('Error updating stats:', error);
         document.getElementById('systemStatus').textContent = '🔴';
+    }
+}
+
+
+// ============================================================================
+// GESTIÓN DE EMPRESAS ENTERPRISE - NUEVOS ENDPOINTS POSTGRESQL
+// ============================================================================
+
+/**
+ * Carga la lista de empresas enterprise desde PostgreSQL
+ */
+async function loadEnterpriseCompanies() {
+    try {
+        const response = await apiRequest('/api/admin/companies', {
+            method: 'GET'
+        });
+        
+        const companies = response.companies || [];
+        const container = document.getElementById('enterpriseCompaniesList');
+        
+        if (!container) return;
+        
+        if (companies.length === 0) {
+            container.innerHTML = `
+                <div class="result-container result-warning">
+                    <p>No hay empresas enterprise configuradas</p>
+                </div>
+            `;
+            return;
+        }
+        
+        const companiesHTML = companies.map(company => `
+            <div class="enterprise-company-card">
+                <div class="company-header">
+                    <h4>${escapeHTML(company.company_name)}</h4>
+                    <span class="badge badge-${company.is_active ? 'success' : 'warning'}">
+                        ${company.is_active ? 'Activa' : 'Inactiva'}
+                    </span>
+                </div>
+                <div class="company-details">
+                    <p><strong>ID:</strong> ${escapeHTML(company.company_id)}</p>
+                    <p><strong>Tipo:</strong> ${escapeHTML(company.business_type)}</p>
+                    <p><strong>Plan:</strong> ${escapeHTML(company.subscription_tier)}</p>
+                    <p><strong>Servicios:</strong> ${escapeHTML(company.services?.substring(0, 100) || 'N/A')}...</p>
+                </div>
+                <div class="company-actions">
+                    <button onclick="viewEnterpriseCompany('${company.company_id}')" class="btn btn-primary">
+                        👁️ Ver
+                    </button>
+                    <button onclick="editEnterpriseCompany('${company.company_id}')" class="btn btn-secondary">
+                        ✏️ Editar
+                    </button>
+                    <button onclick="testEnterpriseCompany('${company.company_id}')" class="btn btn-info">
+                        🧪 Test
+                    </button>
+                </div>
+            </div>
+        `).join('');
+        
+        container.innerHTML = companiesHTML;
+        
+        // Actualizar contador
+        document.getElementById('totalEnterpriseCompanies').textContent = companies.length;
+        
+    } catch (error) {
+        console.error('Error loading enterprise companies:', error);
+        const container = document.getElementById('enterpriseCompaniesList');
+        if (container) {
+            container.innerHTML = `
+                <div class="result-container result-error">
+                    <p>❌ Error al cargar empresas enterprise</p>
+                    <p>${escapeHTML(error.message)}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Crea una nueva empresa enterprise
+ */
+async function createEnterpriseCompany() {
+    const formData = {
+        company_id: document.getElementById('newCompanyId').value.trim(),
+        company_name: document.getElementById('newCompanyName').value.trim(),
+        business_type: document.getElementById('newBusinessType').value,
+        services: document.getElementById('newServices').value.trim(),
+        sales_agent_name: document.getElementById('newAgentName').value.trim(),
+        schedule_service_url: document.getElementById('newScheduleUrl').value.trim(),
+        timezone: document.getElementById('newTimezone').value,
+        currency: document.getElementById('newCurrency').value,
+        subscription_tier: document.getElementById('newSubscriptionTier').value
+    };
+    
+    // Validaciones básicas
+    if (!formData.company_id || !formData.company_name || !formData.services) {
+        showNotification('Por favor completa los campos obligatorios (ID, Nombre y Servicios)', 'warning');
+        return;
+    }
+    
+    // Validar formato de company_id
+    if (!/^[a-z0-9_]+$/.test(formData.company_id)) {
+        showNotification('El ID de empresa solo puede contener letras minúsculas, números y guiones bajos', 'warning');
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest('/api/admin/companies/create', {
+            method: 'POST',
+            body: formData
+        });
+        
+        showNotification(`Empresa enterprise ${formData.company_id} creada exitosamente`, 'success');
+        
+        // Mostrar detalles de creación
+        const container = document.getElementById('enterpriseCreateResult');
+        container.innerHTML = `
+            <div class="result-container result-success">
+                <h4>✅ Empresa Enterprise Creada</h4>
+                <p><strong>ID:</strong> ${response.company_id}</p>
+                <p><strong>Nombre:</strong> ${response.company_name}</p>
+                <p><strong>Arquitectura:</strong> ${response.architecture}</p>
+                
+                <h5>Estado de Configuración:</h5>
+                <div class="setup-status">
+                    ${Object.entries(response.setup_status).map(([key, value]) => `
+                        <div class="status-item">
+                            <span class="status-indicator ${typeof value === 'boolean' ? (value ? 'success' : 'error') : 'info'}"></span>
+                            ${key}: ${typeof value === 'boolean' ? (value ? '✅' : '❌') : value}
+                        </div>
+                    `).join('')}
+                </div>
+                
+                <h5>Próximos Pasos:</h5>
+                <ol style="margin-left: 20px;">
+                    ${response.next_steps.map(step => `<li>${escapeHTML(step)}</li>`).join('')}
+                </ol>
+            </div>
+        `;
+        
+        // Limpiar formulario
+        document.getElementById('enterpriseCreateForm').reset();
+        
+        // Recargar lista
+        await loadEnterpriseCompanies();
+        
+    } catch (error) {
+        console.error('Error creating enterprise company:', error);
+        showNotification('Error al crear empresa enterprise: ' + error.message, 'error');
+        
+        const container = document.getElementById('enterpriseCreateResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error al crear empresa enterprise</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Ve detalles de una empresa enterprise
+ */
+async function viewEnterpriseCompany(companyId) {
+    try {
+        const response = await apiRequest(`/api/admin/companies/${companyId}`);
+        const config = response.configuration;
+        
+        // Crear modal con información completa
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 80%; max-height: 80%; overflow-y: auto;">
+                <div class="modal-header">
+                    <h3>🏢 ${escapeHTML(config.company_name)} (${companyId})</h3>
+                    <button onclick="closeModal()" class="modal-close">&times;</button>
+                </div>
+                
+                <div class="enterprise-details">
+                    <div class="detail-section">
+                        <h4>📋 Información Básica</h4>
+                        <div class="detail-grid">
+                            <div><strong>Tipo de negocio:</strong> ${escapeHTML(config.business_type)}</div>
+                            <div><strong>Plan:</strong> ${escapeHTML(config.subscription_tier)}</div>
+                            <div><strong>Idioma:</strong> ${escapeHTML(config.language)}</div>
+                            <div><strong>Moneda:</strong> ${escapeHTML(config.currency)}</div>
+                            <div><strong>Zona horaria:</strong> ${escapeHTML(config.timezone)}</div>
+                            <div><strong>Versión:</strong> ${config.version}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>🤖 Configuración de Agentes</h4>
+                        <div class="detail-grid">
+                            <div><strong>Agente de ventas:</strong> ${escapeHTML(config.sales_agent_name)}</div>
+                            <div><strong>Modelo:</strong> ${escapeHTML(config.model_name)}</div>
+                            <div><strong>Max tokens:</strong> ${config.max_tokens}</div>
+                            <div><strong>Temperatura:</strong> ${config.temperature}</div>
+                            <div><strong>Mensajes contexto:</strong> ${config.max_context_messages}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>📅 Servicios Externos</h4>
+                        <div class="detail-grid">
+                            <div><strong>URL agendamiento:</strong> ${escapeHTML(config.schedule_service_url)}</div>
+                            <div><strong>Tipo integración:</strong> ${escapeHTML(config.schedule_integration_type)}</div>
+                            <div><strong>Chatwoot ID:</strong> ${config.chatwoot_account_id || 'No configurado'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>📝 Servicios</h4>
+                        <div class="services-text">
+                            ${escapeHTML(config.services)}
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>⚙️ Configuración Redis</h4>
+                        <div class="detail-grid">
+                            <div><strong>Prefijo Redis:</strong> ${escapeHTML(config.redis_prefix)}</div>
+                            <div><strong>Índice vectorstore:</strong> ${escapeHTML(config.vectorstore_index)}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <h4>📊 Límites</h4>
+                        <div class="detail-grid">
+                            <div><strong>Max documentos:</strong> ${config.max_documents}</div>
+                            <div><strong>Max conversaciones:</strong> ${config.max_conversations}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button onclick="editEnterpriseCompany('${companyId}')" class="btn btn-primary">
+                        ✏️ Editar
+                    </button>
+                    <button onclick="closeModal()" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+        
+    } catch (error) {
+        console.error('Error viewing enterprise company:', error);
+        showNotification('Error al ver empresa: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Edita una empresa enterprise
+ */
+async function editEnterpriseCompany(companyId) {
+    try {
+        // Cargar configuración actual
+        const response = await apiRequest(`/api/admin/companies/${companyId}`);
+        const config = response.configuration;
+        
+        // Crear modal de edición
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 70%; max-height: 80%; overflow-y: auto;">
+                <div class="modal-header">
+                    <h3>✏️ Editar ${escapeHTML(config.company_name)}</h3>
+                    <button onclick="closeModal()" class="modal-close">&times;</button>
+                </div>
+                
+                <form id="editEnterpriseForm" class="enterprise-edit-form">
+                    <div class="form-section">
+                        <h4>📋 Información Básica</h4>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Nombre de empresa:</label>
+                                <input type="text" id="editCompanyName" value="${escapeHTML(config.company_name)}" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Tipo de negocio:</label>
+                                <select id="editBusinessType">
+                                    <option value="general" ${config.business_type === 'general' ? 'selected' : ''}>General</option>
+                                    <option value="healthcare" ${config.business_type === 'healthcare' ? 'selected' : ''}>Salud</option>
+                                    <option value="beauty" ${config.business_type === 'beauty' ? 'selected' : ''}>Belleza</option>
+                                    <option value="dental" ${config.business_type === 'dental' ? 'selected' : ''}>Dental</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h4>🤖 Configuración de Agente</h4>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Nombre del agente:</label>
+                                <input type="text" id="editAgentName" value="${escapeHTML(config.sales_agent_name)}">
+                            </div>
+                            <div class="form-group">
+                                <label>Modelo:</label>
+                                <select id="editModelName">
+                                    <option value="gpt-4o-mini" ${config.model_name === 'gpt-4o-mini' ? 'selected' : ''}>GPT-4O Mini</option>
+                                    <option value="gpt-4o" ${config.model_name === 'gpt-4o' ? 'selected' : ''}>GPT-4O</option>
+                                    <option value="gpt-3.5-turbo" ${config.model_name === 'gpt-3.5-turbo' ? 'selected' : ''}>GPT-3.5 Turbo</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h4>📝 Servicios</h4>
+                        <div class="form-group">
+                            <label>Descripción de servicios:</label>
+                            <textarea id="editServices" rows="4" required>${escapeHTML(config.services)}</textarea>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h4>⚙️ Configuración</h4>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>URL agendamiento:</label>
+                                <input type="url" id="editScheduleUrl" value="${escapeHTML(config.schedule_service_url)}">
+                            </div>
+                            <div class="form-group">
+                                <label>Zona horaria:</label>
+                                <select id="editTimezone">
+                                    <option value="America/Bogota" ${config.timezone === 'America/Bogota' ? 'selected' : ''}>America/Bogota</option>
+                                    <option value="America/Mexico_City" ${config.timezone === 'America/Mexico_City' ? 'selected' : ''}>America/Mexico_City</option>
+                                    <option value="America/Lima" ${config.timezone === 'America/Lima' ? 'selected' : ''}>America/Lima</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+                
+                <div class="modal-footer">
+                    <button onclick="saveEnterpriseCompany('${companyId}')" class="btn btn-primary">
+                        💾 Guardar Cambios
+                    </button>
+                    <button onclick="closeModal()" class="btn btn-secondary">Cancelar</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+        
+    } catch (error) {
+        console.error('Error loading enterprise company for edit:', error);
+        showNotification('Error al cargar empresa para edición: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Guarda cambios de empresa enterprise
+ */
+async function saveEnterpriseCompany(companyId) {
+    const updates = {
+        company_name: document.getElementById('editCompanyName').value.trim(),
+        business_type: document.getElementById('editBusinessType').value,
+        sales_agent_name: document.getElementById('editAgentName').value.trim(),
+        model_name: document.getElementById('editModelName').value,
+        services: document.getElementById('editServices').value.trim(),
+        schedule_service_url: document.getElementById('editScheduleUrl').value.trim(),
+        timezone: document.getElementById('editTimezone').value
+    };
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest(`/api/admin/companies/${companyId}`, {
+            method: 'PUT',
+            body: updates
+        });
+        
+        showNotification(`Empresa ${companyId} actualizada exitosamente`, 'success');
+        
+        closeModal();
+        await loadEnterpriseCompanies();
+        
+    } catch (error) {
+        console.error('Error updating enterprise company:', error);
+        showNotification('Error al actualizar empresa: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Testa una empresa enterprise
+ */
+async function testEnterpriseCompany(companyId) {
+    const testMessage = prompt('Mensaje de prueba:', '¿Cuáles son sus servicios disponibles?');
+    if (!testMessage) return;
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest(`/api/conversations/test_user/test?company_id=${companyId}`, {
+            method: 'POST',
+            body: {
+                message: testMessage,
+                company_id: companyId
+            }
+        });
+        
+        // Mostrar resultado
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h3>🧪 Test Empresa: ${companyId}</h3>
+                    <button onclick="closeModal()" class="modal-close">&times;</button>
+                </div>
+                
+                <div class="test-result">
+                    <div class="test-section">
+                        <h4>📤 Mensaje enviado:</h4>
+                        <div class="message-box user">${escapeHTML(testMessage)}</div>
+                    </div>
+                    
+                    <div class="test-section">
+                        <h4>🤖 Respuesta del bot:</h4>
+                        <div class="message-box bot">${escapeHTML(response.bot_response || response.response || 'Sin respuesta')}</div>
+                    </div>
+                    
+                    <div class="test-section">
+                        <h4>ℹ️ Información técnica:</h4>
+                        <div class="tech-info">
+                            <p><strong>Agente usado:</strong> ${escapeHTML(response.agent_used || 'Desconocido')}</p>
+                            <p><strong>Empresa:</strong> ${escapeHTML(response.company_id || companyId)}</p>
+                            ${response.processing_time ? `<p><strong>Tiempo:</strong> ${response.processing_time}ms</p>` : ''}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button onclick="closeModal()" class="btn btn-primary">Cerrar</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+        
+    } catch (error) {
+        console.error('Error testing enterprise company:', error);
+        showNotification('Error al probar empresa: ' + error.message, 'error');
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+/**
+ * Migra empresas desde JSON a PostgreSQL
+ */
+async function migrateCompaniesToPostgreSQL() {
+    if (!confirm('¿Migrar empresas de JSON a PostgreSQL?\n\nEsta operación migrará todas las empresas del archivo JSON a la base de datos PostgreSQL.')) {
+        return;
+    }
+    
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequest('/api/admin/companies/migrate-from-json', {
+            method: 'POST'
+        });
+        
+        if (response.statistics) {
+            const stats = response.statistics;
+            showNotification(
+                `Migración completada: ${stats.companies_migrated} empresas migradas exitosamente`, 
+                'success'
+            );
+            
+            const container = document.getElementById('enterpriseMigrationResult');
+            container.innerHTML = `
+                <div class="result-container result-success">
+                    <h4>✅ Migración Completada</h4>
+                    <p><strong>Empresas migradas:</strong> ${stats.companies_migrated}</p>
+                    <p><strong>Empresas fallidas:</strong> ${stats.companies_failed}</p>
+                    <p><strong>Tiempo total:</strong> ${stats.total_time}ms</p>
+                </div>
+            `;
+        }
+        
+        await loadEnterpriseCompanies();
+        
+    } catch (error) {
+        console.error('Error in companies migration:', error);
+        showNotification('Error en migración: ' + error.message, 'error');
+        
+        const container = document.getElementById('enterpriseMigrationResult');
+        container.innerHTML = `
+            <div class="result-container result-error">
+                <p>❌ Error en migración</p>
+                <p>${escapeHTML(error.message)}</p>
+            </div>
+        `;
+    } finally {
+        toggleLoadingOverlay(false);
     }
 }
 
@@ -3101,6 +3735,16 @@ window.repairPrompts = repairPrompts;
 window.migratePromptsToPostgreSQL = migratePromptsToPostgreSQL;
 window.loadPromptsSystemStatus = loadPromptsSystemStatus;
 window.updateSystemStatusDisplay = updateSystemStatusDisplay;
+
+// Funciones enterprise
+window.loadEnterpriseTab = loadEnterpriseTab;
+window.loadEnterpriseCompanies = loadEnterpriseCompanies;
+window.createEnterpriseCompany = createEnterpriseCompany;
+window.viewEnterpriseCompany = viewEnterpriseCompany;
+window.editEnterpriseCompany = editEnterpriseCompany;
+window.saveEnterpriseCompany = saveEnterpriseCompany;
+window.testEnterpriseCompany = testEnterpriseCompany;
+window.migrateCompaniesToPostgreSQL = migrateCompaniesToPostgreSQL;
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
