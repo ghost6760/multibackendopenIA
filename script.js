@@ -287,8 +287,7 @@ async function loadTabContent(tabName) {
                 break;
                 
             case 'admin':
-                // Solo cargar la sección básica por defecto
-                showAdminSection('basic');
+                await loadAdminTab();
                 break;
                 
             case 'health':
@@ -3616,38 +3615,6 @@ function updateSystemStatusDisplay(systemStatus, fallbackUsed = null) {
 
 
 /**
- * Cambia entre secciones del panel de administración
- */
-function showAdminSection(section) {
-    // Ocultar todas las secciones
-    document.querySelectorAll('.admin-section').forEach(sec => {
-        sec.style.display = 'none';
-    });
-    
-    // Remover clase active de todos los tabs internos
-    document.querySelectorAll('.admin-tab').forEach(tab => {
-        tab.classList.remove('active');
-        tab.style.background = '#e2e8f0';
-        tab.style.color = '#4a5568';
-    });
-    
-    if (section === 'basic') {
-        document.getElementById('adminBasicSection').style.display = 'block';
-        event.target.classList.add('active');
-        event.target.style.background = '#667eea';
-        event.target.style.color = 'white';
-    } else if (section === 'enterprise') {
-        document.getElementById('adminEnterpriseSection').style.display = 'block';
-        event.target.classList.add('active');
-        event.target.style.background = '#667eea';
-        event.target.style.color = 'white';
-        
-        // Cargar contenido enterprise si no se ha cargado
-        loadEnterpriseTab();
-    }
-}
-
-/**
  * MODAL ACTUALIZADO PARA FORMATO DIRECTO DEL BACKEND
  * Usa los campos exactos que se ven en las imágenes del Network tab
  */
@@ -3779,7 +3746,6 @@ window.editEnterpriseCompany = editEnterpriseCompany;
 window.saveEnterpriseCompany = saveEnterpriseCompany;
 window.testEnterpriseCompany = testEnterpriseCompany;
 window.migrateCompaniesToPostgreSQL = migrateCompaniesToPostgreSQL;
-window.showAdminSection = showAdminSection;
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
