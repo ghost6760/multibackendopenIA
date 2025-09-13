@@ -1,6 +1,6 @@
 # Dockerfile simplificado - Solo Backend Flask
 # Optimizado para Railway deployment sin frontend React
-# CON MIGRACIÓN AUTOMÁTICA DE PROMPTS Y CONFIGURACIÓN DE EMPRESAS
+# CON MIGRACIÓN AUTOMÁTICA DE PROMPTS
 # ============================================================================
 FROM python:3.11-slim
 
@@ -29,9 +29,11 @@ COPY app/ ./app/
 COPY wsgi.py run.py ./
 COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 
-# 🆕 NUEVO: Copiar ambos scripts de migración
+# 🆕 NUEVO: Copiar script de migración
 COPY migrate_prompts_to_postgresql.py postgresql_schema.sql ./
-COPY migrate_companies_to_postgresql.py ./
+
+# 🆕 NUEVO: Copiar script de migración de empresas (añadir esta línea)
+COPY migrate_companies_to_postgresql.py postgresql_schema.sql ./
 
 # Crear directorio static y copiar archivos estáticos desde la raíz del proyecto
 RUN mkdir -p ./static
@@ -42,23 +44,12 @@ COPY style.css ./static/
 # Verificar que los archivos estáticos se copiaron
 RUN ls -la static/ && test -f static/index.html
 
-# 🆕 NUEVO: Ejecutar ambas migraciones durante el build
+# 🆕 NUEVO: Ejecutar migración de prompts durante el build (solo si hay DATABASE_URL)
+# Esto se ejecutará cada vez que se construya la imagen
 RUN if [ ! -z "$DATABASE_URL" ]; then \
-        echo "🔄 Ejecutando schema completo PostgreSQL..."; \
-        python -c "
-import psycopg2
-import os
-conn = psycopg2.connect(os.getenv('DATABASE_URL'))
-with open('postgresql_schema.sql', 'r') as f:
-    schema = f.read()
-with conn.cursor() as cursor:
-    cursor.execute(schema)
-    conn.commit()
-print('✅ Schema completo aplicado')
-" && \
-        echo "🔄 Ejecutando migración de prompts..."; \
+        echo "🔄 Ejecutando migración automática de prompts durante build..."; \
         python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló, continuando..." && \
-        echo "🔄 Ejecutando migración de configuración de empresas..."; \
+        echo "🔄 Ejecutando migración automática de configuración de empresas durante build..."; \
         python migrate_companies_to_postgresql.py --auto || echo "⚠️ Migración de empresas falló, continuando..."; \
     else \
         echo "⚠️ DATABASE_URL no disponible durante build, migraciones se saltarán"; \
@@ -76,22 +67,14 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# 🆕 NUEVO: Script de inicio que ejecuta ambas migraciones antes de iniciar gunicorn
+# 🆕 NUEVO: Script de inicio que ejecuta migración antes de iniciar gunicorn
+# Crear script de startup
 USER root
 RUN echo '#!/bin/bash\n\
 echo "🚀 Iniciando aplicación multi-tenant..."\n\
 \n\
-# Ejecutar schema completo PostgreSQL si DATABASE_URL está disponible\n\
+# Ejecutar migración de prompts si DATABASE_URL está disponible\n\
 if [ ! -z "$DATABASE_URL" ]; then\n\
-    echo "🔄 Verificando schema PostgreSQL..."\n\
-    python -c "\
-import psycopg2;\
-import os;\
-conn = psycopg2.connect(os.getenv(\"DATABASE_URL\"));\
-with open(\"postgresql_schema.sql\", \"r\") as f: schema = f.read();\
-with conn.cursor() as cursor: cursor.execute(schema); conn.commit();\
-print(\"✅ Schema verificado/aplicado\")\
-" && \\\n\
     echo "🔄 Ejecutando migración de prompts..."\n\
     python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló, continuando..." && \\\n\
     echo "🔄 Ejecutando migración de configuración de empresas..."\n\
