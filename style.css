@@ -1766,4 +1766,281 @@ body {
     font-size: 0.9em;
     opacity: 0.9;
 }
+/* ============================================================================
+   🔑 ESTILOS PARA API KEY ADMINISTRATIVA - AGREGAR AL FINAL DE style.css
+   ============================================================================ */
 
+/* Estado del API Key en la navbar */
+.api-key-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    font-size: 0.9em;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.3s ease;
+}
+
+.api-key-status.configured {
+    background: rgba(39, 174, 96, 0.2);
+    border-color: rgba(39, 174, 96, 0.3);
+}
+
+.api-key-status.not-configured {
+    background: rgba(231, 76, 60, 0.2);
+    border-color: rgba(231, 76, 60, 0.3);
+}
+
+/* Indicador de estado */
+.api-key-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.api-key-indicator.success {
+    background-color: #27ae60;
+    box-shadow: 0 0 0 2px rgba(39, 174, 96, 0.3);
+}
+
+.api-key-indicator.error {
+    background-color: #e74c3c;
+    box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.3);
+}
+
+/* Botones del API Key */
+.api-key-configure-btn,
+.api-key-change-btn {
+    padding: 4px 8px;
+    font-size: 0.8em;
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.api-key-configure-btn:hover,
+.api-key-change-btn:hover {
+    background: #2980b9;
+    transform: translateY(-1px);
+}
+
+.api-key-change-btn {
+    background: #95a5a6;
+    padding: 2px 6px;
+    font-size: 0.7em;
+}
+
+.api-key-change-btn:hover {
+    background: #7f8c8d;
+}
+
+/* Modal del API Key */
+.api-key-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.api-key-modal-content {
+    background: white;
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+    position: relative;
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.api-key-modal-content h3 {
+    color: #2c3e50;
+    margin-bottom: 12px;
+    text-align: center;
+}
+
+.api-key-modal-content p {
+    color: #6c757d;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+/* Formulario del API Key */
+.api-key-form-group {
+    margin-bottom: 16px;
+}
+
+.api-key-form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.api-key-input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #dee2e6;
+    border-radius: 6px;
+    font-size: 1em;
+    transition: all 0.3s ease;
+}
+
+.api-key-input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.api-key-help {
+    font-size: 0.8em;
+    color: #6c757d;
+    margin-top: 4px;
+    display: block;
+}
+
+/* Acciones del modal */
+.api-key-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.api-key-btn {
+    padding: 10px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.api-key-btn.primary {
+    background: #3498db;
+    color: white;
+}
+
+.api-key-btn.primary:hover {
+    background: #2980b9;
+    transform: translateY(-2px);
+}
+
+.api-key-btn.secondary {
+    background: #95a5a6;
+    color: white;
+}
+
+.api-key-btn.secondary:hover {
+    background: #7f8c8d;
+    transform: translateY(-2px);
+}
+
+/* Funciones administrativas */
+.api-key-functions {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 20px;
+    border: 1px solid #dee2e6;
+}
+
+.api-key-functions h4 {
+    color: #2c3e50;
+    margin-bottom: 12px;
+    font-size: 1.1em;
+}
+
+.admin-functions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.admin-function-item {
+    background: white;
+    border-radius: 6px;
+    padding: 12px;
+    border: 1px solid #dee2e6;
+    transition: all 0.3s ease;
+}
+
+.admin-function-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.admin-function-item h5 {
+    color: #2c3e50;
+    margin-bottom: 6px;
+    font-size: 0.9em;
+}
+
+.admin-function-item p {
+    color: #6c757d;
+    font-size: 0.8em;
+    margin-bottom: 10px;
+}
+
+/* Responsive para móviles */
+@media (max-width: 768px) {
+    .api-key-status {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 6px 8px;
+    }
+    
+    .api-key-modal-content {
+        width: 95%;
+        padding: 16px;
+    }
+    
+    .api-key-actions {
+        flex-direction: column;
+    }
+    
+    .admin-functions-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 480px) {
+    .api-key-status span {
+        font-size: 0.8em;
+    }
+    
+    .api-key-configure-btn,
+    .api-key-change-btn {
+        font-size: 0.7em;
+        padding: 3px 6px;
+    }
+}
