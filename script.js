@@ -1058,7 +1058,8 @@ async function createEnterpriseCompany() {
     try {
         toggleLoadingOverlay(true);
         
-        const response = await apiRequest('/api/admin/companies/create', {
+        // 🔑 ÚNICO CAMBIO: usar apiRequestWithKey en lugar de apiRequest
+        const response = await apiRequestWithKey('/api/admin/companies/create', {
             method: 'POST',
             body: formData
         });
@@ -1112,7 +1113,6 @@ async function createEnterpriseCompany() {
         toggleLoadingOverlay(false);
     }
 }
-
 /**
  * Ve detalles de una empresa enterprise
  */
@@ -3684,6 +3684,199 @@ function showPreviewModal(agentName, testMessage, data) {
 
 
 // ============================================================================
+// 🔑 SECCIÓN API KEY ADMINISTRATIVA - AGREGAR AL FINAL DE script.js
+// ============================================================================
+
+// Variable global para API key
+let ADMIN_API_KEY = null;
+
+/**
+ * Mostrar modal para configurar API Key
+ */
+function showApiKeyModal() {
+    // Remover modal existente si hay uno
+    const existingModal = document.getElementById('apiKeyModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    const modal = document.createElement('div');
+    modal.id = 'apiKeyModal';
+    modal.className = 'api-key-modal-overlay';
+    modal.innerHTML = `
+        <div class="api-key-modal-content">
+            <h3>🔑 API Key Administrativa</h3>
+            <p>Ingresa tu API key para funciones enterprise:</p>
+            
+            <div class="api-key-form-group">
+                <label for="apiKeyInput">API Key:</label>
+                <input type="password" id="apiKeyInput" 
+                       placeholder="your-secure-api-key-here" 
+                       class="api-key-input">
+                <small class="api-key-help">Encuentra esta key en tus variables de entorno de Railway (API_KEY)</small>
+            </div>
+            
+            <div class="api-key-actions">
+                <button onclick="saveApiKey()" class="api-key-btn primary">
+                    💾 Guardar
+                </button>
+                <button onclick="closeApiKeyModal()" class="api-key-btn secondary">
+                    ❌ Cancelar
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Focus en el input
+    setTimeout(() => {
+        document.getElementById('apiKeyInput').focus();
+    }, 100);
+    
+    // Cerrar con ESC
+    modal.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeApiKeyModal();
+        }
+    });
+}
+
+/**
+ * Guardar API Key
+ */
+function saveApiKey() {
+    const input = document.getElementById('apiKeyInput');
+    const apiKey = input.value.trim();
+    
+    if (!apiKey) {
+        showNotification('Por favor ingresa una API key válida', 'warning');
+        return;
+    }
+    
+    ADMIN_API_KEY = apiKey;
+    closeApiKeyModal();
+    updateApiKeyStatus();
+    showNotification('✅ API Key configurada correctamente', 'success');
+}
+
+/**
+ * Cerrar modal
+ */
+function closeApiKeyModal() {
+    const modal = document.getElementById('apiKeyModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+/**
+ * Actualizar estado visual del API Key
+ */
+function updateApiKeyStatus() {
+    const statusElement = document.getElementById('apiKeyStatus');
+    if (statusElement) {
+        if (ADMIN_API_KEY) {
+            statusElement.innerHTML = `
+                <span class="api-key-indicator success"></span>
+                <span>API Key configurada</span>
+                <button onclick="showApiKeyModal()" class="api-key-change-btn">🔄</button>
+            `;
+            statusElement.className = 'api-key-status configured';
+        } else {
+            statusElement.innerHTML = `
+                <span class="api-key-indicator error"></span>
+                <span>API Key requerida</span>
+                <button onclick="showApiKeyModal()" class="api-key-configure-btn">🔑 Configurar</button>
+            `;
+            statusElement.className = 'api-key-status not-configured';
+        }
+    }
+}
+
+/**
+ * Función helper para requests que requieren API key
+ */
+async function apiRequestWithKey(endpoint, options = {}) {
+    // Verificar si el endpoint requiere API key
+    const requiresApiKey = [
+        '/api/admin/companies/create',
+        '/api/admin/companies/',
+        '/api/documents/cleanup'
+    ].some(path => endpoint.includes(path));
+    
+    if (requiresApiKey && !ADMIN_API_KEY) {
+        showNotification('Se requiere API key para esta función', 'warning');
+        showApiKeyModal();
+        throw new Error('API key requerida');
+    }
+    
+    // Agregar API key a headers si es necesario
+    const headers = { ...options.headers };
+    if (requiresApiKey && ADMIN_API_KEY) {
+        headers['X-API-Key'] = ADMIN_API_KEY;
+    }
+    
+    // Usar apiRequest existente con headers modificados
+    return await apiRequest(endpoint, { ...options, headers });
+}
+
+/**
+ * Función de prueba para verificar API key
+ */
+async function testApiKey() {
+    if (!ADMIN_API_KEY) {
+        showNotification('Primero configura una API key', 'warning');
+        showApiKeyModal();
+        return;
+    }
+    
+    try {
+        await apiRequestWithKey('/api/admin/companies');
+        showNotification('✅ API key válida', 'success');
+    } catch (error) {
+        if (error.message.includes('401') || error.message.includes('Invalid API key')) {
+            showNotification('❌ API key inválida', 'error');
+            ADMIN_API_KEY = null;
+            updateApiKeyStatus();
+            showApiKeyModal();
+        } else {
+            showNotification('Error probando API key: ' + error.message, 'error');
+        }
+    }
+}
+
+
+
+// Función para cleanup de vectores (nueva funcionalidad)
+async function cleanupOrphanedVectors() {
+    try {
+        toggleLoadingOverlay(true);
+        
+        const response = await apiRequestWithKey('/api/documents/cleanup', {
+            method: 'POST'
+        });
+        
+        showNotification('✅ Vectores huérfanos limpiados correctamente', 'success');
+        console.log('Cleanup result:', response);
+        
+    } catch (error) {
+        console.error('Error cleaning up vectors:', error);
+    } finally {
+        toggleLoadingOverlay(false);
+    }
+}
+
+// Inicializar estado de API key cuando se carga la página
+document.addEventListener('DOMContentLoaded', function() {
+    // Esperar un poco para que se cargue el DOM
+    setTimeout(() => {
+        updateApiKeyStatus();
+    }, 500);
+});
+
+
+// ============================================================================
 // EXPONER FUNCIONES GLOBALES PARA EL HTML
 // ============================================================================
 
@@ -3746,6 +3939,9 @@ window.editEnterpriseCompany = editEnterpriseCompany;
 window.saveEnterpriseCompany = saveEnterpriseCompany;
 window.testEnterpriseCompany = testEnterpriseCompany;
 window.migrateCompaniesToPostgreSQL = migrateCompaniesToPostgreSQL;
+// Exponer funciones globalmente para debugging
+window.testApiKey = testApiKey;
+window.showApiKeyModal = showApiKeyModal;
 
 // Log final de inicialización del script
 addToLog('Script loaded successfully', 'info');
