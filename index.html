@@ -22,6 +22,13 @@
                 <option value="dental_clinic">Clínica Dental Sonríe</option>
                 <option value="spa_wellness">Wellness Spa & Relax</option>
             </select>
+            
+            <!-- 🔑 SECCIÓN API KEY AGREGADA -->
+            <div id="apiKeyStatus" class="api-key-status not-configured">
+                <span class="api-key-indicator error"></span>
+                <span>API Key requerida</span>
+                <button onclick="showApiKeyModal()" class="api-key-configure-btn">🔑 Configurar</button>
+            </div>
         </div>
 
         <div class="tabs">
@@ -128,6 +135,30 @@
                         🔍 Buscar
                     </button>
                     <div id="searchResults" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+
+            <!-- 🔧 SECCIÓN DE FUNCIONES ADMINISTRATIVAS AGREGADA -->
+            <div class="card">
+                <div class="api-key-functions">
+                    <h4>🔧 Funciones Administrativas</h4>
+                    <div class="admin-functions-grid">
+                        <div class="admin-function-item">
+                            <h5>🧹 Limpiar Vectores Huérfanos</h5>
+                            <p>Elimina vectores sin documentos asociados</p>
+                            <button onclick="cleanupOrphanedVectors()" class="api-key-btn primary">
+                                🗑️ Ejecutar Limpieza
+                            </button>
+                        </div>
+                        
+                        <div class="admin-function-item">
+                            <h5>🔍 Probar API Key</h5>
+                            <p>Verificar que la API key funciona correctamente</p>
+                            <button onclick="testApiKey()" class="api-key-btn secondary">
+                                🧪 Probar Conexión
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
