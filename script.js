@@ -413,12 +413,13 @@ async function loadAdminTab() {
 
 
 /**
- * Carga el contenido del tab enterprise
+ * VERSIÓN ÚNICA Y COMPLETA DE loadEnterpriseTab()
+ * Reemplazar la función existente por esta versión que combina todo
  */
 async function loadEnterpriseTab() {
     console.log('🏢 Loading enterprise tab...'); // DEBUG
     
-    // Verificar API key primero
+    // ✅ PASO 1: Verificar API key ANTES de crear el HTML
     if (!ADMIN_API_KEY) {
         console.log('⚠️ No API key found, showing modal'); // DEBUG
         showNotification('Se requiere API key para gestionar empresas enterprise', 'warning');
@@ -426,10 +427,136 @@ async function loadEnterpriseTab() {
         return;
     }
     
-    // Cargar empresas enterprise
+    // ✅ PASO 2: Crear todo el HTML del tab enterprise
+    const container = document.getElementById('enterpriseTabContent');
+    if (container) {
+        container.innerHTML = `
+            <div class="enterprise-section">
+                <h3>🏢 Gestión Enterprise de Empresas</h3>
+                
+                <!-- Estadísticas -->
+                <div class="enterprise-stats">
+                    <div class="stat-card">
+                        <span class="stat-number" id="totalEnterpriseCompanies">0</span>
+                        <span class="stat-label">Empresas Enterprise</span>
+                    </div>
+                </div>
+                
+                <!-- Crear nueva empresa -->
+                <div class="enterprise-create">
+                    <h4>➕ Crear Nueva Empresa Enterprise</h4>
+                    <form id="enterpriseCreateForm" class="enterprise-form">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>ID de empresa (solo minúsculas, números y _):</label>
+                                <input type="text" id="newCompanyId" pattern="[a-z0-9_]+" required 
+                                       placeholder="ej: spa_wellness">
+                            </div>
+                            <div class="form-group">
+                                <label>Nombre de empresa:</label>
+                                <input type="text" id="newCompanyName" required 
+                                       placeholder="ej: Wellness Spa & Relax">
+                            </div>
+                            <div class="form-group">
+                                <label>Tipo de negocio:</label>
+                                <select id="newBusinessType" required>
+                                    <option value="">Seleccionar tipo</option>
+                                    <option value="healthcare">Salud</option>
+                                    <option value="beauty">Belleza</option>
+                                    <option value="dental">Dental</option>
+                                    <option value="general">General</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Nombre del agente de ventas:</label>
+                                <input type="text" id="newAgentName" required 
+                                       placeholder="ej: Ana, terapeuta especialista de Wellness Spa">
+                            </div>
+                            <div class="form-group">
+                                <label>URL del servicio de programación:</label>
+                                <input type="url" id="newScheduleUrl" 
+                                       placeholder="http://127.0.0.1:4043">
+                            </div>
+                            <div class="form-group">
+                                <label>Zona horaria:</label>
+                                <select id="newTimezone" required>
+                                    <option value="America/Bogota">America/Bogota</option>
+                                    <option value="America/Mexico_City">America/Mexico_City</option>
+                                    <option value="America/Lima">America/Lima</option>
+                                    <option value="America/New_York">America/New_York</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Moneda:</label>
+                                <select id="newCurrency" required>
+                                    <option value="COP">COP</option>
+                                    <option value="USD">USD</option>
+                                    <option value="EUR">EUR</option>
+                                    <option value="MXN">MXN</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Plan de suscripción:</label>
+                                <select id="newSubscriptionTier" required>
+                                    <option value="basic">Basic</option>
+                                    <option value="premium">Premium</option>
+                                    <option value="enterprise">Enterprise</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group full-width">
+                            <label>Servicios ofrecidos:</label>
+                            <textarea id="newServices" required rows="3" 
+                                      placeholder="relajación, bienestar y terapias holísticas"></textarea>
+                        </div>
+                        
+                        <button type="button" onclick="createEnterpriseCompany()" class="btn btn-primary">
+                            ➕ Crear Empresa Enterprise
+                        </button>
+                    </form>
+                    
+                    <!-- Resultado de creación -->
+                    <div id="enterpriseCreateResult" class="create-result"></div>
+                </div>
+                
+                <!-- Herramientas de Administración -->
+                <div class="enterprise-admin">
+                    <h4>🛠️ Herramientas de Administración</h4>
+                    <div class="admin-tools">
+                        <button onclick="migrateCompaniesToPostgreSQL()" class="btn btn-secondary">
+                            🔄 Migrar desde JSON a PostgreSQL
+                        </button>
+                        <button onclick="loadEnterpriseCompanies()" class="btn btn-info">
+                            📋 Recargar Lista
+                        </button>
+                    </div>
+                    
+                    <!-- Lista de empresas enterprise -->
+                    <div class="enterprise-companies">
+                        <h4>📋 Empresas Enterprise Configuradas</h4>
+                        <div id="enterpriseCompaniesList" class="companies-list">
+                            <div class="loading">Cargando empresas enterprise...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Error al cargar empresas enterprise -->
+                    <div class="enterprise-error">
+                        <h4>❌ Error al cargar empresas enterprise</h4>
+                        <p>Invalid API key</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // ✅ PASO 3: Cargar las empresas enterprise después de crear el HTML
+    console.log('🏢 HTML created, now loading companies...'); // DEBUG
     await loadEnterpriseCompanies();
     
-    console.log('✅ Enterprise tab loaded'); // DEBUG
+    // ✅ PASO 4: Log de finalización
+    console.log('✅ Enterprise tab loaded completely'); // DEBUG
+    addToLog('Enterprise tab loaded', 'info');
 }
 
 /**
