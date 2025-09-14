@@ -3795,7 +3795,7 @@ function updateApiKeyStatus() {
 }
 
 /**
- * Función helper para requests que requieren API key
+ * Función helper para requests que requieren API key - VERSIÓN CORREGIDA
  */
 async function apiRequestWithKey(endpoint, options = {}) {
     // Verificar si el endpoint requiere API key
@@ -3811,14 +3811,26 @@ async function apiRequestWithKey(endpoint, options = {}) {
         throw new Error('API key requerida');
     }
     
-    // Agregar API key a headers si es necesario
-    const headers = { ...options.headers };
+    // 🔧 CORRECCIÓN: Asegurar que headers siempre sea un objeto válido
+    const headers = { 
+        'Content-Type': 'application/json',  // ✅ Establecer explícitamente
+        ...(options.headers || {})           // ✅ Merge seguro con fallback
+    };
+    
+    // Agregar API key si es necesario
     if (requiresApiKey && ADMIN_API_KEY) {
         headers['X-API-Key'] = ADMIN_API_KEY;
     }
     
-    // Usar apiRequest existente con headers modificados
-    return await apiRequest(endpoint, { ...options, headers });
+    // 🔧 CORRECCIÓN: Asegurar stringify del body si es objeto
+    let processedOptions = { ...options, headers };
+    
+    if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+        processedOptions.body = JSON.stringify(options.body);
+    }
+    
+    // Usar apiRequest existente con opciones procesadas
+    return await apiRequest(endpoint, processedOptions);
 }
 
 /**
