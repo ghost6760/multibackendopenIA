@@ -416,121 +416,20 @@ async function loadAdminTab() {
  * Carga el contenido del tab enterprise
  */
 async function loadEnterpriseTab() {
-    const container = document.getElementById('enterpriseTabContent');
-    if (container) {
-        container.innerHTML = `
-            <div class="enterprise-section">
-                <h3>🏢 Gestión Enterprise de Empresas</h3>
-                
-                <!-- Estadísticas -->
-                <div class="enterprise-stats">
-                    <div class="stat-card">
-                        <span class="stat-number" id="totalEnterpriseCompanies">0</span>
-                        <span class="stat-label">Empresas Enterprise</span>
-                    </div>
-                </div>
-                
-                <!-- Crear nueva empresa -->
-                <div class="enterprise-create">
-                    <h4>➕ Crear Nueva Empresa Enterprise</h4>
-                    <form id="enterpriseCreateForm" class="enterprise-form">
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label>ID de empresa (solo minúsculas, números y _):</label>
-                                <input type="text" id="newCompanyId" pattern="[a-z0-9_]+" required 
-                                       placeholder="ej: spa_wellness">
-                            </div>
-                            <div class="form-group">
-                                <label>Nombre de empresa:</label>
-                                <input type="text" id="newCompanyName" required 
-                                       placeholder="ej: Spa Wellness Center">
-                            </div>
-                            <div class="form-group">
-                                <label>Tipo de negocio:</label>
-                                <select id="newBusinessType">
-                                    <option value="general">General</option>
-                                    <option value="healthcare">Salud</option>
-                                    <option value="beauty">Belleza</option>
-                                    <option value="dental">Dental</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Nombre del agente:</label>
-                                <input type="text" id="newAgentName" 
-                                       placeholder="ej: Elena, especialista en bienestar">
-                            </div>
-                            <div class="form-group">
-                                <label>URL del servicio de agendamiento:</label>
-                                <input type="url" id="newScheduleUrl" 
-                                       value="http://127.0.0.1:4043">
-                            </div>
-                            <div class="form-group">
-                                <label>Zona horaria:</label>
-                                <select id="newTimezone">
-                                    <option value="America/Bogota">America/Bogota</option>
-                                    <option value="America/Mexico_City">America/Mexico_City</option>
-                                    <option value="America/Lima">America/Lima</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Moneda:</label>
-                                <select id="newCurrency">
-                                    <option value="COP">COP</option>
-                                    <option value="USD">USD</option>
-                                    <option value="MXN">MXN</option>
-                                    <option value="PEN">PEN</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Plan de suscripción:</label>
-                                <select id="newSubscriptionTier">
-                                    <option value="basic">Basic</option>
-                                    <option value="premium">Premium</option>
-                                    <option value="enterprise">Enterprise</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-group full-width">
-                            <label>Servicios ofrecidos:</label>
-                            <textarea id="newServices" rows="3" required 
-                                      placeholder="ej: masajes, tratamientos faciales, aromaterapia"></textarea>
-                        </div>
-                        <button type="button" onclick="createEnterpriseCompany()" class="btn btn-primary">
-                            ➕ Crear Empresa Enterprise
-                        </button>
-                    </form>
-                    <div id="enterpriseCreateResult"></div>
-                </div>
-                
-                <!-- Herramientas de migración -->
-                <div class="enterprise-tools">
-                    <h4>🔧 Herramientas de Administración</h4>
-                    <div class="tool-actions">
-                        <button onclick="migrateCompaniesToPostgreSQL()" class="btn btn-secondary">
-                            📦 Migrar desde JSON a PostgreSQL
-                        </button>
-                        <button onclick="loadEnterpriseCompanies()" class="btn btn-info">
-                            🔄 Recargar Lista
-                        </button>
-                    </div>
-                    <div id="enterpriseMigrationResult"></div>
-                </div>
-                
-                <!-- Lista de empresas -->
-                <div class="enterprise-list">
-                    <h4>📋 Empresas Enterprise Configuradas</h4>
-                    <div id="enterpriseCompaniesList">
-                        <div class="loading">Cargando empresas...</div>
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        // Cargar datos
-        await loadEnterpriseCompanies();
+    console.log('🏢 Loading enterprise tab...'); // DEBUG
+    
+    // Verificar API key primero
+    if (!ADMIN_API_KEY) {
+        console.log('⚠️ No API key found, showing modal'); // DEBUG
+        showNotification('Se requiere API key para gestionar empresas enterprise', 'warning');
+        showApiKeyModal();
+        return;
     }
     
-    addToLog('Enterprise tab loaded', 'info');
+    // Cargar empresas enterprise
+    await loadEnterpriseCompanies();
+    
+    console.log('✅ Enterprise tab loaded'); // DEBUG
 }
 
 /**
@@ -961,10 +860,15 @@ async function updateStats() {
  * Carga la lista de empresas enterprise desde PostgreSQL
  */
 async function loadEnterpriseCompanies() {
+    console.log('🏢 Loading enterprise companies...'); // DEBUG
+    
     try {
-        const response = await apiRequest('/api/admin/companies', {
+        // ✅ CAMBIO CRÍTICO: Usar apiRequestWithKey en lugar de apiRequest
+        const response = await apiRequestWithKey('/api/admin/companies', {
             method: 'GET'
         });
+        
+        console.log('✅ Enterprise companies response:', response); // DEBUG
         
         const companies = response.companies || [];
         const container = document.getElementById('enterpriseCompaniesList');
@@ -975,6 +879,7 @@ async function loadEnterpriseCompanies() {
             container.innerHTML = `
                 <div class="result-container result-warning">
                     <p>No hay empresas enterprise configuradas</p>
+                    <p>Las empresas encontradas en PostgreSQL: ${companies.length}</p>
                 </div>
             `;
             return;
@@ -1013,14 +918,19 @@ async function loadEnterpriseCompanies() {
         // Actualizar contador
         document.getElementById('totalEnterpriseCompanies').textContent = companies.length;
         
+        console.log(`✅ Loaded ${companies.length} enterprise companies`); // DEBUG
+        
     } catch (error) {
-        console.error('Error loading enterprise companies:', error);
+        console.error('❌ Error loading enterprise companies:', error); // DEBUG
+        showNotification('Error al cargar empresas enterprise: ' + error.message, 'error');
+        
         const container = document.getElementById('enterpriseCompaniesList');
         if (container) {
             container.innerHTML = `
                 <div class="result-container result-error">
                     <p>❌ Error al cargar empresas enterprise</p>
                     <p>${escapeHTML(error.message)}</p>
+                    <p><strong>Debug:</strong> ¿API key configurada? ${ADMIN_API_KEY ? 'SÍ' : 'NO'}</p>
                 </div>
             `;
         }
@@ -1118,7 +1028,8 @@ async function createEnterpriseCompany() {
  */
 async function viewEnterpriseCompany(companyId) {
     try {
-        const response = await apiRequest(`/api/admin/companies/${companyId}`);
+        // ✅ CAMBIO: Usar apiRequestWithKey
+        const response = await apiRequestWithKey(`/api/admin/companies/${companyId}`);
         const config = response.configuration;
         
         // Crear modal con información completa
@@ -1130,64 +1041,18 @@ async function viewEnterpriseCompany(companyId) {
                     <h3>🏢 ${escapeHTML(config.company_name)} (${companyId})</h3>
                     <button onclick="closeModal()" class="modal-close">&times;</button>
                 </div>
-                
-                <div class="enterprise-details">
-                    <div class="detail-section">
-                        <h4>📋 Información Básica</h4>
-                        <div class="detail-grid">
-                            <div><strong>Tipo de negocio:</strong> ${escapeHTML(config.business_type)}</div>
-                            <div><strong>Plan:</strong> ${escapeHTML(config.subscription_tier)}</div>
-                            <div><strong>Idioma:</strong> ${escapeHTML(config.language)}</div>
-                            <div><strong>Moneda:</strong> ${escapeHTML(config.currency)}</div>
-                            <div><strong>Zona horaria:</strong> ${escapeHTML(config.timezone)}</div>
-                            <div><strong>Versión:</strong> ${config.version}</div>
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>🤖 Configuración de Agentes</h4>
-                        <div class="detail-grid">
-                            <div><strong>Agente de ventas:</strong> ${escapeHTML(config.sales_agent_name)}</div>
-                            <div><strong>Modelo:</strong> ${escapeHTML(config.model_name)}</div>
-                            <div><strong>Max tokens:</strong> ${config.max_tokens}</div>
-                            <div><strong>Temperatura:</strong> ${config.temperature}</div>
-                            <div><strong>Mensajes contexto:</strong> ${config.max_context_messages}</div>
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>📅 Servicios Externos</h4>
-                        <div class="detail-grid">
-                            <div><strong>URL agendamiento:</strong> ${escapeHTML(config.schedule_service_url)}</div>
-                            <div><strong>Tipo integración:</strong> ${escapeHTML(config.schedule_integration_type)}</div>
-                            <div><strong>Chatwoot ID:</strong> ${config.chatwoot_account_id || 'No configurado'}</div>
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>📝 Servicios</h4>
-                        <div class="services-text">
-                            ${escapeHTML(config.services)}
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>⚙️ Configuración Redis</h4>
-                        <div class="detail-grid">
-                            <div><strong>Prefijo Redis:</strong> ${escapeHTML(config.redis_prefix)}</div>
-                            <div><strong>Índice vectorstore:</strong> ${escapeHTML(config.vectorstore_index)}</div>
-                        </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <h4>📊 Límites</h4>
-                        <div class="detail-grid">
-                            <div><strong>Max documentos:</strong> ${config.max_documents}</div>
-                            <div><strong>Max conversaciones:</strong> ${config.max_conversations}</div>
-                        </div>
+                <div class="modal-body">
+                    <h4>📋 Información General</h4>
+                    <p><strong>ID:</strong> ${escapeHTML(config.company_id)}</p>
+                    <p><strong>Nombre:</strong> ${escapeHTML(config.company_name)}</p>
+                    <p><strong>Tipo de negocio:</strong> ${escapeHTML(config.business_type)}</p>
+                    <p><strong>Agente de ventas:</strong> ${escapeHTML(config.sales_agent_name)}</p>
+                    <p><strong>Zona horaria:</strong> ${escapeHTML(config.timezone)}</p>
+                    <p><strong>Servicios:</strong></p>
+                    <div style="background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0;">
+                        ${escapeHTML(config.services)}
                     </div>
                 </div>
-                
                 <div class="modal-footer">
                     <button onclick="editEnterpriseCompany('${companyId}')" class="btn btn-primary">
                         ✏️ Editar
@@ -3802,6 +3667,7 @@ async function apiRequestWithKey(endpoint, options = {}) {
     const requiresApiKey = [
         '/api/admin/companies/create',
         '/api/admin/companies/',
+        '/api/admin/companies',  // ✅ AGREGAR ESTE TAMBIÉN
         '/api/documents/cleanup'
     ].some(path => endpoint.includes(path));
     
@@ -3820,6 +3686,7 @@ async function apiRequestWithKey(endpoint, options = {}) {
     // Agregar API key si es necesario
     if (requiresApiKey && ADMIN_API_KEY) {
         headers['X-API-Key'] = ADMIN_API_KEY;
+        console.log('🔑 API Key added to request:', endpoint); // DEBUG
     }
     
     // 🔧 CORRECCIÓN: Asegurar stringify del body si es objeto
@@ -3827,7 +3694,10 @@ async function apiRequestWithKey(endpoint, options = {}) {
     
     if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
         processedOptions.body = JSON.stringify(options.body);
+        console.log('📤 Body stringified for:', endpoint); // DEBUG
     }
+    
+    console.log('🌐 API Request with Key:', endpoint, processedOptions); // DEBUG
     
     // Usar apiRequest existente con opciones procesadas
     return await apiRequest(endpoint, processedOptions);
@@ -3837,6 +3707,9 @@ async function apiRequestWithKey(endpoint, options = {}) {
  * Función de prueba para verificar API key
  */
 async function testApiKey() {
+    console.log('🔑 Testing API key...'); // DEBUG
+    console.log('🔑 Current API key:', ADMIN_API_KEY ? 'SET (length: ' + ADMIN_API_KEY.length + ')' : 'NOT SET'); // DEBUG
+    
     if (!ADMIN_API_KEY) {
         showNotification('Primero configura una API key', 'warning');
         showApiKeyModal();
@@ -3844,9 +3717,17 @@ async function testApiKey() {
     }
     
     try {
-        await apiRequestWithKey('/api/admin/companies');
+        console.log('🔑 Making test request to /api/admin/companies'); // DEBUG
+        const response = await apiRequestWithKey('/api/admin/companies');
+        console.log('✅ API key test successful:', response); // DEBUG
         showNotification('✅ API key válida', 'success');
+        
+        // Intentar cargar empresas después de validar
+        await loadEnterpriseCompanies();
+        
     } catch (error) {
+        console.error('❌ API key test failed:', error); // DEBUG
+        
         if (error.message.includes('401') || error.message.includes('Invalid API key')) {
             showNotification('❌ API key inválida', 'error');
             ADMIN_API_KEY = null;
@@ -3857,7 +3738,6 @@ async function testApiKey() {
         }
     }
 }
-
 
 
 // Función para cleanup de vectores (nueva funcionalidad)
