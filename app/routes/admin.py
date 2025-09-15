@@ -1089,35 +1089,59 @@ def create_new_company_enterprise():
             logger.warning(f"Could not initialize vectorstore for {company_id}: {e}")
             vectorstore_status = f"failed: {str(e)}"
         
-        # 4. CONFIGURAR PROMPTS EN POSTGRESQL
-        prompt_status = "not_configured"
+        # 4. VERIFICAR SISTEMA DE PROMPTS (NO CREAR PROMPTS CUSTOM)
+        prompt_status = "system_ready"
         try:
             from app.services.prompt_service import get_prompt_service
             prompt_service = get_prompt_service()
             
-            # Prompts personalizados por empresa usando sus datos específicos
-            business_specific_prompts = _create_business_specific_prompts(
-                enterprise_config.company_name,
-                enterprise_config.services,
-                enterprise_config.sales_agent_name,
-                enterprise_config.business_type
-            )
+            # ✅ NUEVO ENFOQUE: Verificar que el sistema de prompts está funcionando
+            # El sistema automáticamente usará prompts por defecto → no necesita crear custom prompts
             
-            prompts_created = 0
-            for agent_name, template in business_specific_prompts.items():
-                if prompt_service.create_or_update_prompt(
-                    company_id=company_id,
-                    agent_name=agent_name,
-                    template=template,
-                    created_by="admin_api_enterprise"
-                ):
-                    prompts_created += 1
+            # Verificar estado de la base de datos
+            db_status = prompt_service.get_db_status()
+            if not db_status.get('postgresql_available', False):
+                logger.warning(f"PostgreSQL not available for {company_id}, will use fallback prompts")
             
-            prompt_status = f"configured ({prompts_created} prompts created)"
+            # Verificar que puede obtener prompts para la empresa (usa fallbacks automáticos)
+            test_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
+            agents_data = prompt_service.get_company_prompts(company_id)
+            
+            if agents_data:
+                # Contar qué tipos de prompts está usando
+                sources = {}
+                for agent_name, agent_info in agents_data.items():
+                    source = agent_info.get('source', 'unknown')
+                    sources[source] = sources.get(source, 0) + 1
+                
+                prompt_status = f"verified ({len(agents_data)} agents using sources: {sources})"
+                logger.info(f"✅ Prompt system ready for {company_id}: {prompt_status}")
+            else:
+                prompt_status = "fallback_mode (using hardcoded prompts)"
+                logger.warning(f"⚠️ Prompt system in fallback mode for {company_id}")
+            
+            # 🆕 OPCIONAL: Solo crear prompts custom si se proporciona configuración específica
+            custom_prompts_config = data.get('custom_prompts')  # Nuevo campo opcional
+            if custom_prompts_config and isinstance(custom_prompts_config, dict):
+                prompts_created = 0
+                for agent_name, custom_template in custom_prompts_config.items():
+                    if agent_name in test_agents and custom_template.strip():
+                        success = prompt_service.save_custom_prompt(
+                            company_id, 
+                            agent_name, 
+                            custom_template, 
+                            "admin_api_enterprise"
+                        )
+                        if success:
+                            prompts_created += 1
+                
+                if prompts_created > 0:
+                    prompt_status += f" + {prompts_created} custom prompts created"
+                    logger.info(f"Created {prompts_created} custom prompts for {company_id}")
             
         except Exception as e:
-            logger.warning(f"Could not configure prompts for {company_id}: {e}")
-            prompt_status = f"failed: {str(e)}"
+            logger.error(f"Error verifying prompt system for {company_id}: {e}")
+            prompt_status = f"error: {str(e)} (will use hardcoded fallbacks)"
         
         # 5. INICIALIZAR ORQUESTADOR MULTI-AGENTE
         orchestrator_status = "not_initialized"
@@ -1440,97 +1464,4 @@ def migrate_companies_from_json():
         return create_error_response(f"Migration failed: {str(e)}", 500)
 
 
-def _create_business_specific_prompts(company_name: str, services: str, agent_name: str, business_type: str) -> Dict[str, str]:
-    """Crear prompts específicos por tipo de negocio - VERSIÓN CORREGIDA"""
-    
-    # Keywords específicos por tipo de negocio
-    business_keywords = {
-        'healthcare': 'salud, bienestar, tratamiento médico, consulta',
-        'beauty': 'belleza, relajación, tratamiento estético, bienestar',
-        'dental': 'salud dental, odontología, higiene oral, sonrisa',
-        'general': 'atención personalizada, servicio de calidad'
-    }
-    
-    specific_keywords = business_keywords.get(business_type, business_keywords['general'])
-    
-    # ✅ CORRECCIÓN: Crear prompts para TODOS los agentes necesarios
-    return {
-        "router_agent": f"""Eres un asistente especializado de {company_name}, una empresa dedicada a {services}.
 
-Tu función es clasificar las consultas de clientes en las siguientes categorías:
-- SALES: Consultas sobre {services}, precios, promociones o información comercial
-- SUPPORT: Dudas técnicas, problemas con servicios ya contratados
-- SCHEDULE: Solicitudes de agendamiento, cambio de citas, disponibilidad
-- EMERGENCY: Situaciones urgentes relacionadas con {specific_keywords}
-
-Siempre mantén un tono profesional y cálido, representando los valores de {company_name}.
-
-Responde solo con la categoría correspondiente: SALES, SUPPORT, SCHEDULE o EMERGENCY.""",
-
-        "sales_agent": f"""Eres {agent_name} de {company_name}, un asesor comercial especializado en {services}.
-
-INFORMACIÓN DE LA EMPRESA:
-- Nombre: {company_name}
-- Servicios: {services}
-- Especialidad: {specific_keywords}
-
-INSTRUCCIONES:
-1. Proporciona información detallada sobre {services}
-2. Explica precios y promociones cuando sea relevante
-3. Mantén un tono profesional pero cálido
-4. Haz preguntas para entender mejor las necesidades del cliente
-5. Ofrece alternativas que se adapten al presupuesto del cliente
-
-IMPORTANTE: Si el cliente pregunta sobre agendamiento de citas, derive al equipo de programación.
-Si hay emergencias, derive inmediatamente al área correspondiente.""",
-
-        "support_agent": f"""Eres el especialista de soporte técnico de {company_name}, experto en resolver dudas sobre {services}.
-
-INFORMACIÓN DE LA EMPRESA:
-- Nombre: {company_name}
-- Servicios: {services}
-- Especialidad: {specific_keywords}
-
-INSTRUCCIONES:
-1. Resuelve dudas técnicas sobre servicios ya contratados
-2. Proporciona instrucciones claras y paso a paso
-3. Ayuda con problemas post-servicio
-4. Mantén un tono empático y comprensivo
-5. Escala problemas complejos cuando sea necesario
-
-IMPORTANTE: Para emergencias, deriva inmediatamente al área correspondiente.
-Para nuevas ventas, deriva al equipo comercial.""",
-
-        "emergency_agent": f"""Eres el especialista de emergencias de {company_name}, entrenado para manejar situaciones urgentes relacionadas con {services}.
-
-INFORMACIÓN DE LA EMPRESA:
-- Nombre: {company_name}
-- Servicios: {services}
-- Especialidad: {specific_keywords}
-
-INSTRUCCIONES:
-1. Evalúa rápidamente la urgencia de la situación
-2. Proporciona instrucciones claras e inmediatas
-3. Deriva a profesionales médicos cuando sea necesario
-4. Mantén la calma y tranquiliza al cliente
-5. Documenta todos los casos de emergencia
-
-IMPORTANTE: En caso de emergencias médicas graves, recomienda contactar servicios de emergencia locales (ambulancia, etc.).""",
-
-        "schedule_agent": f"""Eres el especialista en programación de citas de {company_name}, experto en coordinar {services}.
-
-INFORMACIÓN DE LA EMPRESA:
-- Nombre: {company_name}
-- Servicios: {services}
-- Especialidad: {specific_keywords}
-
-INSTRUCCIONES:
-1. Ayuda a programar, reprogramar y cancelar citas
-2. Proporciona información sobre disponibilidad
-3. Explica políticas de cancelación y reagendamiento
-4. Confirma todos los detalles de la cita
-5. Envía recordatorios cuando sea apropiado
-
-IMPORTANTE: Para consultas sobre precios, deriva al equipo de ventas.
-Para emergencias, deriva inmediatamente al área correspondiente."""
-    }
