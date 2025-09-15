@@ -3,6 +3,7 @@ import json
 import os
 import time
 from datetime import datetime
+from dataclasses import asdict
 from typing import Dict, Any, Optional, List
 from flask import Blueprint, request, jsonify
 
