@@ -1142,59 +1142,8 @@ def create_new_company_enterprise():
         except Exception as e:
             logger.error(f"Error verifying prompt system for {company_id}: {e}")
             prompt_status = f"error: {str(e)} (will use hardcoded fallbacks)"
-        
-        # 5. INICIALIZAR ORQUESTADOR MULTI-AGENTE
-        orchestrator_status = "not_initialized"
-        try:
-            factory = get_multi_agent_factory()
-            orchestrator = factory.get_orchestrator(company_id)
-            if orchestrator:
-                orchestrator_status = "initialized"
-            else:
-                orchestrator_status = "failed"
-        except Exception as e:
-            logger.warning(f"Could not initialize orchestrator for {company_id}: {e}")
-            orchestrator_status = f"failed: {str(e)}"
-        
-        # 6. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD)
-        json_fallback_status = "not_updated"
-        try:
-            config_file = os.getenv('COMPANIES_CONFIG_FILE', 'companies_config.json')
-            
-            # Leer configuración existente
-            if os.path.exists(config_file):
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    existing_config = json.load(f)
-            else:
-                existing_config = {}
-            
-            # Agregar nueva empresa (formato legacy para compatibilidad)
-            existing_config[company_id] = {
-                "company_name": enterprise_config.company_name,
-                "business_type": enterprise_config.business_type,
-                "redis_prefix": enterprise_config.redis_prefix,
-                "vectorstore_index": enterprise_config.vectorstore_index,
-                "schedule_service_url": enterprise_config.schedule_service_url,
-                "sales_agent_name": enterprise_config.sales_agent_name,
-                "services": enterprise_config.services,
-                "model_name": enterprise_config.model_name,
-                "max_tokens": enterprise_config.max_tokens,
-                "temperature": enterprise_config.temperature,
-                "_source": "postgresql",  # Indicar que el source of truth es PostgreSQL
-                "_created_via": "enterprise_api"
-            }
-            
-            # Guardar archivo actualizado
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(existing_config, f, indent=2, ensure_ascii=False)
-            
-            json_fallback_status = "updated"
-            
-        except Exception as e:
-            logger.warning(f"Could not update JSON fallback for {company_id}: {e}")
-            json_fallback_status = f"failed: {str(e)}"
-        
-        # 7. AGREGAR AL COMPANY MANAGER LEGACY (PARA COMPATIBILIDAD)
+
+        # 5. AGREGAR AL COMPANY MANAGER LEGACY (PARA COMPATIBILIDAD)
         try:
             company_manager = get_company_manager()
             legacy_config = enterprise_config.to_legacy_config()
@@ -1243,9 +1192,63 @@ def create_new_company_enterprise():
             ]
         })
         
+        
+        # 6. INICIALIZAR ORQUESTADOR MULTI-AGENTE
+        orchestrator_status = "not_initialized"
+        try:
+            factory = get_multi_agent_factory()
+            orchestrator = factory.get_orchestrator(company_id)
+            if orchestrator:
+                orchestrator_status = "initialized"
+            else:
+                orchestrator_status = "failed"
+        except Exception as e:
+            logger.warning(f"Could not initialize orchestrator for {company_id}: {e}")
+            orchestrator_status = f"failed: {str(e)}"
+        
+        # 7. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD)
+        json_fallback_status = "not_updated"
+        try:
+            config_file = os.getenv('COMPANIES_CONFIG_FILE', 'companies_config.json')
+            
+            # Leer configuración existente
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    existing_config = json.load(f)
+            else:
+                existing_config = {}
+            
+            # Agregar nueva empresa (formato legacy para compatibilidad)
+            existing_config[company_id] = {
+                "company_name": enterprise_config.company_name,
+                "business_type": enterprise_config.business_type,
+                "redis_prefix": enterprise_config.redis_prefix,
+                "vectorstore_index": enterprise_config.vectorstore_index,
+                "schedule_service_url": enterprise_config.schedule_service_url,
+                "sales_agent_name": enterprise_config.sales_agent_name,
+                "services": enterprise_config.services,
+                "model_name": enterprise_config.model_name,
+                "max_tokens": enterprise_config.max_tokens,
+                "temperature": enterprise_config.temperature,
+                "_source": "postgresql",  # Indicar que el source of truth es PostgreSQL
+                "_created_via": "enterprise_api"
+            }
+            
+            # Guardar archivo actualizado
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_config, f, indent=2, ensure_ascii=False)
+            
+            json_fallback_status = "updated"
+            
+        except Exception as e:
+            logger.warning(f"Could not update JSON fallback for {company_id}: {e}")
+            json_fallback_status = f"failed: {str(e)}"
+
+
     except Exception as e:
         logger.error(f"Error creating enterprise company: {e}")
         return create_error_response(f"Failed to create enterprise company: {str(e)}", 500)
+        
 
 
 @bp.route('/companies/<company_id>', methods=['GET'])
