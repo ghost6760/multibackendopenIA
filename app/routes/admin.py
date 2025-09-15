@@ -970,31 +970,6 @@ def run_system_diagnostics():
 def create_new_company_enterprise():
     """
     ENDPOINT ENTERPRISE - Crear nueva empresa con PostgreSQL como source of truth
-    
-    Arquitectura de 3 niveles:
-    1. PostgreSQL (source of truth) - persistencia transaccional
-    2. Redis Cache (performance) - cache distribuido  
-    3. JSON Fallback (bootstrap) - solo para desarrollo/emergencia
-    
-    POST /api/admin/companies/create
-    {
-        "company_id": "spa_wellness",
-        "company_name": "Zen Spa & Wellness", 
-        "business_type": "beauty",
-        "services": "masajes, tratamientos faciales, aromaterapia",
-        "sales_agent_name": "Elena, especialista en bienestar",
-        "schedule_service_url": "http://127.0.0.1:4043",
-        "timezone": "America/Bogota",
-        "currency": "COP",
-        "treatment_durations": {
-            "masaje_relajante": 60,
-            "facial_hidratante": 90,
-            "tratamiento_corporal": 120
-        },
-        "schedule_keywords": ["agendar", "reservar", "programar"],
-        "emergency_keywords": ["reaccion_alergica", "irritacion_severa"],
-        "sales_keywords": ["precio", "promocion", "paquete"]
-    }
     """
     try:
         data = request.get_json()
@@ -1095,9 +1070,6 @@ def create_new_company_enterprise():
             from app.services.prompt_service import get_prompt_service
             prompt_service = get_prompt_service()
             
-            # ✅ NUEVO ENFOQUE: Verificar que el sistema de prompts está funcionando
-            # El sistema automáticamente usará prompts por defecto → no necesita crear custom prompts
-            
             # Verificar estado de la base de datos
             db_status = prompt_service.get_db_status()
             if not db_status.get('postgresql_available', False):
@@ -1120,93 +1092,48 @@ def create_new_company_enterprise():
                 prompt_status = "fallback_mode (using hardcoded prompts)"
                 logger.warning(f"⚠️ Prompt system in fallback mode for {company_id}")
             
-            # 🆕 OPCIONAL: Solo crear prompts custom si se proporciona configuración específica
-            custom_prompts_config = data.get('custom_prompts')  # Nuevo campo opcional
-            if custom_prompts_config and isinstance(custom_prompts_config, dict):
-                prompts_created = 0
-                for agent_name, custom_template in custom_prompts_config.items():
-                    if agent_name in test_agents and custom_template.strip():
-                        success = prompt_service.save_custom_prompt(
-                            company_id, 
-                            agent_name, 
-                            custom_template, 
-                            "admin_api_enterprise"
-                        )
-                        if success:
-                            prompts_created += 1
-                
-                if prompts_created > 0:
-                    prompt_status += f" + {prompts_created} custom prompts created"
-                    logger.info(f"Created {prompts_created} custom prompts for {company_id}")
-            
         except Exception as e:
             logger.error(f"Error verifying prompt system for {company_id}: {e}")
             prompt_status = f"error: {str(e)} (will use hardcoded fallbacks)"
 
-        # 5. AGREGAR AL COMPANY MANAGER LEGACY (PARA COMPATIBILIDAD)
+        # 5. AGREGAR AL COMPANY MANAGER LEGACY PRIMERO (PARA COMPATIBILIDAD)
+        company_manager_status = "not_added"
         try:
             company_manager = get_company_manager()
             legacy_config = enterprise_config.to_legacy_config()
+            
+            # ✅ CRÍTICO: Agregar ANTES de crear orchestrator
             company_manager.add_company_config(legacy_config)
+            company_manager_status = "added_to_legacy_manager"
+            
+            logger.info(f"✅ Company {company_id} added to legacy CompanyManager")
+            
         except Exception as e:
-            logger.warning(f"Could not update legacy company manager: {e}")
-        
-        logger.info(f"✅ Enterprise company created: {company_id} ({enterprise_config.company_name})")
-        
-        return create_success_response({
-            "message": f"Enterprise company {company_id} created successfully",
-            "company_id": company_id,
-            "company_name": enterprise_config.company_name,
-            "business_type": enterprise_config.business_type,
-            "architecture": "enterprise_postgresql",
-            "setup_status": {
-                "postgresql_config_saved": postgresql_success,
-                "vectorstore_initialized": vectorstore_status,
-                "prompts_configured": prompt_status,
-                "orchestrator_initialized": orchestrator_status,
-                "json_fallback_updated": json_fallback_status,
-                "legacy_compatibility": True
-            },
-            "configuration": {
-                "redis_prefix": enterprise_config.redis_prefix,
-                "vectorstore_index": enterprise_config.vectorstore_index,
-                "timezone": enterprise_config.timezone,
-                "language": enterprise_config.language,
-                "currency": enterprise_config.currency,
-                "subscription_tier": enterprise_config.subscription_tier,
-                "max_documents": enterprise_config.max_documents,
-                "max_conversations": enterprise_config.max_conversations
-            },
-            "endpoints_available": [
-                f"POST /documents (with X-Company-ID: {company_id})",
-                f"POST /conversations/{{user_id}}/test?company_id={company_id}",
-                f"POST /webhook/chatwoot (auto-detect company)",
-                f"GET /api/admin/companies/{company_id} (configuration)",
-                f"PUT /api/admin/companies/{company_id} (update configuration)"
-            ],
-            "next_steps": [
-                f"Upload documents: curl -X POST /documents -H 'X-Company-ID: {company_id}' -d '{{\"content\": \"...\"}}'",
-                f"Test chat: curl -X POST /conversations/test123/test?company_id={company_id} -d '{{\"message\": \"Hola\"}}'",
-                f"Update config: curl -X PUT /api/admin/companies/{company_id} -d '{{\"sales_agent_name\": \"New Name\"}}'",
-                "Configure Chatwoot webhook with company_id in conversation metadata"
-            ]
-        })
-        
-        
-        # 6. INICIALIZAR ORQUESTADOR MULTI-AGENTE
+            logger.error(f"Failed to add company to legacy manager: {e}")
+            company_manager_status = f"failed: {str(e)}"
+
+        # 6. INICIALIZAR ORQUESTADOR MULTI-AGENTE (DESPUÉS DE AGREGAR AL MANAGER)
         orchestrator_status = "not_initialized"
         try:
-            factory = get_multi_agent_factory()
-            orchestrator = factory.get_orchestrator(company_id)
-            if orchestrator:
-                orchestrator_status = "initialized"
+            if company_manager_status.startswith("added"):
+                factory = get_multi_agent_factory()
+                orchestrator = factory.get_orchestrator(company_id)
+                
+                if orchestrator:
+                    orchestrator_status = "initialized"
+                    logger.info(f"✅ Orchestrator created successfully for {company_id}")
+                else:
+                    orchestrator_status = "failed - could not create"
+                    logger.error(f"❌ Orchestrator creation failed for {company_id}")
             else:
-                orchestrator_status = "failed"
+                orchestrator_status = "skipped - company_manager failed"
+                logger.warning(f"⚠️ Skipping orchestrator creation due to company_manager failure")
+                
         except Exception as e:
-            logger.warning(f"Could not initialize orchestrator for {company_id}: {e}")
+            logger.error(f"Error initializing orchestrator for {company_id}: {e}")
             orchestrator_status = f"failed: {str(e)}"
-        
-        # 7. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD)
+
+        # 7. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD TOTAL)
         json_fallback_status = "not_updated"
         try:
             config_file = os.getenv('COMPANIES_CONFIG_FILE', 'companies_config.json')
@@ -1230,8 +1157,9 @@ def create_new_company_enterprise():
                 "model_name": enterprise_config.model_name,
                 "max_tokens": enterprise_config.max_tokens,
                 "temperature": enterprise_config.temperature,
-                "_source": "postgresql",  # Indicar que el source of truth es PostgreSQL
-                "_created_via": "enterprise_api"
+                "_source": "postgresql",
+                "_created_via": "enterprise_api",
+                "_version": enterprise_config.version
             }
             
             # Guardar archivo actualizado
@@ -1239,17 +1167,59 @@ def create_new_company_enterprise():
                 json.dump(existing_config, f, indent=2, ensure_ascii=False)
             
             json_fallback_status = "updated"
+            logger.info(f"✅ JSON config updated for {company_id}")
             
         except Exception as e:
             logger.warning(f"Could not update JSON fallback for {company_id}: {e}")
             json_fallback_status = f"failed: {str(e)}"
 
-
+        # ✅ RETURN AL FINAL CON TODAS LAS VARIABLES DEFINIDAS
+        logger.info(f"✅ Enterprise company created: {company_id} ({enterprise_config.company_name})")
+        
+        return create_success_response({
+            "message": f"Enterprise company {company_id} created successfully",
+            "company_id": company_id,
+            "company_name": enterprise_config.company_name,
+            "business_type": enterprise_config.business_type,
+            "architecture": "enterprise_postgresql",
+            "setup_status": {
+                "postgresql_config_saved": postgresql_success,
+                "vectorstore_initialized": vectorstore_status,
+                "prompts_configured": prompt_status,
+                "company_manager_added": company_manager_status,
+                "orchestrator_initialized": orchestrator_status,
+                "json_fallback_updated": json_fallback_status
+            },
+            "configuration": {
+                "redis_prefix": enterprise_config.redis_prefix,
+                "vectorstore_index": enterprise_config.vectorstore_index,
+                "timezone": enterprise_config.timezone,
+                "language": enterprise_config.language,
+                "currency": enterprise_config.currency,
+                "subscription_tier": enterprise_config.subscription_tier,
+                "max_documents": enterprise_config.max_documents,
+                "max_conversations": enterprise_config.max_conversations
+            },
+            "system_ready": orchestrator_status.startswith("initialized"),
+            "endpoints_available": [
+                f"POST /documents (with X-Company-ID: {company_id})",
+                f"POST /conversations/{{user_id}}/test?company_id={company_id}",
+                f"POST /webhook/chatwoot (auto-detect company)",
+                f"GET /api/admin/companies/{company_id} (configuration)",
+                f"PUT /api/admin/companies/{company_id} (update configuration)"
+            ],
+            "next_steps": [
+                f"Test system: curl -X POST /conversations/test123/test?company_id={company_id} -d '{{\"message\": \"Hola\"}}'",
+                f"Upload documents: curl -X POST /documents -H 'X-Company-ID: {company_id}' -d '{{\"content\": \"...\"}}'",
+                f"Update config: curl -X PUT /api/admin/companies/{company_id} -d '{{\"sales_agent_name\": \"New Name\"}}'",
+                "Configure Chatwoot webhook with company_id in conversation metadata"
+            ]
+        })
+        
     except Exception as e:
         logger.error(f"Error creating enterprise company: {e}")
         return create_error_response(f"Failed to create enterprise company: {str(e)}", 500)
         
-
 
 @bp.route('/companies/<company_id>', methods=['GET'])
 @handle_errors
