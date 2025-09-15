@@ -1136,40 +1136,14 @@ def create_new_company_enterprise():
         # 7. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD TOTAL)
         json_fallback_status = "not_updated"
         try:
-            # Obtener el path correcto del archivo de configuración
-            config_file = getattr(get_company_manager(), 'config_file', None)
-            
-            if not config_file:
-                # Fallback a las variables de entorno y paths conocidos
-                config_file = os.getenv('COMPANIES_CONFIG_FILE')
-                if not config_file:
-                    # Buscar en los paths conocidos
-                    possible_paths = [
-                        'companies_config.json',
-                        '/app/companies_config.json',
-                        os.path.join(os.getcwd(), 'companies_config.json'),
-                    ]
-                    
-                    for path in possible_paths:
-                        if os.path.exists(path):
-                            config_file = path
-                            break
-                    
-                    if not config_file:
-                        config_file = 'companies_config.json'  # Crear en directorio actual
-            
-            logger.info(f"📄 Updating JSON config file: {config_file}")
-            logger.info(f"📂 Current working directory: {os.getcwd()}")
-            logger.info(f"📁 Config file exists: {os.path.exists(config_file)}")
+            config_file = os.getenv('COMPANIES_CONFIG_FILE', 'companies_config.json')
             
             # Leer configuración existente
             if os.path.exists(config_file):
                 with open(config_file, 'r', encoding='utf-8') as f:
                     existing_config = json.load(f)
-                logger.info(f"📖 Loaded existing config with {len(existing_config)} companies")
             else:
                 existing_config = {}
-                logger.info("📄 Creating new config file")
             
             # Agregar nueva empresa (formato legacy para compatibilidad)
             existing_config[company_id] = {
@@ -1185,35 +1159,21 @@ def create_new_company_enterprise():
                 "temperature": enterprise_config.temperature,
                 "_source": "postgresql",
                 "_created_via": "enterprise_api",
-                "_version": enterprise_config.version,
-                "_updated_at": datetime.now().isoformat()
+                "_version": enterprise_config.version
             }
             
-            # Crear backup antes de escribir
-            if os.path.exists(config_file):
-                backup_file = f"{config_file}.backup.{int(time.time())}"
-                import shutil
-                shutil.copy2(config_file, backup_file)
-                logger.info(f"💾 Backup created: {backup_file}")
-            
-            # Escribir archivo temporal primero
-            temp_file = f"{config_file}.tmp"
-            with open(temp_file, 'w', encoding='utf-8') as f:
+            # Guardar archivo actualizado
+            with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_config, f, indent=2, ensure_ascii=False)
             
-            # Mover archivo temporal al final (operación atómica)
-            import shutil
-            shutil.move(temp_file, config_file)
-            
             json_fallback_status = "updated"
-            logger.info(f"✅ JSON config successfully updated: {config_file}")
-            logger.info(f"📊 Total companies in JSON: {len(existing_config)}")
+            logger.info(f"✅ JSON config updated for {company_id}")
             
         except Exception as e:
-            logger.error(f"❌ Error updating JSON config: {e}")
-            json_fallback_status = f"error: {str(e)}"
+            logger.warning(f"Could not update JSON fallback for {company_id}: {e}")
+            json_fallback_status = f"failed: {str(e)}"
 
-        # ✅ CRÍTICO: RETURN STATEMENT AL FINAL
+        # ✅ RETURN AL FINAL CON TODAS LAS VARIABLES DEFINIDAS
         logger.info(f"✅ Enterprise company created: {company_id} ({enterprise_config.company_name})")
         
         return create_success_response({
