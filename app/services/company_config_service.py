@@ -17,6 +17,7 @@ import json
 import logging
 import psycopg2
 import psycopg2.extras
+from psycopg2 import sql 
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
@@ -215,7 +216,7 @@ class EnterpriseCompanyConfigService:
         except Exception as e:
             logger.error(f"Error creating company {config.company_id}: {e}")
             return False
-    
+    ###
     def update_company(self, company_id: str, updates: Dict[str, Any], modified_by: str = "admin") -> bool:
         """Actualizar configuración de empresa"""
         if not self.db_connection_string:
@@ -231,21 +232,20 @@ class EnterpriseCompanyConfigService:
                         logger.error(f"Company {company_id} not found or inactive")
                         return False
                     
-                    # Preparar datos de actualización
+                    # Preparar datos de actualización (SIN version)
                     updates['modified_by'] = modified_by
                     updates['modified_at'] = datetime.now(timezone.utc)
-                    updates['version'] = psycopg2.sql.SQL("version + 1")
                     
                     # Construir query de actualización
                     set_clauses = []
                     values = {}
                     
                     for key, value in updates.items():
-                        if key == 'version':
-                            set_clauses.append("version = version + 1")
-                        else:
-                            set_clauses.append(f"{key} = %({key})s")
-                            values[key] = value
+                        set_clauses.append(f"{key} = %({key})s")
+                        values[key] = value
+                    
+                    # 🔧 AGREGAR version increment directamente al SQL
+                    set_clauses.append("version = version + 1")
                     
                     update_query = f"""
                         UPDATE companies 
