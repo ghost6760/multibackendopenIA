@@ -1203,8 +1203,8 @@ async function viewEnterpriseCompany(companyId) {
  */
 async function editEnterpriseCompany(companyId) {
     try {
-        // Cargar configuración actual
-        const response = await apiRequest(`/api/admin/companies/${companyId}`);
+        // 🔧 CORRECCIÓN: Usar apiRequestWithKey en lugar de apiRequest
+        const response = await apiRequestWithKey(`/api/admin/companies/${companyId}`);
         const config = response.configuration;
         
         // Crear modal de edición
@@ -1247,37 +1247,36 @@ async function editEnterpriseCompany(companyId) {
                             <div class="form-group">
                                 <label>Modelo:</label>
                                 <select id="editModelName">
-                                    <option value="gpt-4o-mini" ${config.model_name === 'gpt-4o-mini' ? 'selected' : ''}>GPT-4O Mini</option>
-                                    <option value="gpt-4o" ${config.model_name === 'gpt-4o' ? 'selected' : ''}>GPT-4O</option>
-                                    <option value="gpt-3.5-turbo" ${config.model_name === 'gpt-3.5-turbo' ? 'selected' : ''}>GPT-3.5 Turbo</option>
+                                    <option value="gpt-4o-mini" ${config.model_name === 'gpt-4o-mini' ? 'selected' : ''}>gpt-4o-mini</option>
+                                    <option value="gpt-4o" ${config.model_name === 'gpt-4o' ? 'selected' : ''}>gpt-4o</option>
                                 </select>
                             </div>
+                        </div>
+                        
+                        <div class="form-group full-width">
+                            <label>Servicios ofrecidos:</label>
+                            <textarea id="editServices" rows="3" required>${escapeHTML(config.services)}</textarea>
                         </div>
                     </div>
                     
                     <div class="form-section">
-                        <h4>📝 Servicios</h4>
+                        <h4>🔗 Integración de Agenda</h4>
                         <div class="form-group">
-                            <label>Descripción de servicios:</label>
-                            <textarea id="editServices" rows="4" required>${escapeHTML(config.services)}</textarea>
+                            <label>URL del servicio de agenda:</label>
+                            <input type="url" id="editScheduleUrl" value="${escapeHTML(config.schedule_service_url || '')}" 
+                                   placeholder="http://localhost:4040">
                         </div>
                     </div>
                     
                     <div class="form-section">
-                        <h4>⚙️ Configuración</h4>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label>URL agendamiento:</label>
-                                <input type="url" id="editScheduleUrl" value="${escapeHTML(config.schedule_service_url)}">
-                            </div>
-                            <div class="form-group">
-                                <label>Zona horaria:</label>
-                                <select id="editTimezone">
-                                    <option value="America/Bogota" ${config.timezone === 'America/Bogota' ? 'selected' : ''}>America/Bogota</option>
-                                    <option value="America/Mexico_City" ${config.timezone === 'America/Mexico_City' ? 'selected' : ''}>America/Mexico_City</option>
-                                    <option value="America/Lima" ${config.timezone === 'America/Lima' ? 'selected' : ''}>America/Lima</option>
-                                </select>
-                            </div>
+                        <h4>🌍 Configuración Regional</h4>
+                        <div class="form-group">
+                            <label>Zona horaria:</label>
+                            <select id="editTimezone">
+                                <option value="America/Bogota" ${config.timezone === 'America/Bogota' ? 'selected' : ''}>America/Bogota</option>
+                                <option value="America/Mexico_City" ${config.timezone === 'America/Mexico_City' ? 'selected' : ''}>America/Mexico_City</option>
+                                <option value="America/Lima" ${config.timezone === 'America/Lima' ? 'selected' : ''}>America/Lima</option>
+                            </select>
                         </div>
                     </div>
                 </form>
@@ -1317,7 +1316,8 @@ async function saveEnterpriseCompany(companyId) {
     try {
         toggleLoadingOverlay(true);
         
-        const response = await apiRequest(`/api/admin/companies/${companyId}`, {
+        // 🔧 CORRECCIÓN: Usar apiRequestWithKey en lugar de apiRequest
+        const response = await apiRequestWithKey(`/api/admin/companies/${companyId}`, {
             method: 'PUT',
             body: updates
         });
@@ -3789,14 +3789,17 @@ function updateApiKeyStatus() {
 /**
  * Función helper para requests que requieren API key - VERSIÓN CORREGIDA
  */
+
 async function apiRequestWithKey(endpoint, options = {}) {
-    // Verificar si el endpoint requiere API key
+    // 🔧 CORRECCIÓN: Agregar endpoints GET y PUT para empresas específicas
     const requiresApiKey = [
         '/api/admin/companies/create',
         '/api/admin/companies/',
-        '/api/admin/companies',  // ✅ AGREGAR ESTE TAMBIÉN
+        '/api/admin/companies',
         '/api/documents/cleanup'
-    ].some(path => endpoint.includes(path));
+    ].some(path => endpoint.includes(path)) || 
+    // 🔧 NUEVO: Detectar rutas específicas de empresa (GET/PUT /api/admin/companies/{id})
+    /^\/api\/admin\/companies\/[^\/]+$/.test(endpoint);
     
     if (requiresApiKey && !ADMIN_API_KEY) {
         showNotification('Se requiere API key para esta función', 'warning');
@@ -3804,29 +3807,27 @@ async function apiRequestWithKey(endpoint, options = {}) {
         throw new Error('API key requerida');
     }
     
-    // 🔧 CORRECCIÓN: Asegurar que headers siempre sea un objeto válido
+    // Asegurar que headers siempre sea un objeto válido
     const headers = { 
-        'Content-Type': 'application/json',  // ✅ Establecer explícitamente
-        ...(options.headers || {})           // ✅ Merge seguro con fallback
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
     };
     
     // Agregar API key si es necesario
     if (requiresApiKey && ADMIN_API_KEY) {
         headers['X-API-Key'] = ADMIN_API_KEY;
-        console.log('🔑 API Key added to request:', endpoint); // DEBUG
+        console.log('🔑 API Key added to request:', endpoint);
     }
     
-    // 🔧 CORRECCIÓN: Asegurar stringify del body si es objeto
+    // Asegurar stringify del body si es objeto
     let processedOptions = { ...options, headers };
     
     if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
         processedOptions.body = JSON.stringify(options.body);
-        console.log('📤 Body stringified for:', endpoint); // DEBUG
     }
     
-    console.log('🌐 API Request with Key:', endpoint, processedOptions); // DEBUG
+    console.log('🌐 API Request with Key:', endpoint, processedOptions);
     
-    // Usar apiRequest existente con opciones procesadas
     return await apiRequest(endpoint, processedOptions);
 }
 
