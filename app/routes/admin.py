@@ -1136,12 +1136,8 @@ def create_new_company_enterprise():
         # 7. ACTUALIZAR JSON CONFIG (PARA COMPATIBILIDAD TOTAL)
         json_fallback_status = "not_updated"
         try:
-            # ✅ CORREGIDO: Obtener el path correcto del archivo de configuración
-            from app.config.company_config import get_company_manager
-            company_manager = get_company_manager()
-            
-            # Usar el mismo archivo que usa el CompanyManager
-            config_file = getattr(company_manager, 'config_file', None)
+            # Obtener el path correcto del archivo de configuración
+            config_file = getattr(get_company_manager(), 'config_file', None)
             
             if not config_file:
                 # Fallback a las variables de entorno y paths conocidos
@@ -1152,7 +1148,6 @@ def create_new_company_enterprise():
                         'companies_config.json',
                         '/app/companies_config.json',
                         os.path.join(os.getcwd(), 'companies_config.json'),
-                        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'companies_config.json')
                     ]
                     
                     for path in possible_paths:
@@ -1176,10 +1171,6 @@ def create_new_company_enterprise():
                 existing_config = {}
                 logger.info("📄 Creating new config file")
             
-            # Verificar si la empresa ya existe en el JSON
-            if company_id in existing_config:
-                logger.info(f"⚠️ Company {company_id} already exists in JSON, updating...")
-            
             # Agregar nueva empresa (formato legacy para compatibilidad)
             existing_config[company_id] = {
                 "company_name": enterprise_config.company_name,
@@ -1198,58 +1189,72 @@ def create_new_company_enterprise():
                 "_updated_at": datetime.now().isoformat()
             }
             
-            # ✅ CRÍTICO: Crear backup antes de escribir
+            # Crear backup antes de escribir
             if os.path.exists(config_file):
                 backup_file = f"{config_file}.backup.{int(time.time())}"
                 import shutil
                 shutil.copy2(config_file, backup_file)
                 logger.info(f"💾 Backup created: {backup_file}")
             
-            # ✅ ESCRITURA CON MANEJO DE ERRORES DETALLADO
-            try:
-                # Verificar permisos de escritura del directorio
-                config_dir = os.path.dirname(config_file) or '.'
-                if not os.access(config_dir, os.W_OK):
-                    raise PermissionError(f"No write permission for directory: {config_dir}")
-                
-                # Escribir archivo temporal primero
-                temp_file = f"{config_file}.tmp"
-                with open(temp_file, 'w', encoding='utf-8') as f:
-                    json.dump(existing_config, f, indent=2, ensure_ascii=False)
-                
-                # Mover archivo temporal al final (operación atómica)
-                import shutil
-                shutil.move(temp_file, config_file)
-                
-                # Verificar que se escribió correctamente
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    verify_config = json.load(f)
-                    if company_id not in verify_config:
-                        raise Exception(f"Company {company_id} not found in written file")
-                
-                json_fallback_status = "updated"
-                logger.info(f"✅ JSON config successfully updated: {config_file}")
-                logger.info(f"📊 Total companies in JSON: {len(existing_config)}")
-                
-            except PermissionError as e:
-                json_fallback_status = f"permission_error: {str(e)}"
-                logger.error(f"❌ Permission error writing JSON config: {e}")
-                
-            except Exception as e:
-                json_fallback_status = f"write_error: {str(e)}"
-                logger.error(f"❌ Error writing JSON config: {e}")
-                
-                # Limpiar archivo temporal si existe
-                temp_file = f"{config_file}.tmp"
-                if os.path.exists(temp_file):
-                    try:
-                        os.remove(temp_file)
-                    except:
-                        pass
-                
+            # Escribir archivo temporal primero
+            temp_file = f"{config_file}.tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_config, f, indent=2, ensure_ascii=False)
+            
+            # Mover archivo temporal al final (operación atómica)
+            import shutil
+            shutil.move(temp_file, config_file)
+            
+            json_fallback_status = "updated"
+            logger.info(f"✅ JSON config successfully updated: {config_file}")
+            logger.info(f"📊 Total companies in JSON: {len(existing_config)}")
+            
         except Exception as e:
-            logger.error(f"❌ Unexpected error in JSON config update: {e}")
-            json_fallback_status = f"unexpected_error: {str(e)}"
+            logger.error(f"❌ Error updating JSON config: {e}")
+            json_fallback_status = f"error: {str(e)}"
+
+        # ✅ CRÍTICO: RETURN STATEMENT AL FINAL
+        logger.info(f"✅ Enterprise company created: {company_id} ({enterprise_config.company_name})")
+        
+        return create_success_response({
+            "message": f"Enterprise company {company_id} created successfully",
+            "company_id": company_id,
+            "company_name": enterprise_config.company_name,
+            "business_type": enterprise_config.business_type,
+            "architecture": "enterprise_postgresql",
+            "setup_status": {
+                "postgresql_config_saved": postgresql_success,
+                "vectorstore_initialized": vectorstore_status,
+                "prompts_configured": prompt_status,
+                "company_manager_added": company_manager_status,
+                "orchestrator_initialized": orchestrator_status,
+                "json_fallback_updated": json_fallback_status
+            },
+            "configuration": {
+                "redis_prefix": enterprise_config.redis_prefix,
+                "vectorstore_index": enterprise_config.vectorstore_index,
+                "timezone": enterprise_config.timezone,
+                "language": enterprise_config.language,
+                "currency": enterprise_config.currency,
+                "subscription_tier": enterprise_config.subscription_tier,
+                "max_documents": enterprise_config.max_documents,
+                "max_conversations": enterprise_config.max_conversations
+            },
+            "system_ready": orchestrator_status.startswith("initialized"),
+            "endpoints_available": [
+                f"POST /documents (with X-Company-ID: {company_id})",
+                f"POST /conversations/{{user_id}}/test?company_id={company_id}",
+                f"POST /webhook/chatwoot (auto-detect company)",
+                f"GET /api/admin/companies/{company_id} (configuration)",
+                f"PUT /api/admin/companies/{company_id} (update configuration)"
+            ],
+            "next_steps": [
+                f"Test system: curl -X POST /conversations/test123/test?company_id={company_id} -d '{{\"message\": \"Hola\"}}'",
+                f"Upload documents: curl -X POST /documents -H 'X-Company-ID: {company_id}' -d '{{\"content\": \"...\"}}'",
+                f"Update config: curl -X PUT /api/admin/companies/{company_id} -d '{{\"sales_agent_name\": \"New Name\"}}'",
+                "Configure Chatwoot webhook with company_id in conversation metadata"
+            ]
+        })
         
     except Exception as e:
         logger.error(f"Error creating enterprise company: {e}")
