@@ -573,3 +573,41 @@ def extract_company_id_from_webhook(data: Dict[str, Any]) -> str:
     except Exception as e:
         logger.error(f"Error extracting company_id from webhook: {e}")
         return os.getenv('DEFAULT_COMPANY_ID', 'benova')
+
+
+def validate_company_context(company_id: str) -> bool:
+    """Validar contexto de empresa antes de procesar - MANTIENE INTERFAZ ORIGINAL"""
+    try:
+        manager = get_company_manager()
+        
+        if not manager.validate_company_id(company_id):
+            logger.error(f"Invalid company_id: {company_id}")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating company context for {company_id}: {e}")
+        return False
+
+def create_calendar_integration_service(company_id: str):
+    """Crear servicio de integración de calendario - MANTIENE INTERFAZ ORIGINAL"""
+    try:
+        # Importar dinámicamente para evitar dependencias circulares
+        from app.services.calendar_integration_service import create_calendar_service
+        
+        manager = get_company_manager()
+        extended_config = manager.get_extended_config(company_id)
+        
+        if extended_config:
+            return create_calendar_service(extended_config)
+        else:
+            logger.warning(f"No extended config found for {company_id}, calendar integration not available")
+            return None
+            
+    except ImportError:
+        logger.warning("Calendar integration service not available")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating calendar service for {company_id}: {e}")
+        return None
