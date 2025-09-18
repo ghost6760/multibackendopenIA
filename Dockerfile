@@ -1,6 +1,33 @@
-# Dockerfile simplificado - Solo Backend Flask
-# Optimizado para Railway deployment sin frontend React
-# CON MIGRACIÓN AUTOMÁTICA DE PROMPTS
+# Dockerfile - Backend Flask + Frontend Vue.js 3
+# Optimizado para Railway deployment con Vue.js
+# Multi-stage build: Node.js para frontend + Python para backend
+# ============================================================================
+
+# ============================================================================
+# STAGE 1: Build Frontend Vue.js
+# ============================================================================
+FROM node:18-alpine as frontend-builder
+
+# Directorio de trabajo para el frontend
+WORKDIR /frontend
+
+# Copiar package files del frontend
+COPY src/package*.json ./
+
+# Instalar dependencias de Node.js
+RUN npm ci --only=production
+
+# Copiar el código fuente del frontend
+COPY src/ ./
+
+# Build del frontend Vue.js para producción
+RUN npm run build
+
+# Verificar que el build se completó correctamente
+RUN ls -la dist/ && test -f dist/index.html
+
+# ============================================================================
+# STAGE 2: Build Backend Python + Frontend estático
 # ============================================================================
 FROM python:3.11-slim
 
@@ -29,23 +56,19 @@ COPY app/ ./app/
 COPY wsgi.py run.py ./
 COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 
-# 🆕 NUEVO: Copiar script de migración
+# Copiar scripts de migración
 COPY migrate_prompts_to_postgresql.py postgresql_schema.sql ./
+COPY migrate_companies_to_postgresql.py ./
 
-# 🆕 NUEVO: Copiar script de migración de empresas (añadir esta línea)
-COPY migrate_companies_to_postgresql.py postgresql_schema.sql ./
+# 🆕 NUEVO: Copiar archivos estáticos del frontend Vue.js desde el build
+COPY --from=frontend-builder /frontend/dist ./static
 
-# Crear directorio static y copiar archivos estáticos desde la raíz del proyecto
-RUN mkdir -p ./static
-COPY index.html ./static/
-COPY script.js ./static/
-COPY style.css ./static/
+# Verificar que los archivos del frontend se copiaron correctamente
+RUN ls -la static/ && \
+    test -f static/index.html && \
+    echo "✅ Frontend Vue.js build copiado correctamente"
 
-# Verificar que los archivos estáticos se copiaron
-RUN ls -la static/ && test -f static/index.html
-
-# 🆕 NUEVO: Ejecutar migración de prompts durante el build (solo si hay DATABASE_URL)
-# Esto se ejecutará cada vez que se construya la imagen
+# Ejecutar migración de prompts durante el build (solo si hay DATABASE_URL)
 RUN if [ ! -z "$DATABASE_URL" ]; then \
         echo "🔄 Ejecutando migración automática de prompts durante build..."; \
         python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló, continuando..." && \
@@ -67,40 +90,31 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# 🆕 NUEVO: Script de inicio que ejecuta migración antes de iniciar gunicorn
-# Crear script de startup
+# Script de inicio que ejecuta migración antes de iniciar gunicorn
 USER root
 RUN echo '#!/bin/bash\n\
-echo "🚀 Iniciando aplicación multi-tenant..."\n\
+echo "🚀 Iniciando aplicación multi-tenant con Frontend Vue.js..."\n\
 \n\
 # Ejecutar migración de prompts si DATABASE_URL está disponible\n\
 if [ ! -z "$DATABASE_URL" ]; then\n\
-    echo "🔄 Ejecutando migración de prompts..."\n\
-    python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló, continuando..." && \\\n\
-    echo "🔄 Ejecutando migración de configuración de empresas..."\n\
-    python migrate_companies_to_postgresql.py --auto || echo "⚠️ Migración de empresas falló, continuando..."\n\
+    echo "🔄 Ejecutando migración automática de prompts..."\n\
+    python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló"\n\
+    \n\
+    echo "🔄 Ejecutando migración automática de configuración de empresas..."\n\
+    python migrate_companies_to_postgresql.py --auto || echo "⚠️ Migración de empresas falló"\n\
 else\n\
     echo "⚠️ DATABASE_URL no disponible, saltando migraciones"\n\
 fi\n\
 \n\
-echo "✅ Iniciando servidor gunicorn..."\n\
-exec gunicorn \\\n\
-     --bind 0.0.0.0:8080 \\\n\
-     --workers 2 \\\n\
-     --threads 4 \\\n\
-     --timeout 120 \\\n\
-     --keep-alive 2 \\\n\
-     --max-requests 1000 \\\n\
-     --max-requests-jitter 100 \\\n\
-     --preload \\\n\
-     --log-level info \\\n\
-     --access-logfile - \\\n\
-     --error-logfile - \\\n\
-     "wsgi:app"' > /app/startup.sh && \
-    chmod +x /app/startup.sh && \
-    chown appuser:appuser /app/startup.sh
+echo "🎯 Frontend Vue.js disponible en: /"\n\
+echo "🔧 APIs disponibles en: /api/*"\n\
+echo "📊 Health check en: /api/health"\n\
+echo "🚀 Iniciando servidor Gunicorn..."\n\
+\n\
+exec gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100 wsgi:app\n\
+' > /app/start.sh && chmod +x /app/start.sh
 
 USER appuser
 
-# Usar script de startup en lugar de comando directo
-CMD ["/app/startup.sh"]
+# Comando de inicio
+CMD ["/app/start.sh"]
