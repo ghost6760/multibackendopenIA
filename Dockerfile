@@ -1,7 +1,6 @@
-# --- STAGE 1: Frontend build (Node) - OPCIÓN B (root=src, outDir=../dist) ---
+# --- STAGE 1: Frontend build (Node) - versión robusta usando npm --prefix en src ---
 FROM node:18-bullseye AS frontend-builder
 
-# No establecer NODE_ENV=production (necesitamos devDependencies para el build)
 WORKDIR /frontend
 
 # Herramientas útiles (git en caso de dependencias desde git)
@@ -9,48 +8,40 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# npm config
-RUN npm config set audit false && \
-    npm config set fund false && \
-    npm config set loglevel warn
+RUN npm config set audit false && npm config set fund false && npm config set loglevel warn
 
-# Copiar package.json / package-lock.json para cache de instalación
-COPY src/package*.json ./
-
-# Instalar dependencias (usar package-lock si existe)
-RUN if [ -f package-lock.json ]; then \
-      echo "✅ package-lock.json encontrado -> npm ci"; \
-      npm ci; \
-    else \
-      echo "⚠ package-lock.json no encontrado -> npm install --package-lock-only && npm ci"; \
-      npm install --package-lock-only && npm ci; \
-    fi
-
-# Copiar todo el frontend dentro de /frontend/src
+# Copiar TODO el frontend dentro de /frontend/src
 COPY src/ ./src/
 
-# Debug: archivos importantes dentro de src antes del build
-RUN echo "🔎 Listando /frontend y /frontend/src (archivos clave):" && \
-    ls -la /frontend || true && \
-    echo "--- /frontend/src ---" && ls -la /frontend/src || true && \
-    echo "--- primeras líneas de src/index.html (si existe) ---" && \
-    (test -f src/index.html && head -n 40 src/index.html) || true && \
-    echo "--- primeras líneas de src/main.js (si existe) ---" && \
-    (test -f src/main.js && head -n 40 src/main.js) || true && \
-    echo "--- primeras líneas de src/vite.config.js (si existe) ---" && \
-    (test -f src/vite.config.js && head -n 40 src/vite.config.js) || true
+# Instalar dependencias dentro de src (usa package-lock si existe)
+RUN if [ -f src/package-lock.json ]; then \
+      echo "✅ package-lock.json en src -> npm ci (en src)"; \
+      npm --prefix ./src ci; \
+    else \
+      echo "⚠ package-lock.json no encontrado en src -> npm install --prefix ./src --package-lock-only && npm ci"; \
+      npm --prefix ./src install --package-lock-only && npm --prefix ./src ci; \
+    fi
 
-# Ejecutar build indicando root=src y outDir ../dist (esto genera /frontend/dist)
-RUN echo "🏗️ Ejecutando npm run build -- --root src --outDir ../dist" && \
-    npm run build -- --root src --outDir ../dist 2>&1 | tee build.log
+# Debug: listar archivos clave dentro de src
+RUN echo "🔎 /frontend/src listado (primeros archivos):" && ls -la /frontend/src | sed -n '1,200p' || true
 
-# Verificación del resultado de build (dist debe estar en /frontend/dist)
+# Ejecutar build desde src (la salida queda en src/dist)
+RUN echo "🏗️ Ejecutando build en /frontend/src (npm --prefix ./src run build)" && \
+    npm --prefix ./src run build 2>&1 | tee /frontend/build.log || (echo "⚠️ npm build returned non-zero, revisar /frontend/build.log" && cat /frontend/build.log && exit 1)
+
+# Mover el dist generado a /frontend/dist (para que la siguiente etapa lo copie fácilmente)
+RUN if [ -d src/dist ]; then \
+      mv src/dist ./dist && echo "✅ dist movido a /frontend/dist"; \
+    else \
+      echo "❌ ERROR: src/dist no existe, mostrando /frontend/build.log" && cat /frontend/build.log && exit 1; \
+    fi
+
+# Verificación final
 RUN echo "📦 Verificando /frontend/dist ..." && \
-    ls -la /frontend/dist || (echo "ERROR: /frontend/dist no existe" && cat build.log && exit 1) && \
-    test -f /frontend/dist/index.html || (echo "ERROR: /frontend/dist/index.html no encontrado" && cat build.log && exit 1) && \
-    echo "✅ /frontend/dist/index.html existe. Listado de archivos dist/:" && \
-    find /frontend/dist -maxdepth 2 -type f -print | sed -n '1,200p' && \
-    du -sh /frontend/dist
+    ls -la /frontend/dist || (echo "ERROR: /frontend/dist no existe" && cat /frontend/build.log && exit 1) && \
+    test -f /frontend/dist/index.html || (echo "ERROR: /frontend/dist/index.html no encontrado" && cat /frontend/build.log && exit 1) && \
+    echo "✅ /frontend/dist/index.html existe. Listado (limitado):" && \
+    find /frontend/dist -maxdepth 2 -type f -print | sed -n '1,200p' && du -sh /frontend/dist
 
 # --- STAGE 2: Backend Python + static files ---
 FROM python:3.11-slim
