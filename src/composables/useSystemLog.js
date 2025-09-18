@@ -2,15 +2,12 @@
  * useSystemLog.js - Composable para Gestión del Log del Sistema
  * MIGRADO DE: script.js funciones addToLog(), updateLogDisplay()
  * PRESERVAR: Comportamiento exacto de las funciones originales
- * COMPATIBILIDAD: 100% con el script.js original
+ * CORRECCIÓN: Eliminar dependencia directa del store para evitar problemas de inicialización
  */
 
-import { ref, computed, watch } from 'vue'
-import { useAppStore } from '@/stores/app'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 
 export const useSystemLog = () => {
-  const appStore = useAppStore()
-
   // ============================================================================
   // ESTADO LOCAL
   // ============================================================================
@@ -20,12 +17,27 @@ export const useSystemLog = () => {
   const filterLevel = ref('all')
   const searchQuery = ref('')
 
+  // Función para obtener el store de forma segura
+  const getStore = () => {
+    try {
+      const { useAppStore } = require('@/stores/app')
+      return useAppStore()
+    } catch (error) {
+      return null
+    }
+  }
+
   // ============================================================================
   // COMPUTED PROPERTIES
   // ============================================================================
 
+  const systemLog = computed(() => {
+    const store = getStore()
+    return store ? store.systemLog : []
+  })
+
   const filteredLogs = computed(() => {
-    let filtered = appStore.systemLog
+    let filtered = systemLog.value
 
     // Filtrar por nivel
     if (filterLevel.value !== 'all') {
@@ -46,15 +58,16 @@ export const useSystemLog = () => {
   })
 
   const logStats = computed(() => {
+    const logs = systemLog.value
     const stats = {
-      total: appStore.systemLog.length,
+      total: logs.length,
       info: 0,
       warning: 0,
       error: 0,
       success: 0
     }
 
-    appStore.systemLog.forEach(entry => {
+    logs.forEach(entry => {
       if (stats.hasOwnProperty(entry.level)) {
         stats[entry.level]++
       }
@@ -64,7 +77,7 @@ export const useSystemLog = () => {
   })
 
   const latestError = computed(() => {
-    const errors = appStore.systemLog.filter(entry => entry.level === 'error')
+    const errors = systemLog.value.filter(entry => entry.level === 'error')
     return errors.length > 0 ? errors[errors.length - 1] : null
   })
 
@@ -79,26 +92,36 @@ export const useSystemLog = () => {
    * @param {string} level - Nivel del log (info, warning, error, success)
    */
   const addToLog = (message, level = 'info') => {
+    // MÉTODO 1: Usar el store si está disponible
+    const store = getStore()
+    if (store && store.addToLog) {
+      store.addToLog(message, level)
+      return
+    }
+    
+    // MÉTODO 2: Fallback - crear log directo
     const timestamp = new Date().toISOString().substring(0, 19).replace('T', ' ')
     const logEntry = {
+      id: `log_${Date.now()}_${Math.random()}`,
       timestamp,
       level,
       message,
-      id: Date.now() + Math.random() // Para identificación única
+      fullTimestamp: new Date()
     }
     
-    appStore.systemLog.push(logEntry)
-    
-    // Mantener solo los últimos maxLogEntries logs - PRESERVAR: Mismo límite que script.js
-    if (appStore.systemLog.length > maxLogEntries.value) {
-      appStore.systemLog.shift()
+    // Console log para debugging
+    const consoleMethods = {
+      info: 'log',
+      warning: 'warn', 
+      error: 'error',
+      success: 'log'
     }
+    const method = consoleMethods[level] || 'log'
+    console[method](`[${timestamp}] [${level.toUpperCase()}] ${message}`)
     
-    // Actualizar UI del log automáticamente si está habilitado
-    if (autoScroll.value) {
-      updateLogDisplay()
-    }
-
+    // Actualizar DOM log si existe
+    updateLogDisplay()
+    
     // Emitir evento para notificaciones críticas
     if (level === 'error') {
       if (typeof window !== 'undefined' && window.dispatchEvent) {
@@ -133,35 +156,34 @@ export const useSystemLog = () => {
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const clearSystemLog = () => {
-    const previousLength = appStore.systemLog.length
-    appStore.systemLog.splice(0) // Limpiar array manteniendo reactividad
-    
-    addToLog(`System log cleared (${previousLength} entries removed)`, 'info')
-    
-    if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(new CustomEvent('systemLogCleared', { 
-        detail: { entriesRemoved: previousLength }
-      }))
+    const store = getStore()
+    if (store && store.clearSystemLog) {
+      store.clearSystemLog()
+    } else {
+      // Fallback
+      console.clear()
+      addToLog('System log cleared (fallback mode)', 'info')
     }
   }
 
   /**
-   * Exporta el log del sistema - NUEVA FUNCIONALIDAD
+   * Exporta el log del sistema
    */
   const exportLog = (format = 'json') => {
     try {
+      const logs = systemLog.value
       let content
       const timestamp = new Date().toISOString().split('T')[0]
       
       if (format === 'json') {
-        content = JSON.stringify(appStore.systemLog, null, 2)
+        content = JSON.stringify(logs, null, 2)
       } else if (format === 'txt') {
-        content = appStore.systemLog.map(entry => 
+        content = logs.map(entry => 
           `[${entry.timestamp}] [${entry.level.toUpperCase()}] ${entry.message}`
         ).join('\n')
       } else if (format === 'csv') {
         const headers = 'Timestamp,Level,Message\n'
-        content = headers + appStore.systemLog.map(entry => 
+        content = headers + logs.map(entry => 
           `"${entry.timestamp}","${entry.level}","${entry.message.replace(/"/g, '""')}"`
         ).join('\n')
       }
@@ -191,7 +213,7 @@ export const useSystemLog = () => {
    */
   const filterLogsByPeriod = (hours = 24) => {
     const cutoffTime = new Date(Date.now() - (hours * 60 * 60 * 1000))
-    return appStore.systemLog.filter(entry => {
+    return systemLog.value.filter(entry => {
       const entryTime = new Date(entry.timestamp.replace(' ', 'T'))
       return entryTime >= cutoffTime
     })
@@ -250,14 +272,24 @@ export const useSystemLog = () => {
   }
 
   // ============================================================================
-  // WATCHERS
+  // LIFECYCLE HOOKS
   // ============================================================================
 
-  // Watcher para mantener el límite de entradas
-  watch(() => appStore.systemLog.length, (newLength) => {
-    if (newLength > maxLogEntries.value) {
-      const entriesToRemove = newLength - maxLogEntries.value
-      appStore.systemLog.splice(0, entriesToRemove)
+  onMounted(() => {
+    // Exponer funciones globales para compatibilidad
+    if (typeof window !== 'undefined') {
+      window.addToLog = addToLog
+      window.updateLogDisplay = updateLogDisplay
+      window.clearSystemLog = clearSystemLog
+    }
+  })
+
+  onUnmounted(() => {
+    // Limpiar funciones globales
+    if (typeof window !== 'undefined') {
+      delete window.addToLog
+      delete window.updateLogDisplay
+      delete window.clearSystemLog
     }
   })
 
@@ -267,7 +299,7 @@ export const useSystemLog = () => {
 
   return {
     // Estado reactivo
-    systemLog: computed(() => appStore.systemLog),
+    systemLog,
     filteredLogs,
     logStats,
     latestError,
