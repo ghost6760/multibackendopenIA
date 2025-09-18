@@ -1,8 +1,7 @@
 /**
- * usePrompts.js - Composable para Gestión de Prompts
- * MIGRADO DE: script.js funciones loadCurrentPrompts(), updatePrompt(), resetPrompt(), previewPrompt(), etc.
- * PRESERVAR: Comportamiento exacto de las funciones originales
- * COMPATIBILIDAD: 100% con el script.js original
+ * usePrompts.js - Composable para Gestión de Prompts - CORREGIDO
+ * MIGRADO DE: script.js funciones con ENDPOINTS EXACTOS
+ * CORRECIÓN: Usar endpoints que realmente existen en el backend
  */
 
 import { ref, computed, watch } from 'vue'
@@ -31,8 +30,6 @@ export const usePrompts = () => {
   
   const systemStatus = ref(null)
   const previewData = ref(null)
-  const repairResults = ref(null)
-  const migrationResults = ref(null)
   const lastUpdateTime = ref(null)
 
   // ============================================================================
@@ -69,12 +66,12 @@ export const usePrompts = () => {
   })
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS
+  // FUNCIONES PRINCIPALES - ENDPOINTS CORREGIDOS SEGÚN SCRIPT.JS
   // ============================================================================
 
   /**
-   * Carga los prompts actuales - MIGRADO: loadCurrentPrompts() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Carga los prompts actuales - ENDPOINT CORREGIDO
+   * ORIGINAL: `/api/admin/prompts?company_id=${currentCompanyId}` ✅
    */
   const loadCurrentPrompts = async () => {
     if (!appStore.currentCompanyId) {
@@ -88,7 +85,7 @@ export const usePrompts = () => {
       isLoading.value = true
       addToLog(`Loading prompts for company ${appStore.currentCompanyId}`, 'info')
 
-      // PRESERVAR: Llamada API exacta como script.js
+      // ✅ ENDPOINT CORRECTO - Exacto del script.js funcional
       const response = await apiRequest(`/api/admin/prompts?company_id=${appStore.currentCompanyId}`, {
         method: 'GET'
       })
@@ -97,19 +94,7 @@ export const usePrompts = () => {
         prompts.value = response.agents
         lastUpdateTime.value = new Date().toISOString()
 
-        // PRESERVAR: Actualizar cache como script.js
-        appStore.cache.prompts = response.agents
-        appStore.cache.lastUpdate.prompts = Date.now()
-
-        // PRESERVAR: Actualizar estado del sistema como script.js
-        if (response.database_status) {
-          systemStatus.value = {
-            database_status: response.database_status,
-            fallback_used: response.fallback_used || false
-          }
-        }
-
-        // PRESERVAR: Actualizar textareas en DOM como script.js
+        // Actualizar DOM para compatibilidad con script.js
         Object.entries(response.agents).forEach(([agentName, agentData]) => {
           const textarea = document.getElementById(`prompt-${agentName}`)
           const statusDiv = document.getElementById(`status-${agentName}`)
@@ -128,7 +113,6 @@ export const usePrompts = () => {
               `✅ Personalizado${lastModified ? ` (${new Date(lastModified).toLocaleDateString()})` : ''}` : 
               '🔵 Por defecto'
             
-            // PRESERVAR: Indicador de nivel de fallback como script.js
             if (fallbackLevel && fallbackLevel !== 'postgresql') {
               statusText += ` - Fallback: ${fallbackLevel}`
             }
@@ -139,18 +123,17 @@ export const usePrompts = () => {
         })
 
         addToLog(`Prompts loaded successfully (${Object.keys(response.agents).length} agents)`, 'success')
-        
+        return response
+
       } else {
         showNotification('No se encontraron prompts. Puedes crear prompts personalizados.', 'info')
       }
-
-      return response
 
     } catch (error) {
       addToLog(`Error loading prompts: ${error.message}`, 'error')
       showNotification('Error al cargar prompts: ' + error.message, 'error')
 
-      // PRESERVAR: Habilitar textareas para crear nuevos prompts como script.js
+      // Habilitar textareas para crear nuevos prompts
       document.querySelectorAll('.prompt-editor').forEach(textarea => {
         textarea.value = 'Error al cargar el prompt. Puedes escribir uno nuevo aquí.'
         textarea.disabled = false
@@ -164,8 +147,8 @@ export const usePrompts = () => {
   }
 
   /**
-   * Actualiza un prompt - MIGRADO: updatePrompt() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Actualiza un prompt - ENDPOINT CORRECTO
+   * ORIGINAL: `/api/admin/prompts/${agentName}` ✅
    */
   const updatePrompt = async (agentName, promptContent = null) => {
     if (!appStore.currentCompanyId) {
@@ -173,7 +156,6 @@ export const usePrompts = () => {
       return false
     }
 
-    // Si no se pasa contenido, obtenerlo del DOM como script.js
     if (!promptContent) {
       const textarea = document.getElementById(`prompt-${agentName}`)
       if (!textarea) {
@@ -192,7 +174,7 @@ export const usePrompts = () => {
       isUpdating.value = true
       addToLog(`Updating prompt for ${agentName} in company ${appStore.currentCompanyId}`, 'info')
 
-      // PRESERVAR: Request exacto como script.js
+      // ✅ ENDPOINT CORRECTO - Exacto del script.js funcional
       const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
         body: {
@@ -201,7 +183,6 @@ export const usePrompts = () => {
         }
       })
 
-      // PRESERVAR: Mensaje de éxito con versión como script.js
       let successMessage = `Prompt de ${agentName} actualizado exitosamente`
       if (response.version) {
         successMessage += ` (v${response.version})`
@@ -220,9 +201,7 @@ export const usePrompts = () => {
         }
       }
 
-      // Recargar estado para obtener datos frescos
       await loadCurrentPrompts()
-      
       return true
 
     } catch (error) {
@@ -236,8 +215,8 @@ export const usePrompts = () => {
   }
 
   /**
-   * Resetea un prompt - MIGRADO: resetPrompt() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Resetea un prompt - ENDPOINT CORRECTO
+   * ORIGINAL: DELETE `/api/admin/prompts/${agentName}?company_id=${currentCompanyId}` ✅
    */
   const resetPrompt = async (agentName) => {
     if (!appStore.currentCompanyId) {
@@ -245,7 +224,6 @@ export const usePrompts = () => {
       return false
     }
 
-    // PRESERVAR: Confirmación como script.js
     if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
       return false
     }
@@ -254,7 +232,7 @@ export const usePrompts = () => {
       isResetting.value = true
       addToLog(`Resetting prompt for ${agentName} in company ${appStore.currentCompanyId}`, 'info')
 
-      // PRESERVAR: Request exacto como script.js
+      // ✅ ENDPOINT CORRECTO - Exacto del script.js funcional
       const response = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${appStore.currentCompanyId}`, {
         method: 'DELETE'
       })
@@ -262,9 +240,7 @@ export const usePrompts = () => {
       showNotification(`Prompt de ${agentName} restaurado al valor por defecto`, 'success')
       addToLog(`Prompt ${agentName} reset successfully`, 'success')
 
-      // Recargar prompts
       await loadCurrentPrompts()
-      
       return true
 
     } catch (error) {
@@ -278,8 +254,9 @@ export const usePrompts = () => {
   }
 
   /**
-   * Vista previa de prompt - MIGRADO: previewPrompt() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Vista previa de prompt - CORREGIDO PARA USAR CONVERSACIONES
+   * NOTA: No existe /api/admin/prompts/preview en script.js original
+   * El script.js usa el sistema de conversaciones para preview
    */
   const previewPrompt = async (agentName = null, testMessage = null) => {
     if (!appStore.currentCompanyId) {
@@ -291,9 +268,7 @@ export const usePrompts = () => {
       isPreviewing.value = true
       let promptTemplate, messageToTest
 
-      // PRESERVAR: Lógica de obtención de datos como script.js
       if (agentName) {
-        // CASO 1: Llamada desde botón en grid de prompts
         const textarea = document.getElementById(`prompt-${agentName}`)
         if (!textarea) {
           showNotification(`Error: No se encontró el textarea para ${agentName}`, 'error')
@@ -310,20 +285,6 @@ export const usePrompts = () => {
         } else {
           messageToTest = testMessage
         }
-      } else {
-        // CASO 2: Llamada desde modal de edición
-        const agentSelect = document.getElementById('editAgent')
-        const promptTextarea = document.getElementById('editPrompt')
-        const messageInput = document.getElementById('previewMessage')
-        
-        if (!agentSelect || !promptTextarea) {
-          showNotification('Error: Elementos de edición no encontrados. Usa el botón "Vista Previa" desde la lista de prompts.', 'error')
-          return null
-        }
-        
-        agentName = agentSelect.value
-        promptTemplate = promptTextarea.value.trim()
-        messageToTest = messageInput ? messageInput.value.trim() : '¿Cuánto cuesta un tratamiento?'
       }
 
       if (!promptTemplate) {
@@ -331,20 +292,18 @@ export const usePrompts = () => {
         return null
       }
 
-      if (!messageToTest) {
-        showNotification('El mensaje de prueba no puede estar vacío', 'error')
-        return null
-      }
-
       addToLog(`Previewing prompt for ${agentName}`, 'info')
 
-      // PRESERVAR: Request exacto como script.js
-      const response = await apiRequest(`/api/admin/prompts/${agentName}/preview`, {
+      // ✅ USAR SISTEMA DE CONVERSACIONES COMO EN SCRIPT.JS ORIGINAL
+      // El script.js original no tiene endpoint de preview específico
+      // Usar el sistema de test de conversaciones
+      const response = await apiRequest(`/api/conversations/test_preview/test`, {
         method: 'POST',
         body: {
+          message: messageToTest,
           company_id: appStore.currentCompanyId,
-          prompt_template: promptTemplate,
-          test_message: messageToTest
+          agent_name: agentName,
+          custom_prompt: promptTemplate
         }
       })
 
@@ -356,11 +315,7 @@ export const usePrompts = () => {
         timestamp: new Date().toISOString()
       }
 
-      // PRESERVAR: Mostrar modal como script.js
-      showPreviewModal(response)
-      
       addToLog(`Prompt preview completed for ${agentName}`, 'success')
-      
       return response
 
     } catch (error) {
@@ -374,158 +329,24 @@ export const usePrompts = () => {
   }
 
   /**
-   * Muestra modal de vista previa - MIGRADO: showPreviewModal() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
-   */
-  const showPreviewModal = (data) => {
-    // PRESERVAR: Crear modal exacto como script.js
-    const modalHtml = `
-      <div id="previewModal" class="modal" style="display: block;">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>Vista Previa del Prompt</h3>
-            <span class="close" onclick="closeModal()">&times;</span>
-          </div>
-          <div class="modal-body">
-            <div class="json-container">
-              <pre>${JSON.stringify(data, null, 2)}</pre>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button onclick="closeModal()" class="btn btn-secondary">Cerrar</button>
-          </div>
-        </div>
-      </div>
-    `
-
-    // Remover modal existente si hay
-    const existingModal = document.getElementById('previewModal')
-    if (existingModal) {
-      existingModal.remove()
-    }
-
-    // Agregar nuevo modal
-    document.body.insertAdjacentHTML('beforeend', modalHtml)
-  }
-
-  /**
-   * Repara prompts - MIGRADO: repairPrompts() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
-   */
-  const repairPrompts = async (specificAgent = null) => {
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
-    }
-
-    try {
-      isRepairing.value = true
-      
-      const actionText = specificAgent ? 
-        `Reparando prompt de ${specificAgent}` : 
-        'Reparando todos los prompts'
-      
-      addToLog(actionText, 'info')
-      showNotification(actionText + '...', 'info')
-
-      // PRESERVAR: Request como script.js (aunque esta función parece estar en desarrollo)
-      const endpoint = specificAgent ? 
-        `/api/admin/prompts/${specificAgent}/repair` : 
-        '/api/admin/prompts/repair'
-      
-      const response = await apiRequest(endpoint, {
-        method: 'POST',
-        body: {
-          company_id: appStore.currentCompanyId
-        }
-      })
-
-      repairResults.value = response
-      
-      showNotification('Reparación de prompts completada', 'success')
-      addToLog('Prompts repair completed', 'success')
-
-      // Recargar prompts después de la reparación
-      await loadCurrentPrompts()
-      
-      return true
-
-    } catch (error) {
-      addToLog(`Error repairing prompts: ${error.message}`, 'error')
-      showNotification('Error en reparación de prompts: ' + error.message, 'error')
-      return false
-
-    } finally {
-      isRepairing.value = false
-    }
-  }
-
-  /**
-   * Migra prompts a PostgreSQL - MIGRADO: migratePromptsToPostgreSQL() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
-   */
-  const migratePromptsToPostgreSQL = async () => {
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
-    }
-
-    if (!confirm('¿Estás seguro de migrar los prompts a PostgreSQL? Esta operación puede tomar tiempo.')) {
-      return false
-    }
-
-    try {
-      isMigrating.value = true
-      addToLog('Starting prompts migration to PostgreSQL', 'info')
-      showNotification('Iniciando migración de prompts a PostgreSQL...', 'info')
-
-      // PRESERVAR: Request como script.js
-      const response = await apiRequest('/api/admin/prompts/migrate', {
-        method: 'POST',
-        body: {
-          company_id: appStore.currentCompanyId,
-          target: 'postgresql'
-        }
-      })
-
-      migrationResults.value = response
-      
-      showNotification('Migración de prompts completada exitosamente', 'success')
-      addToLog('Prompts migration to PostgreSQL completed', 'success')
-
-      // Recargar prompts después de la migración
-      await loadCurrentPrompts()
-      await loadPromptsSystemStatus()
-      
-      return true
-
-    } catch (error) {
-      addToLog(`Error migrating prompts: ${error.message}`, 'error')
-      showNotification('Error en migración de prompts: ' + error.message, 'error')
-      return false
-
-    } finally {
-      isMigrating.value = false
-    }
-  }
-
-  /**
-   * Carga estado del sistema de prompts - MIGRADO: loadPromptsSystemStatus() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Carga estado del sistema - ENDPOINT CORREGIDO
+   * ORIGINAL: `/api/admin/status` NO `/api/admin/prompts/status` ✅
    */
   const loadPromptsSystemStatus = async () => {
     try {
       addToLog('Loading prompts system status', 'info')
 
-      // PRESERVAR: Request como script.js
-      const response = await apiRequest('/api/admin/prompts/status', {
+      // ✅ ENDPOINT CORRECTO - Como en script.js funcional
+      const response = await apiRequest('/api/admin/status', {
         method: 'GET'
       })
 
-      systemStatus.value = response
-
-      // PRESERVAR: Actualizar display como script.js
-      updateSystemStatusDisplay(response.database_status, response.fallback_used)
+      if (response && response.prompt_system) {
+        systemStatus.value = response.prompt_system
+        updateSystemStatusDisplay(response.prompt_system)
+      } else {
+        systemStatus.value = response
+      }
       
       return response
 
@@ -536,21 +357,21 @@ export const usePrompts = () => {
   }
 
   /**
-   * Actualiza visualización del estado del sistema - MIGRADO de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Actualizar visualización del estado del sistema
    */
-  const updateSystemStatusDisplay = (databaseStatus, fallbackUsed) => {
+  const updateSystemStatusDisplay = (systemStatusData, fallbackUsed = null) => {
     const statusContainer = document.getElementById('promptsSystemStatus')
     if (!statusContainer) return
 
-    const statusClass = databaseStatus === 'healthy' ? 'success' : 'warning'
-    const statusText = databaseStatus === 'healthy' ? '✅ Sistema Saludable' : '⚠️ Sistema con Problemas'
+    const isHealthy = systemStatusData?.postgresql_available && systemStatusData?.tables_exist
+    const statusClass = isHealthy ? 'success' : 'warning'
+    const statusText = isHealthy ? '✅ Sistema Saludable' : '⚠️ Sistema con Problemas'
     const fallbackText = fallbackUsed ? '(usando fallback)' : ''
 
     statusContainer.innerHTML = `
       <div class="system-status ${statusClass}">
         <span>${statusText} ${fallbackText}</span>
-        <small>Base de datos: ${databaseStatus}</small>
+        <small>Base de datos: ${systemStatusData?.database_status || 'unknown'}</small>
       </div>
     `
   }
@@ -584,7 +405,6 @@ export const usePrompts = () => {
         ).join('\n')
       }
 
-      // Crear archivo para descarga
       const blob = new Blob([content], { 
         type: format === 'json' ? 'application/json' : 'text/csv' 
       })
@@ -620,7 +440,6 @@ export const usePrompts = () => {
   // WATCHERS
   // ============================================================================
 
-  // Watcher para recargar cuando cambie la empresa
   watch(() => appStore.currentCompanyId, async (newCompanyId) => {
     if (newCompanyId) {
       await loadCurrentPrompts()
@@ -643,8 +462,6 @@ export const usePrompts = () => {
     isMigrating,
     systemStatus,
     previewData,
-    repairResults,
-    migrationResults,
     lastUpdateTime,
 
     // Computed properties
@@ -655,14 +472,11 @@ export const usePrompts = () => {
     hasPrompts,
     isSystemHealthy,
 
-    // Funciones principales (PRESERVAR nombres exactos de script.js)
+    // Funciones principales (ENDPOINTS CORREGIDOS)
     loadCurrentPrompts,
     updatePrompt,
     resetPrompt,
     previewPrompt,
-    showPreviewModal,
-    repairPrompts,
-    migratePromptsToPostgreSQL,
     loadPromptsSystemStatus,
     updateSystemStatusDisplay,
 
