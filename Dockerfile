@@ -1,71 +1,53 @@
-# Dockerfile - CORREGIDO - Backend Flask + Frontend Vue.js 3
-# FIX: Instala devDependencies necesarias para vite build
-# Multi-stage build: Node.js para frontend + Python para backend
-# ============================================================================
+# --- STAGE 1: Frontend build (Node) ---
+FROM node:18-bullseye AS frontend-builder
 
-# ============================================================================
-# STAGE 1: Build Frontend Vue.js - CORREGIDO PARA VITE
-# ============================================================================
-FROM node:18-alpine as frontend-builder
-
+# Evitar poner NODE_ENV=production aquí (necesitamos devDependencies para build)
 WORKDIR /frontend
 
-# Configurar npm para evitar problemas comunes
+# Mejoros: herramientas comunes (git en caso de deps desde git)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Config npm para logs y audit
 RUN npm config set audit false && \
     npm config set fund false && \
     npm config set loglevel warn
 
-# Copiar archivos de dependencias (pueden o no existir)
-COPY src/package.json ./
-# Intentar copiar package-lock.json si existe (no falla si no existe)
-COPY src/package-lock.json ./
+# Copiar package.json y package-lock.json (si existe) para cache de instalaciones
+COPY src/package*.json ./
 
-# 🔧 ESTRATEGIA CORREGIDA: Instalar TODAS las dependencias (incluyendo devDependencies)
-RUN echo "📦 Estrategia corregida de instalación..." && \
-    if [ -f package-lock.json ]; then \
-        echo "✅ package-lock.json encontrado, instalando con npm ci"; \
-        npm ci; \
+# Instalar dependencias (si existe package-lock.json usa npm ci, si no, genera lock y luego ci)
+RUN if [ -f package-lock.json ]; then \
+      echo "✅ package-lock.json encontrado -> npm ci"; \
+      npm ci; \
     else \
-        echo "📝 package-lock.json no encontrado, generando automáticamente..."; \
-        npm install --package-lock-only && \
-        echo "✅ package-lock.json generado, ahora instalando TODAS las dependencias"; \
-        npm ci; \
-    fi && \
-    echo "✅ Todas las dependencias instaladas (incluidas devDependencies para build)"
+      echo "⚠ package-lock.json no encontrado -> npm install --package-lock-only && npm ci"; \
+      npm install --package-lock-only && npm ci; \
+    fi
 
-# Verificar que vite esté instalado
-RUN echo "🔍 Verificando vite:" && \
-    npx vite --version && \
-    echo "✅ Vite está disponible"
-
-# Copiar todo el código fuente del frontend
+# Copiar resto del código del frontend
 COPY src/ ./
 
-# Verificar archivos críticos antes del build
-RUN echo "🔍 Verificando archivos críticos:" && \
-    test -f package.json && echo "✅ package.json" || echo "❌ package.json" && \
-    test -f vite.config.js && echo "✅ vite.config.js" || echo "⚠️ vite.config.js no encontrado" && \
-    test -f index.html && echo "✅ index.html" || echo "❌ index.html" && \
-    test -d src && echo "✅ src/ directory" || echo "⚠️ src/ directory no encontrado"
+# Debug: mostrar archivos importantes antes del build
+RUN echo "🔎 Antes del build: mostrando package.json, vite.config.js y index.html (primeras 60 líneas)" && \
+    (test -f package.json && head -n 40 package.json) || true && \
+    (test -f vite.config.js && head -n 40 vite.config.js) || true && \
+    (test -f index.html && head -n 40 index.html) || true
 
-# Build con vite disponible
-RUN echo "🏗️ Iniciando build de Vue.js con vite..." && \
-    npm run build 2>&1 | tee build.log && \
-    echo "✅ Build completado exitosamente"
+# Ejecutar build (guardar salida en build.log para debugging)
+RUN echo "🏗️ Ejecutando npm run build" && \
+    npm run build 2>&1 | tee build.log
 
-# Verificación exhaustiva del build
-RUN echo "📊 Verificación del build:" && \
-    ls -la dist/ && \
-    test -f dist/index.html && echo "✅ dist/index.html existe" || (echo "❌ ERROR: dist/index.html NO existe" && cat build.log && exit 1) && \
-    echo "📁 Contenido de dist/:" && \
-    find dist/ -type f -name "*.js" -o -name "*.css" -o -name "*.html" | head -10 && \
-    echo "📏 Tamaño del build:" && \
-    du -sh dist/ && \
-    echo "✅ Build verificado exitosamente"
+# Verificación del resultado de build
+RUN echo "📦 Verificando dist/ ..." && \
+    ls -la dist || (echo "ERROR: dist/ no existe" && cat build.log && exit 1) && \
+    test -f dist/index.html || (echo "ERROR: dist/index.html no encontrado" && cat build.log && exit 1) && \
+    echo "✅ dist/index.html existe. Listado de archivos dist/:" && \
+    find dist -maxdepth 2 -type f -print | sed -n '1,200p' && \
+    du -sh dist
 
-# ============================================================================
-# STAGE 2: Backend Python + Frontend estático
-# ============================================================================
+# --- STAGE 2: Backend Python + static files ---
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
@@ -74,97 +56,71 @@ ENV PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Instalar dependencias del sistema con verificación
+# Instalar dependencias del sistema para Python y posibles drivers nativos
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc g++ curl && \
-    rm -rf /var/lib/apt/lists/* && \
-    echo "✅ Dependencias del sistema instaladas"
+    apt-get install -y --no-install-recommends gcc g++ curl libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Backend Python
-COPY requirements.txt .
-RUN echo "🐍 Instalando dependencias de Python..." && \
-    pip install --no-cache-dir -r requirements.txt && \
-    echo "✅ Dependencias de Python instaladas"
+# Instalar Python deps (requirements.txt debe estar en la raíz del repo)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar aplicación backend
+# Copiar código backend
 COPY app/ ./app/
 COPY wsgi.py run.py ./
 COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 COPY migrate_prompts_to_postgresql.py postgresql_schema.sql ./
 COPY migrate_companies_to_postgresql.py ./
 
-# Verificar backend
-RUN echo "🔧 Verificando backend:" && \
-    test -f wsgi.py && echo "✅ wsgi.py" || echo "❌ wsgi.py" && \
-    test -d app && echo "✅ app/" || echo "❌ app/" && \
-    python -c "from app import create_app; print('✅ Backend importa correctamente')" || echo "⚠️ Problema con imports del backend"
-
-# Copiar frontend desde stage 1 CON VERIFICACIÓN
+# Copiar assets estáticos desde el frontend-builder
 COPY --from=frontend-builder /frontend/dist ./static
 
-# VERIFICACIÓN EXHAUSTIVA del frontend copiado
-RUN echo "🎯 Verificación exhaustiva del frontend:" && \
-    echo "📁 Contenido de static/:" && \
-    ls -la static/ && \
-    echo "" && \
-    test -f static/index.html && echo "✅ static/index.html existe" || (echo "❌ CRÍTICO: static/index.html NO existe" && exit 1) && \
-    test -d static/assets && echo "✅ static/assets/ existe" || echo "⚠️ static/assets/ no existe (puede ser normal)" && \
-    echo "📏 Archivos estáticos encontrados:" && \
-    find static/ -type f | wc -l && \
-    echo "📏 Tamaño total de static/:" && \
-    du -sh static/ && \
-    echo "✅ Frontend copiado y verificado exitosamente"
+# Verificaciones en build para atrapar problemas temprano
+RUN echo "🔧 Verificando backend y static files..." && \
+    test -f wsgi.py && echo "✅ wsgi.py encontrado" || (echo "❌ wsgi.py faltante" && exit 1) && \
+    test -d app && echo "✅ app/ directory encontrado" || (echo "❌ app/ faltante" && exit 1) && \
+    test -d static && echo "✅ static/ copiado" || (echo "❌ static/ no copiado" && ls -la . && exit 1) && \
+    test -f static/index.html && echo "✅ static/index.html OK" || (echo "❌ static/index.html NO existe" && ls -la static || exit 1)
 
-# Migraciones opcionales
-RUN if [ ! -z "$DATABASE_URL" ]; then \
-        echo "🔄 Ejecutando migraciones automáticas durante build..."; \
-        python migrate_prompts_to_postgresql.py --auto 2>&1 | tee migration.log || echo "⚠️ Migración de prompts falló" && \
-        python migrate_companies_to_postgresql.py --auto 2>&1 | tee -a migration.log || echo "⚠️ Migración de empresas falló"; \
-    else \
-        echo "⚠️ DATABASE_URL no disponible durante build, saltando migraciones"; \
-    fi
-
-# Setup de usuario y permisos
+# Crear usuario no-root y asignar permisos
 RUN useradd --create-home --shell /bin/bash --uid 1000 appuser && \
     chown -R appuser:appuser /app
-USER appuser
 
-EXPOSE 8080
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8080/api/health || exit 1
-
-# Script de inicio con verificación final
+# Crear start script (migraciones en runtime, verificación final y arranque Gunicorn)
 USER root
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-echo "🚀 Iniciando aplicación multi-tenant con Frontend Vue.js..."\n\
-echo "📊 Verificación final del sistema:"\n\
-echo "📁 Static directory:"\n\
-ls -la static/ | head -10\n\
-echo "🔍 Verificando archivos críticos:"\n\
-test -f static/index.html && echo "✅ Frontend HTML existe" || echo "❌ Frontend HTML NO existe"\n\
-test -f wsgi.py && echo "✅ WSGI existe" || echo "❌ WSGI NO existe"\n\
-echo ""\n\
-\n\
-# Migraciones runtime\n\
-if [ ! -z "$DATABASE_URL" ]; then\n\
-    echo "🔄 Ejecutando migraciones runtime..."\n\
-    python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló"\n\
-    python migrate_companies_to_postgresql.py --auto || echo "⚠️ Migración de empresas falló"\n\
-else\n\
-    echo "⚠️ DATABASE_URL no disponible, saltando migraciones"\n\
-fi\n\
-\n\
-echo "🎯 Frontend Vue.js disponible en: /"\n\
-echo "🔧 APIs disponibles en: /api/*"\n\
-echo "📊 Health check en: /api/health"\n\
-echo "🚀 Iniciando servidor Gunicorn..."\n\
-\n\
-exec gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100 wsgi:app\n\
-' > /app/start.sh && chmod +x /app/start.sh
+RUN cat > /app/start.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "🚀 Iniciando aplicación multi-tenant..."
+echo "📁 Verificando static dir:"
+ls -la /app/static | sed -n '1,200p' || true
+
+if [ ! -f /app/static/index.html ]; then
+  echo "❌ CRÍTICO: /app/static/index.html no existe"
+  exit 1
+fi
+
+# Migraciones runtime (solo si DATABASE_URL está presente)
+if [ ! -z "${DATABASE_URL:-}" ]; then
+  echo "🔄 DATABASE_URL detectado -> ejecutando migraciones"
+  python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló (continuando)"
+  python migrate_companies_to_postgresql.py --auto || echo "⚠️ Migración de companies falló (continuando)"
+else
+  echo "⚠️ DATABASE_URL no presente -> saltando migraciones runtime"
+fi
+
+echo "🎯 Iniciando Gunicorn en 0.0.0.0:8080"
+exec gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 120 --keep-alive 2 --max-requests 1000 --max-requests-jitter 100 wsgi:app
+EOF
+
+RUN chmod +x /app/start.sh && chown appuser:appuser /app/start.sh
+
+# HEALTHCHECK recomendable en Railway
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8080/api/health || exit 1
 
 USER appuser
+EXPOSE 8080
 CMD ["/app/start.sh"]
+
