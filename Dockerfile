@@ -27,7 +27,7 @@ RUN if [ -f package-lock.json ]; then \
     fi
 
 # Copiar resto del código del frontend
-COPY src/ ./
+COPY src/ ./src/
 
 # Debug: mostrar archivos importantes antes del build
 RUN echo "🔎 Antes del build: mostrando package.json, vite.config.js y index.html (primeras 60 líneas)" && \
