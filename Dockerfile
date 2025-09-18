@@ -23,6 +23,9 @@ COPY src/package*.json ./
 COPY src/index.html ./ 
 COPY src/ ./src/
 
+# Copiar vite.config.js al root para que vite lo use
+COPY src/vite.config.js ./vite.config.js
+
 # Instalar dependencias (incluye devDependencies)
 RUN if [ -f package-lock.json ]; then \
       echo "✅ package-lock.json encontrado -> npm ci (incluye devDependencies)"; \
