@@ -39,39 +39,27 @@
       </div>
     </div>
 
-    <!-- Filtros y búsqueda -->
-    <div class="prompts-filters">
-      <div class="filter-controls">
-        <div class="search-box">
-          <input
-            type="text"
-            v-model="searchQuery"
-            placeholder="Buscar prompts..."
-            class="search-input"
-          />
-          <span class="search-icon">🔍</span>
-        </div>
+    <!-- Herramientas de administración -->
+    <div class="admin-tools">
+      <div class="tools-grid">
+        <button @click="loadCurrentPrompts" class="btn btn-primary" :disabled="isLoading">
+          {{ isLoading ? '🔄 Cargando...' : '📥 Cargar Prompts' }}
+        </button>
         
-        <div class="filter-group">
-          <select v-model="selectedCategory" class="filter-select">
-            <option value="">Todas las categorías</option>
-            <option v-for="category in promptCategories" :key="category" :value="category">
-              {{ category }}
-            </option>
-          </select>
-        </div>
+        <button @click="repairPrompts" class="btn btn-warning" :disabled="isRepairing">
+          {{ isRepairing ? '🔧 Reparando...' : '🔧 Reparar Prompts' }}
+        </button>
         
-        <div class="filter-group">
-          <select v-model="selectedStatus" class="filter-select">
-            <option value="">Todos los estados</option>
-            <option value="active">Activos</option>
-            <option value="inactive">Inactivos</option>
-            <option value="modified">Modificados</option>
-          </select>
-        </div>
+        <button @click="migratePromptsToPostgreSQL" class="btn btn-info" :disabled="isMigrating">
+          {{ isMigrating ? '🔄 Migrando...' : '🗄️ Migrar a PostgreSQL' }}
+        </button>
         
-        <button @click="clearFilters" class="btn btn-sm btn-secondary">
-          🗑️ Limpiar Filtros
+        <button @click="exportPrompts" class="btn btn-secondary">
+          📤 Exportar
+        </button>
+        
+        <button @click="importPrompts" class="btn btn-secondary">
+          📥 Importar
         </button>
       </div>
     </div>
@@ -83,251 +71,86 @@
         <p>Cargando prompts...</p>
       </div>
       
-      <div v-else-if="filteredPrompts.length === 0" class="empty-state">
-        <div class="empty-icon">📝</div>
-        <h4>No se encontraron prompts</h4>
-        <p>No hay prompts que coincidan con los filtros seleccionados.</p>
+      <div v-else-if="prompts.length === 0" class="empty-state">
+        <p>No hay prompts configurados</p>
+        <button @click="loadCurrentPrompts" class="btn btn-primary">
+          🔄 Cargar Prompts
+        </button>
       </div>
       
       <div v-else class="prompts-grid">
-        <div 
-          v-for="prompt in filteredPrompts"
-          :key="prompt.id"
-          class="prompt-card"
-          :class="{ 
-            'prompt-modified': prompt.is_modified,
-            'prompt-inactive': !prompt.is_active
-          }"
-        >
+        <div v-for="prompt in prompts" :key="prompt.agent_name" class="prompt-card">
           <div class="prompt-header">
-            <div class="prompt-title">
-              <h4>{{ prompt.name || prompt.id }}</h4>
-              <div class="prompt-badges">
-                <span v-if="prompt.category" class="badge badge-category">
-                  {{ prompt.category }}
-                </span>
-                <span v-if="prompt.is_modified" class="badge badge-modified">
-                  Modificado
-                </span>
-                <span :class="['badge', 'badge-status', prompt.is_active ? 'badge-active' : 'badge-inactive']">
-                  {{ prompt.is_active ? 'Activo' : 'Inactivo' }}
-                </span>
-              </div>
-            </div>
-            
+            <h4>{{ prompt.agent_name }}</h4>
             <div class="prompt-actions">
-              <button @click="previewPrompt(prompt)" class="btn btn-xs btn-info">
-                👁️ Vista Previa
+              <button @click="previewPrompt(prompt.agent_name)" class="btn btn-sm btn-info">
+                👁️ Preview
               </button>
-              <button @click="editPrompt(prompt)" class="btn btn-xs btn-primary">
+              <button @click="editPrompt(prompt)" class="btn btn-sm btn-primary">
                 ✏️ Editar
               </button>
-              <button 
-                @click="resetPrompt(prompt)"
-                class="btn btn-xs btn-warning"
-                :disabled="!prompt.is_modified"
-              >
-                🔄 Restaurar
+              <button @click="resetPrompt(prompt.agent_name)" class="btn btn-sm btn-warning">
+                🔄 Reset
               </button>
             </div>
+          </div>
+          
+          <div class="prompt-meta">
+            <span class="prompt-status" :class="{ 'modified': prompt.is_custom }">
+              {{ prompt.is_custom ? '✏️ Modificado' : '📄 Original' }}
+            </span>
+            <span class="prompt-version">v{{ prompt.version || '1.0' }}</span>
           </div>
           
           <div class="prompt-content">
-            <div class="prompt-description">
-              {{ prompt.description || 'Sin descripción disponible' }}
-            </div>
-            
-            <div class="prompt-preview">
-              <div class="prompt-text">
-                {{ truncateText(prompt.content || '', 200) }}
-              </div>
-            </div>
-            
-            <div class="prompt-metadata">
-              <div class="metadata-item">
-                <span class="metadata-label">Longitud:</span>
-                <span class="metadata-value">{{ (prompt.content || '').length }} caracteres</span>
-              </div>
-              <div class="metadata-item">
-                <span class="metadata-label">Última modificación:</span>
-                <span class="metadata-value">{{ formatDateTime(prompt.updated_at) }}</span>
-              </div>
-            </div>
+            <textarea 
+              :id="`prompt-${prompt.agent_name}`"
+              v-model="prompt.content"
+              @input="markAsModified(prompt)"
+              class="prompt-textarea"
+              rows="8"
+              :placeholder="`Prompt para ${prompt.agent_name}...`"
+            ></textarea>
+          </div>
+          
+          <div class="prompt-footer">
+            <button @click="updatePrompt(prompt.agent_name, prompt.content)" 
+                    class="btn btn-success" 
+                    :disabled="!prompt.isModified">
+              💾 Guardar
+            </button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Herramientas del sistema -->
-    <div class="system-tools">
-      <div class="tools-card">
-        <h3>🔧 Herramientas del Sistema</h3>
-        
-        <div class="tools-grid">
-          <button 
-            @click="repairPrompts"
-            class="tool-button"
-            :disabled="isRepairing"
-          >
-            <div class="tool-icon">🔧</div>
-            <div class="tool-content">
-              <div class="tool-title">Reparar Prompts</div>
-              <div class="tool-description">Reparar prompts dañados o inconsistentes</div>
-            </div>
-            <div v-if="isRepairing" class="tool-loading">⏳</div>
-          </button>
-          
-          <button 
-            @click="migratePromptsToPostgreSQL"
-            class="tool-button"
-            :disabled="isMigrating"
-          >
-            <div class="tool-icon">🔄</div>
-            <div class="tool-content">
-              <div class="tool-title">Migrar a PostgreSQL</div>
-              <div class="tool-description">Migrar prompts al sistema PostgreSQL</div>
-            </div>
-            <div v-if="isMigrating" class="tool-loading">⏳</div>
-          </button>
-          
-          <button 
-            @click="exportPrompts"
-            class="tool-button"
-          >
-            <div class="tool-icon">📤</div>
-            <div class="tool-content">
-              <div class="tool-title">Exportar Prompts</div>
-              <div class="tool-description">Descargar backup de todos los prompts</div>
-            </div>
-          </button>
-          
-          <button 
-            @click="importPrompts"
-            class="tool-button"
-          >
-            <div class="tool-icon">📥</div>
-            <div class="tool-content">
-              <div class="tool-title">Importar Prompts</div>
-              <div class="tool-description">Cargar prompts desde archivo</div>
-            </div>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modal de edición de prompt -->
-    <div v-if="editingPrompt" class="prompt-modal" @click="closeEditModal">
-      <div class="modal-content large" @click.stop>
+    <!-- Modal de Preview -->
+    <div v-if="previewData" class="modal-overlay" @click.self="closePreviewModal">
+      <div class="modal-content preview-modal">
         <div class="modal-header">
-          <h4>✏️ Editar Prompt: {{ editingPrompt.name || editingPrompt.id }}</h4>
-          <button @click="closeEditModal" class="close-button">✕</button>
+          <h3>👁️ Vista Previa - {{ previewData.agent || 'Prompt' }}</h3>
+          <button @click="closePreviewModal" class="btn-close">❌</button>
         </div>
         
         <div class="modal-body">
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="promptName">Nombre:</label>
-              <input
-                id="promptName"
-                type="text"
-                v-model="editForm.name"
-                placeholder="Nombre del prompt"
-              />
+          <div v-if="previewData.preview" class="preview-response">
+            <h5>🤖 Respuesta Generada:</h5>
+            <div class="preview-text">
+              {{ previewData.preview }}
             </div>
             
-            <div class="form-group">
-              <label for="promptCategory">Categoría:</label>
-              <input
-                id="promptCategory"
-                type="text"
-                v-model="editForm.category"
-                placeholder="Categoría del prompt"
-              />
-            </div>
-            
-            <div class="form-group full-width">
-              <label for="promptDescription">Descripción:</label>
-              <textarea
-                id="promptDescription"
-                v-model="editForm.description"
-                placeholder="Descripción del prompt"
-                rows="3"
-              ></textarea>
-            </div>
-            
-            <div class="form-group full-width">
-              <label for="promptContent">Contenido del Prompt:</label>
-              <textarea
-                id="promptContent"
-                v-model="editForm.content"
-                placeholder="Contenido del prompt..."
-                rows="15"
-                class="prompt-textarea"
-              ></textarea>
-              <div class="textarea-footer">
-                <span class="char-count">{{ editForm.content.length }} caracteres</span>
+            <div v-if="previewData.debug_info" class="preview-debug">
+              <h5>🔧 Información Técnica:</h5>
+              <div class="info-grid">
+                <span><strong>Método:</strong> {{ previewData.method || 'API' }}</span>
+                <span><strong>Estado:</strong> {{ previewData.status }}</span>
+                <span v-if="previewData.debug_info.response_length">
+                  <strong>Longitud:</strong> {{ previewData.debug_info.response_length }} caracteres
+                </span>
+                <span v-if="previewData.debug_info.agent_key">
+                  <strong>Agent Key:</strong> {{ previewData.debug_info.agent_key }}
+                </span>
               </div>
-            </div>
-            
-            <div class="form-group">
-              <label>
-                <input type="checkbox" v-model="editForm.is_active" />
-                Prompt activo
-              </label>
-            </div>
-          </div>
-        </div>
-        
-        <div class="modal-footer">
-          <div class="modal-actions">
-            <button @click="savePrompt" class="btn btn-primary" :disabled="isSaving">
-              <span v-if="isSaving">⏳ Guardando...</span>
-              <span v-else">💾 Guardar Cambios</span>
-            </button>
-            <button @click="previewEditPrompt" class="btn btn-info">
-              👁️ Vista Previa
-            </button>
-            <button @click="closeEditModal" class="btn btn-secondary">
-              ❌ Cancelar
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modal de vista previa -->
-    <div v-if="previewData" class="prompt-modal" @click="closePreviewModal">
-      <div class="modal-content large" @click.stop>
-        <div class="modal-header">
-          <h4>👁️ Vista Previa: {{ previewData.name || previewData.id }}</h4>
-          <button @click="closePreviewModal" class="close-button">✕</button>
-        </div>
-        
-        <div class="modal-body">
-          <div v-if="previewData.preview_result" class="preview-content">
-            <div class="preview-section">
-              <h5>📝 Prompt Procesado:</h5>
-              <div class="preview-text">
-                {{ previewData.preview_result.processed_prompt }}
-              </div>
-            </div>
-            
-            <div v-if="previewData.preview_result.variables" class="preview-section">
-              <h5>🔧 Variables Detectadas:</h5>
-              <div class="variables-list">
-                <div 
-                  v-for="variable in previewData.preview_result.variables"
-                  :key="variable"
-                  class="variable-item"
-                >
-                  <code>{{ variable }}</code>
-                </div>
-              </div>
-            </div>
-            
-            <div v-if="previewData.preview_result.metadata" class="preview-section">
-              <h5>📊 Metadatos:</h5>
-              <pre class="metadata-json">{{ formatJSON(previewData.preview_result.metadata) }}</pre>
             </div>
           </div>
           
@@ -341,7 +164,7 @@
         
         <div class="modal-footer">
           <button @click="closePreviewModal" class="btn btn-secondary">
-            ❌ Cerrar
+            Cerrar
           </button>
         </div>
       </div>
@@ -359,7 +182,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
@@ -385,101 +208,45 @@ const fileInput = ref(null)
 const isLoading = ref(false)
 const isRepairing = ref(false)
 const isMigrating = ref(false)
-const isSaving = ref(false)
 
 const prompts = ref([])
 const systemStatus = ref(null)
-const editingPrompt = ref(null)
 const previewData = ref(null)
 
-// Filtros
-const searchQuery = ref('')
-const selectedCategory = ref('')
-const selectedStatus = ref('')
-
-// Formulario de edición
-const editForm = ref({
-  name: '',
-  category: '',
-  description: '',
-  content: '',
-  is_active: true
-})
-
 // ============================================================================
-// COMPUTED
-// ============================================================================
-
-const promptCategories = computed(() => {
-  const categories = new Set()
-  prompts.value.forEach(prompt => {
-    if (prompt.category) {
-      categories.add(prompt.category)
-    }
-  })
-  return Array.from(categories).sort()
-})
-
-const filteredPrompts = computed(() => {
-  let filtered = [...prompts.value]
-  
-  // Filtro de búsqueda
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter(prompt =>
-      (prompt.name || '').toLowerCase().includes(query) ||
-      (prompt.id || '').toLowerCase().includes(query) ||
-      (prompt.description || '').toLowerCase().includes(query) ||
-      (prompt.content || '').toLowerCase().includes(query)
-    )
-  }
-  
-  // Filtro de categoría
-  if (selectedCategory.value) {
-    filtered = filtered.filter(prompt => prompt.category === selectedCategory.value)
-  }
-  
-  // Filtro de estado
-  if (selectedStatus.value) {
-    switch (selectedStatus.value) {
-      case 'active':
-        filtered = filtered.filter(prompt => prompt.is_active)
-        break
-      case 'inactive':
-        filtered = filtered.filter(prompt => !prompt.is_active)
-        break
-      case 'modified':
-        filtered = filtered.filter(prompt => prompt.is_modified)
-        break
-    }
-  }
-  
-  // Ordenar por nombre
-  return filtered.sort((a, b) => {
-    const nameA = a.name || a.id || ''
-    const nameB = b.name || b.id || ''
-    return nameA.localeCompare(nameB)
-  })
-})
-
-// ============================================================================
-// FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS
+// FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS - ENDPOINTS CORREGIDOS
 // ============================================================================
 
 /**
- * Carga los prompts actuales - MIGRADO: loadCurrentPrompts() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Carga los prompts actuales - MIGRADO Y CORREGIDO: loadCurrentPrompts() de script.js
+ * ENDPOINT CORREGIDO: /api/admin/prompts con company_id
  */
 const loadCurrentPrompts = async () => {
+  if (!appStore.currentCompanyId) {
+    showNotification('Por favor selecciona una empresa primero', 'warning')
+    return
+  }
+
   isLoading.value = true
   
   try {
     appStore.addToLog('Loading current prompts', 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/prompts')
+    // ✅ ENDPOINT CORREGIDO - Igual que en script.js original
+    const response = await apiRequest(`/api/admin/prompts?company_id=${appStore.currentCompanyId}`)
     
-    prompts.value = response.prompts || []
+    // Procesar respuesta según el formato del script.js original
+    if (response.prompts) {
+      prompts.value = Object.entries(response.prompts).map(([agentName, data]) => ({
+        agent_name: agentName,
+        content: data.content || '',
+        is_custom: data.is_custom || false,
+        version: data.version || '1.0',
+        isModified: false // Estado local para track de cambios
+      }))
+    } else {
+      prompts.value = []
+    }
     
     appStore.addToLog(`Loaded ${prompts.value.length} prompts`, 'info')
     showNotification(`${prompts.value.length} prompts cargados`, 'success')
@@ -494,102 +261,138 @@ const loadCurrentPrompts = async () => {
 }
 
 /**
- * Actualiza un prompt - MIGRADO: updatePrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Actualiza un prompt - MIGRADO Y CORREGIDO: updatePrompt() de script.js
+ * ENDPOINT CORREGIDO: /api/admin/prompts/{agentName} con company_id
  */
-const updatePrompt = async (promptId, content) => {
+const updatePrompt = async (agentName, content) => {
+  if (!appStore.currentCompanyId) {
+    showNotification('Por favor selecciona una empresa primero', 'warning')
+    return
+  }
+
+  if (!content.trim()) {
+    showNotification('El contenido del prompt no puede estar vacío', 'warning')
+    return
+  }
+
   try {
-    appStore.addToLog(`Updating prompt: ${promptId}`, 'info')
+    appStore.addToLog(`Updating prompt for ${agentName}`, 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/prompts/${promptId}`, {
+    // ✅ ENDPOINT CORREGIDO - Igual que en script.js original
+    const response = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${appStore.currentCompanyId}`, {
       method: 'PUT',
       body: { content }
     })
     
     // Actualizar prompt en la lista local
-    const promptIndex = prompts.value.findIndex(p => p.id === promptId)
+    const promptIndex = prompts.value.findIndex(p => p.agent_name === agentName)
     if (promptIndex !== -1) {
-      prompts.value[promptIndex] = { ...prompts.value[promptIndex], ...response.prompt }
+      prompts.value[promptIndex].isModified = false
+      prompts.value[promptIndex].is_custom = true
     }
     
-    appStore.addToLog(`Prompt ${promptId} updated successfully`, 'info')
-    showNotification('Prompt actualizado exitosamente', 'success')
+    let successMessage = `Prompt de ${agentName} actualizado correctamente`
+    if (response.version) {
+      successMessage += ` (v${response.version})`
+    }
     
-    return response
+    appStore.addToLog(`Prompt ${agentName} updated successfully`, 'info')
+    showNotification(successMessage, 'success')
+    
+    // Recargar lista para sincronizar
+    await loadCurrentPrompts()
     
   } catch (error) {
-    appStore.addToLog(`Error updating prompt ${promptId}: ${error.message}`, 'error')
+    appStore.addToLog(`Error updating prompt ${agentName}: ${error.message}`, 'error')
     showNotification(`Error actualizando prompt: ${error.message}`, 'error')
-    throw error
   }
 }
 
 /**
- * Restaura un prompt - MIGRADO: resetPrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Restaura un prompt - MIGRADO Y CORREGIDO: resetPrompt() de script.js
+ * ENDPOINT CORREGIDO: DELETE /api/admin/prompts/{agentName} con company_id
  */
-const resetPrompt = async (prompt) => {
-  if (!prompt.is_modified) {
-    showNotification('El prompt no ha sido modificado', 'info')
+const resetPrompt = async (agentName) => {
+  if (!appStore.currentCompanyId) {
+    showNotification('Por favor selecciona una empresa primero', 'warning')
+    return
+  }
+  
+  if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
     return
   }
   
   try {
-    appStore.addToLog(`Resetting prompt: ${prompt.id}`, 'info')
+    appStore.addToLog(`Resetting prompt for ${agentName}`, 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/prompts/${prompt.id}/reset`, {
-      method: 'POST'
+    // ✅ ENDPOINT CORREGIDO - Igual que en script.js original
+    await apiRequest(`/api/admin/prompts/${agentName}?company_id=${appStore.currentCompanyId}`, {
+      method: 'DELETE'
     })
     
-    // Actualizar prompt en la lista local
-    const promptIndex = prompts.value.findIndex(p => p.id === prompt.id)
-    if (promptIndex !== -1) {
-      prompts.value[promptIndex] = { ...prompts.value[promptIndex], ...response.prompt }
-    }
-    
-    appStore.addToLog(`Prompt ${prompt.id} reset successfully`, 'info')
-    showNotification('Prompt restaurado a su estado original', 'success')
+    showNotification(`Prompt de ${agentName} restaurado al valor por defecto`, 'success')
+    await loadCurrentPrompts()
     
   } catch (error) {
-    appStore.addToLog(`Error resetting prompt ${prompt.id}: ${error.message}`, 'error')
+    appStore.addToLog(`Error resetting prompt ${agentName}: ${error.message}`, 'error')
     showNotification(`Error restaurando prompt: ${error.message}`, 'error')
   }
 }
 
 /**
- * Vista previa de prompt - MIGRADO: previewPrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Vista previa de prompt - MIGRADO Y CORREGIDO: previewPrompt() de script.js
+ * ENDPOINT CORREGIDO: POST /api/admin/prompts/preview
  */
-const previewPrompt = async (prompt) => {
+const previewPrompt = async (agentName) => {
+  if (!appStore.currentCompanyId) {
+    showNotification('Por favor selecciona una empresa primero', 'warning')
+    return
+  }
+
+  const textarea = document.getElementById(`prompt-${agentName}`)
+  if (!textarea) {
+    showNotification(`Error: No se encontró el textarea para ${agentName}`, 'error')
+    return
+  }
+
+  const promptTemplate = textarea.value.trim()
+  const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
+  
+  if (!testMessage) {
+    showNotification('Operación cancelada', 'info')
+    return
+  }
+
   try {
-    appStore.addToLog(`Previewing prompt: ${prompt.id}`, 'info')
+    appStore.addToLog(`Generating preview for ${agentName}`, 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/prompts/${prompt.id}/preview`, {
-      method: 'POST'
+    // ✅ ENDPOINT CORREGIDO - Igual que en script.js original
+    const response = await apiRequest('/api/admin/prompts/preview', {
+      method: 'POST',
+      body: {
+        agent_name: agentName,
+        content: promptTemplate,
+        test_message: testMessage
+      }
     })
     
     previewData.value = {
-      ...prompt,
-      preview_result: response
+      agent: agentName,
+      content: promptTemplate,
+      test_message: testMessage,
+      ...response
     }
     
-    appStore.addToLog(`Prompt ${prompt.id} preview generated`, 'info')
+    appStore.addToLog(`Preview generated for ${agentName}`, 'info')
     
   } catch (error) {
-    appStore.addToLog(`Error previewing prompt ${prompt.id}: ${error.message}`, 'error')
+    appStore.addToLog(`Error generating preview for ${agentName}: ${error.message}`, 'error')
     showNotification(`Error generando vista previa: ${error.message}`, 'error')
-    
-    // Mostrar vista previa simple sin procesamiento
-    previewData.value = prompt
   }
 }
 
 /**
  * Repara prompts - MIGRADO: repairPrompts() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
  */
 const repairPrompts = async () => {
   isRepairing.value = true
@@ -598,15 +401,13 @@ const repairPrompts = async () => {
     appStore.addToLog('Starting prompts repair', 'info')
     showNotification('Iniciando reparación de prompts...', 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO (asumiendo que existe)
-    const response = await apiRequest('/api/prompts/repair', {
+    const response = await apiRequest('/api/admin/prompts/repair', {
       method: 'POST'
     })
     
     appStore.addToLog('Prompts repair completed', 'info')
     showNotification('Reparación de prompts completada', 'success')
     
-    // Recargar prompts
     await loadCurrentPrompts()
     
   } catch (error) {
@@ -619,7 +420,6 @@ const repairPrompts = async () => {
 
 /**
  * Migra prompts a PostgreSQL - MIGRADO: migratePromptsToPostgreSQL() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
  */
 const migratePromptsToPostgreSQL = async () => {
   isMigrating.value = true
@@ -628,15 +428,13 @@ const migratePromptsToPostgreSQL = async () => {
     appStore.addToLog('Starting prompts migration to PostgreSQL', 'info')
     showNotification('Iniciando migración a PostgreSQL...', 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO (asumiendo que existe)
-    const response = await apiRequest('/api/prompts/migrate', {
+    const response = await apiRequest('/api/admin/prompts/migrate', {
       method: 'POST'
     })
     
     appStore.addToLog('Prompts migration to PostgreSQL completed', 'info')
     showNotification('Migración a PostgreSQL completada', 'success')
     
-    // Recargar estado del sistema
     await loadPromptsSystemStatus()
     
   } catch (error) {
@@ -649,16 +447,14 @@ const migratePromptsToPostgreSQL = async () => {
 
 /**
  * Carga el estado del sistema de prompts - MIGRADO: loadPromptsSystemStatus() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
  */
 const loadPromptsSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO (asumiendo que existe)
-    const response = await apiRequest('/api/prompts/status')
+    const response = await apiRequest('/api/admin/prompts/status')
     
-    systemStatus.value = response.status || {}
+    systemStatus.value = response.status || response
     
     appStore.addToLog('Prompts system status loaded', 'info')
     
@@ -669,77 +465,34 @@ const loadPromptsSystemStatus = async () => {
 }
 
 // ============================================================================
-// FUNCIONES DE EDICIÓN
+// FUNCIONES DE UTILIDAD
 // ============================================================================
 
+const markAsModified = (prompt) => {
+  prompt.isModified = true
+}
+
 const editPrompt = (prompt) => {
-  editingPrompt.value = prompt
-  editForm.value = {
-    name: prompt.name || '',
-    category: prompt.category || '',
-    description: prompt.description || '',
-    content: prompt.content || '',
-    is_active: prompt.is_active !== false
+  // Scroll al prompt y focus
+  const textarea = document.getElementById(`prompt-${prompt.agent_name}`)
+  if (textarea) {
+    textarea.scrollIntoView({ behavior: 'smooth' })
+    textarea.focus()
   }
-}
-
-const closeEditModal = () => {
-  editingPrompt.value = null
-  editForm.value = {
-    name: '',
-    category: '',
-    description: '',
-    content: '',
-    is_active: true
-  }
-}
-
-const savePrompt = async () => {
-  if (!editingPrompt.value) return
-  
-  isSaving.value = true
-  
-  try {
-    const promptData = {
-      name: editForm.value.name,
-      category: editForm.value.category,
-      description: editForm.value.description,
-      content: editForm.value.content,
-      is_active: editForm.value.is_active
-    }
-    
-    // Actualizar usando la función migrada
-    await updatePrompt(editingPrompt.value.id, promptData.content)
-    
-    // Actualizar datos adicionales si el endpoint lo soporta
-    // (esto podría requerir un endpoint adicional en el backend)
-    
-    closeEditModal()
-    await loadCurrentPrompts()
-    
-  } catch (error) {
-    // Error ya manejado en updatePrompt
-  } finally {
-    isSaving.value = false
-  }
-}
-
-const previewEditPrompt = async () => {
-  const tempPrompt = {
-    ...editingPrompt.value,
-    ...editForm.value
-  }
-  
-  await previewPrompt(tempPrompt)
 }
 
 const closePreviewModal = () => {
   previewData.value = null
 }
 
-// ============================================================================
-// FUNCIONES DE HERRAMIENTAS
-// ============================================================================
+const formatDateTime = (dateString) => {
+  if (!dateString) return 'N/A'
+  try {
+    return new Date(dateString).toLocaleString()
+  } catch (error) {
+    return 'Fecha inválida'
+  }
+}
 
 const exportPrompts = () => {
   try {
@@ -777,47 +530,13 @@ const handleFileImport = async (event) => {
       throw new Error('El archivo debe contener un array de prompts')
     }
     
-    // Aquí podrías implementar la lógica de importación al backend
     showNotification(`Listo para importar ${importedData.length} prompts`, 'info')
     
   } catch (error) {
     showNotification(`Error importando archivo: ${error.message}`, 'error')
   }
   
-  // Limpiar input
   event.target.value = ''
-}
-
-// ============================================================================
-// UTILIDADES
-// ============================================================================
-
-const clearFilters = () => {
-  searchQuery.value = ''
-  selectedCategory.value = ''
-  selectedStatus.value = ''
-}
-
-const truncateText = (text, maxLength) => {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength) + '...'
-}
-
-const formatDateTime = (dateString) => {
-  if (!dateString) return 'N/A'
-  try {
-    return new Date(dateString).toLocaleString()
-  } catch (error) {
-    return 'Fecha inválida'
-  }
-}
-
-const formatJSON = (obj) => {
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch (error) {
-    return 'Error formatting JSON: ' + error.message
-  }
 }
 
 // ============================================================================
@@ -833,7 +552,7 @@ onMounted(async () => {
     loadPromptsSystemStatus()
   ])
   
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  // ✅ EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - NOMBRES EXACTOS
   window.loadCurrentPrompts = loadCurrentPrompts
   window.updatePrompt = updatePrompt
   window.resetPrompt = resetPrompt
@@ -859,8 +578,8 @@ onUnmounted(() => {
 })
 
 // Watcher para recargar cuando cambie la empresa
-watch(() => appStore.currentCompanyId, () => {
-  if (appStore.currentCompanyId) {
+watch(() => appStore.currentCompanyId, (newCompanyId) => {
+  if (newCompanyId) {
     loadCurrentPrompts()
     loadPromptsSystemStatus()
   }
@@ -943,57 +662,14 @@ watch(() => appStore.currentCompanyId, () => {
   color: var(--success-color);
 }
 
-.prompts-filters {
-  margin-bottom: 25px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 20px;
+.admin-tools {
+  margin-bottom: 30px;
 }
 
-.filter-controls {
-  display: flex;
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 15px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.search-box {
-  position: relative;
-  flex: 1;
-  min-width: 250px;
-}
-
-.search-input {
-  width: 100%;
-  padding: 10px 40px 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-}
-
-.search-icon {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-muted);
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.filter-select {
-  padding: 8px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  min-width: 150px;
 }
 
 .prompts-container {
@@ -1013,7 +689,7 @@ watch(() => appStore.currentCompanyId, () => {
   border-top: 4px solid var(--primary-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin: 0 auto 15px;
+  margin: 0 auto 20px;
 }
 
 @keyframes spin {
@@ -1027,15 +703,9 @@ watch(() => appStore.currentCompanyId, () => {
   color: var(--text-secondary);
 }
 
-.empty-icon {
-  font-size: 4rem;
-  margin-bottom: 15px;
-  opacity: 0.6;
-}
-
 .prompts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
   gap: 20px;
 }
 
@@ -1043,211 +713,89 @@ watch(() => appStore.currentCompanyId, () => {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  overflow: hidden;
-  transition: var(--transition-normal);
-  box-shadow: var(--shadow-sm);
-}
-
-.prompt-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-
-.prompt-card.prompt-modified {
-  border-left: 4px solid var(--warning-color);
-}
-
-.prompt-card.prompt-inactive {
-  opacity: 0.7;
-  border-left: 4px solid var(--text-muted);
-}
-
-.prompt-header {
-  padding: 15px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.prompt-title {
-  margin-bottom: 10px;
-}
-
-.prompt-title h4 {
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
-  font-size: 1.1rem;
-}
-
-.prompt-badges {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.badge {
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  font-weight: 500;
-}
-
-.badge-category {
-  background: var(--info-color);
-  color: white;
-}
-
-.badge-modified {
-  background: var(--warning-color);
-  color: white;
-}
-
-.badge-status {
-  font-weight: 600;
-}
-
-.badge-active {
-  background: var(--success-color);
-  color: white;
-}
-
-.badge-inactive {
-  background: var(--text-muted);
-  color: white;
-}
-
-.prompt-actions {
-  display: flex;
-  gap: 5px;
-  margin-top: 10px;
-}
-
-.prompt-content {
-  padding: 15px;
-}
-
-.prompt-description {
-  color: var(--text-secondary);
-  margin-bottom: 10px;
-  font-style: italic;
-}
-
-.prompt-preview {
-  margin-bottom: 15px;
-}
-
-.prompt-text {
-  background: var(--bg-secondary);
-  padding: 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-  font-family: monospace;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.prompt-metadata {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.metadata-item {
-  display: flex;
-  gap: 5px;
-}
-
-.metadata-label {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-}
-
-.metadata-value {
-  color: var(--text-primary);
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.system-tools {
-  margin-bottom: 30px;
-}
-
-.tools-card {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
   padding: 20px;
   box-shadow: var(--shadow-sm);
 }
 
-.tools-card h3 {
-  color: var(--text-primary);
+.prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 15px;
 }
 
-.tools-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 15px;
-}
-
-.tool-button {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  padding: 15px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: var(--transition-normal);
-  text-align: left;
-}
-
-.tool-button:hover:not(:disabled) {
-  background: var(--bg-tertiary);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
-}
-
-.tool-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.tool-icon {
-  font-size: 1.5rem;
-  width: 40px;
-  text-align: center;
-}
-
-.tool-content {
-  flex: 1;
-}
-
-.tool-title {
-  font-weight: 500;
+.prompt-header h4 {
   color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.tool-description {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-}
-
-.tool-loading {
+  margin: 0;
   font-size: 1.2rem;
 }
 
-.prompt-modal {
+.prompt-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.prompt-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.prompt-status {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.prompt-status.modified {
+  background: var(--warning-light);
+  color: var(--warning-color);
+}
+
+.prompt-version {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.prompt-content {
+  margin-bottom: 15px;
+}
+
+.prompt-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px var(--primary-light);
+}
+
+.prompt-footer {
+  text-align: right;
+}
+
+/* Modal Styles */
+.modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1257,16 +805,15 @@ watch(() => appStore.currentCompanyId, () => {
 .modal-content {
   background: var(--bg-primary);
   border-radius: var(--radius-lg);
+  width: 90%;
   max-width: 800px;
   max-height: 90vh;
-  width: 90%;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
+  box-shadow: var(--shadow-lg);
 }
 
-.modal-content.large {
-  max-width: 1000px;
+.preview-modal {
+  max-width: 900px;
 }
 
 .modal-header {
@@ -1277,147 +824,88 @@ watch(() => appStore.currentCompanyId, () => {
   border-bottom: 1px solid var(--border-color);
 }
 
-.modal-header h4 {
+.modal-header h3 {
   margin: 0;
   color: var(--text-primary);
 }
 
-.close-button {
-  background: var(--error-color);
-  color: white;
+.btn-close {
+  background: none;
   border: none;
-  border-radius: 50%;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 1.2rem;
   cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.btn-close:hover {
+  color: var(--text-primary);
 }
 
 .modal-body {
-  flex: 1;
   padding: 20px;
+  max-height: 60vh;
   overflow-y: auto;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.form-group.full-width {
-  grid-column: 1 / -1;
-}
-
-.form-group label {
-  font-weight: 500;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.form-group input,
-.form-group textarea,
-.form-group select {
-  padding: 8px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-}
-
-.prompt-textarea {
-  font-family: monospace;
-  resize: vertical;
-  min-height: 300px;
-}
-
-.textarea-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 5px;
-}
-
-.char-count {
-  font-size: 0.8rem;
-  color: var(--text-muted);
 }
 
 .modal-footer {
   padding: 20px;
   border-top: 1px solid var(--border-color);
+  text-align: right;
 }
 
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.preview-content {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.preview-section h5 {
+.preview-response h5 {
   color: var(--text-primary);
   margin-bottom: 10px;
 }
 
 .preview-text {
   background: var(--bg-secondary);
-  padding: 15px;
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-light);
-  font-family: monospace;
-  line-height: 1.6;
+  padding: 15px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  line-height: 1.4;
   white-space: pre-wrap;
-  word-break: break-word;
+  color: var(--text-primary);
+  margin-bottom: 20px;
 }
 
-.variables-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.preview-debug {
+  margin-top: 20px;
 }
 
-.variable-item code {
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.info-grid span {
+  padding: 8px;
   background: var(--bg-tertiary);
-  padding: 4px 8px;
   border-radius: var(--radius-sm);
-  font-size: 0.9rem;
-  color: var(--primary-color);
+  font-size: 0.8rem;
 }
 
-.metadata-json {
-  background: var(--bg-secondary);
-  padding: 15px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-light);
-  overflow-x: auto;
-  font-size: 0.9rem;
-}
-
+/* Button Styles */
 .btn {
   padding: 8px 16px;
   border: none;
   border-radius: var(--radius-md);
-  font-weight: 500;
   cursor: pointer;
-  transition: var(--transition-fast);
+  font-weight: 500;
+  text-decoration: none;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8rem;
 }
 
 .btn-primary {
@@ -1425,14 +913,27 @@ watch(() => appStore.currentCompanyId, () => {
   color: white;
 }
 
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-dark);
+}
+
 .btn-secondary {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+  border: 1px solid var(--border-color);
 }
 
-.btn-info {
-  background: var(--info-color);
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-secondary);
+}
+
+.btn-success {
+  background: var(--success-color);
   color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: var(--success-dark);
 }
 
 .btn-warning {
@@ -1440,19 +941,17 @@ watch(() => appStore.currentCompanyId, () => {
   color: white;
 }
 
-.btn-xs {
-  padding: 4px 8px;
-  font-size: 0.8rem;
+.btn-warning:hover:not(:disabled) {
+  background: var(--warning-dark);
 }
 
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 0.9rem;
+.btn-info {
+  background: var(--info-color);
+  color: white;
 }
 
-.btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+.btn-info:hover:not(:disabled) {
+  background: var(--info-dark);
 }
 
 .btn:disabled {
@@ -1460,44 +959,42 @@ watch(() => appStore.currentCompanyId, () => {
   cursor: not-allowed;
 }
 
-@media (max-width: 768px) {
-  .filter-controls {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .search-box {
-    min-width: auto;
-  }
-  
-  .prompts-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .tools-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .modal-content {
-    margin: 10px;
-    width: auto;
-    max-height: calc(100vh - 20px);
-  }
-  
-  .modal-actions {
-    flex-direction: column;
-  }
-  
-  .status-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .prompt-metadata {
-    flex-direction: column;
+/* CSS Variables - Asumiendo que están definidas globalmente */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #e9ecef;
+  --text-primary: #212529;
+  --text-secondary: #6c757d;
+  --text-muted: #adb5bd;
+  --border-color: #dee2e6;
+  --primary-color: #007bff;
+  --primary-dark: #0056b3;
+  --primary-light: rgba(0, 123, 255, 0.25);
+  --success-color: #28a745;
+  --success-dark: #1e7e34;
+  --warning-color: #ffc107;
+  --warning-dark: #d39e00;
+  --warning-light: rgba(255, 193, 7, 0.1);
+  --info-color: #17a2b8;
+  --info-dark: #117a8b;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2d2d2d;
+    --bg-tertiary: #404040;
+    --text-primary: #ffffff;
+    --text-secondary: #adb5bd;
+    --text-muted: #6c757d;
+    --border-color: #404040;
   }
 }
 </style>
