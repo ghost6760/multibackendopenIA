@@ -15,6 +15,11 @@ RUN apt-get update && \
 # npm config para menos ruido
 RUN npm config set audit false && npm config set fund false && npm config set loglevel warn
 
+# --- FORZAR INSTALACIÓN DE devDependencies en ESTA ETAPA ---
+# algunas plataformas exportan NPM_CONFIG_PRODUCTION=true; anulamos eso aquí
+ENV NODE_ENV=development
+ENV NPM_CONFIG_PRODUCTION=false
+
 # Copiar package.json(s) al contexto raíz del builder (para npm ci)
 COPY src/package*.json ./
 
@@ -24,9 +29,9 @@ COPY src/index.html ./
 # Copiar el resto del frontend en /frontend/src
 COPY src/ ./src/
 
-# Instalar dependencias (en /frontend, usando package.json copiado)
+# Instalar dependencias (AHORA incluirá devDependencies)
 RUN if [ -f package-lock.json ]; then \
-      echo "✅ package-lock.json encontrado -> npm ci"; \
+      echo "✅ package-lock.json encontrado -> npm ci (incluye devDependencies)"; \
       npm ci; \
     else \
       echo "⚠ package-lock.json no encontrado -> npm install --package-lock-only && npm ci"; \
