@@ -1,79 +1,162 @@
-/**
- * stores/app.js - Store Principal de la Aplicación
- * MIGRADO DE: Variables globales y funciones de script.js
- * PRESERVAR: Estado y comportamiento exacto del sistema original
- * SOPORTE: Notificaciones, SystemLog, Empresas, Tabs, Cache
- */
+// stores/app.js - Store Principal de Pinia
+// Migración de variables globales desde script.js a Vue.js 3 + Pinia
 
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watchEffect } from 'vue'
 
 export const useAppStore = defineStore('app', () => {
   // ============================================================================
-  // ESTADO PRINCIPAL - MIGRADO DESDE SCRIPT.JS
+  // VARIABLES GLOBALES MIGRADAS DESDE SCRIPT.JS
   // ============================================================================
-
-  // Empresa actual - CRÍTICO para prompts
-  const currentCompanyId = ref('benova') // Default como en script.js
-  const companies = ref([])
-  const isLoadingCompanies = ref(false)
-
-  // Sistema de tabs
+  
+  // Configuración API - PRESERVAR VALORES EXACTOS
+  const API_BASE_URL = ref(window.location.origin)
+  const DEFAULT_COMPANY_ID = ref('benova')
+  
+  // Estado global principal - MIGRADO DE script.js
+  const currentCompanyId = ref(DEFAULT_COMPANY_ID.value)
+  const monitoringInterval = ref(null)
+  const systemLog = ref([])
+  const adminApiKey = ref(null)
+  
+  // Cache del sistema - MIGRADO DE script.js
+  const cache = ref({
+    companies: null,
+    systemInfo: null,
+    lastUpdate: {}
+  })
+  
+  // Estado de UI
   const activeTab = ref('dashboard')
-  const availableTabs = ref([
-    'dashboard', 'documents', 'conversations', 
-    'multimedia', 'prompts', 'admin', 'enterprise', 'health'
-  ])
-
-  // Loading states
   const isLoadingOverlay = ref(false)
-  const loadingStates = ref({})
-
-  // API Key management
-  const adminApiKey = ref('')
-  const isApiKeyValid = ref(false)
-
-  // ============================================================================
-  // SISTEMA DE NOTIFICACIONES - REQUERIDO POR USENOTIFICATIONS
-  // ============================================================================
-
   const notifications = ref([])
-  let notificationIdCounter = 0
-
+  
+  // ============================================================================
+  // COMPUTED PROPERTIES
+  // ============================================================================
+  
+  const hasCompanySelected = computed(() => {
+    return Boolean(currentCompanyId.value)
+  })
+  
+  const isMonitoringActive = computed(() => {
+    return Boolean(monitoringInterval.value)
+  })
+  
+  const recentLogEntries = computed(() => {
+    return systemLog.value.slice(-20).reverse()
+  })
+  
+  const systemStats = computed(() => {
+    return {
+      totalLogs: systemLog.value.length,
+      errorCount: systemLog.value.filter(entry => entry.level === 'error').length,
+      warningCount: systemLog.value.filter(entry => entry.level === 'warning').length,
+      lastActivity: systemLog.value.length > 0 
+        ? systemLog.value[systemLog.value.length - 1].timestamp 
+        : null
+    }
+  })
+  
+  // ============================================================================
+  // ACTIONS - MIGRADAS DESDE FUNCIONES GLOBALES
+  // ============================================================================
+  
   /**
-   * Agrega una notificación al sistema
-   * REQUERIDO POR: useNotifications.js
+   * Agregar entrada al log del sistema
+   * MIGRADO: addToLog() de script.js
+   */
+  const addToLog = (message, level = 'info') => {
+    const timestamp = new Date().toISOString().substring(0, 19).replace('T', ' ')
+    const logEntry = {
+      timestamp,
+      level,
+      message,
+      id: Date.now() + Math.random() // Para keys de Vue
+    }
+    
+    systemLog.value.push(logEntry)
+    
+    // Mantener solo los últimos 100 logs - PRESERVAR COMPORTAMIENTO ORIGINAL
+    if (systemLog.value.length > 100) {
+      systemLog.value.shift()
+    }
+    
+    // Emitir evento para componentes que necesiten reaccionar
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new CustomEvent('systemLogUpdated', { 
+        detail: logEntry 
+      }))
+    }
+  }
+  
+  /**
+   * Limpiar log del sistema
+   * MIGRADO: clearSystemLog() de script.js
+   */
+  const clearSystemLog = () => {
+    systemLog.value = []
+    addToLog('System log cleared', 'info')
+  }
+  
+  /**
+   * Cambiar empresa activa
+   * MIGRADO: handleCompanyChange() de script.js
+   */
+  const setCurrentCompany = (companyId) => {
+    if (companyId !== currentCompanyId.value) {
+      const previousCompany = currentCompanyId.value
+      currentCompanyId.value = companyId
+      
+      // Limpiar cache relacionado con empresas - PRESERVAR COMPORTAMIENTO
+      cache.value.lastUpdate = {}
+      
+      addToLog(`Company changed: ${previousCompany} → ${companyId}`, 'info')
+      
+      // Emitir evento para que los componentes reaccionen
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('companyChanged', { 
+          detail: { previous: previousCompany, current: companyId }
+        }))
+      }
+    }
+  }
+  
+  /**
+   * Gestión del overlay de carga
+   * MIGRADO: toggleLoadingOverlay() de script.js
+   */
+  const setLoadingOverlay = (show) => {
+    isLoadingOverlay.value = show
+  }
+  
+  /**
+   * Agregar notificación
+   * MIGRADO: showNotification() de script.js
    */
   const addNotification = (message, type = 'info', duration = 5000) => {
-    const id = `notification_${++notificationIdCounter}_${Date.now()}`
-    
     const notification = {
-      id,
+      id: Date.now() + Math.random(),
       message,
       type,
-      timestamp: Date.now(),
       duration,
-      visible: true
+      timestamp: Date.now()
     }
     
     notifications.value.push(notification)
     
-    // Auto-remove si tiene duración
+    // Auto-remover después de la duración especificada
     if (duration > 0) {
       setTimeout(() => {
-        removeNotification(id)
+        removeNotification(notification.id)
       }, duration)
     }
     
-    // También crear notificación DOM para compatibilidad con script.js
-    createDOMNotification(message, type, duration)
-    
-    return id
+    return notification.id
   }
-
+  
   /**
-   * Remueve una notificación específica
-   * REQUERIDO POR: useNotifications.js
+   * Remover notificación por ID
    */
   const removeNotification = (notificationId) => {
     const index = notifications.value.findIndex(n => n.id === notificationId)
@@ -81,417 +164,142 @@ export const useAppStore = defineStore('app', () => {
       notifications.value.splice(index, 1)
     }
   }
-
+  
   /**
-   * Limpia todas las notificaciones
-   */
-  const clearAllNotifications = () => {
-    notifications.value.splice(0)
-  }
-
-  /**
-   * Crea notificación DOM para compatibilidad con script.js original
-   */
-  const createDOMNotification = (message, type, duration) => {
-    // Buscar o crear container
-    let container = document.getElementById('notificationContainer')
-    if (!container) {
-      container = document.createElement('div')
-      container.id = 'notificationContainer'
-      container.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 10000;
-        pointer-events: none;
-      `
-      document.body.appendChild(container)
-    }
-    
-    // Crear notificación
-    const notification = document.createElement('div')
-    notification.className = `notification notification-${type}`
-    notification.textContent = message
-    notification.style.cssText = `
-      margin-bottom: 10px;
-      padding: 12px 20px;
-      border-radius: 6px;
-      color: white;
-      font-weight: 500;
-      transform: translateX(400px);
-      transition: transform 0.3s ease;
-      pointer-events: auto;
-      ${getNotificationStyles(type)}
-    `
-    
-    container.appendChild(notification)
-    
-    // Mostrar con animación
-    setTimeout(() => {
-      notification.style.transform = 'translateX(0)'
-    }, 100)
-    
-    // Ocultar y remover
-    if (duration > 0) {
-      setTimeout(() => {
-        notification.style.transform = 'translateX(400px)'
-        setTimeout(() => {
-          if (container.contains(notification)) {
-            container.removeChild(notification)
-          }
-        }, 300)
-      }, duration)
-    }
-  }
-
-  /**
-   * Estilos para notificaciones DOM
-   */
-  const getNotificationStyles = (type) => {
-    const styles = {
-      info: 'background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);',
-      success: 'background: linear-gradient(135deg, #38a169 0%, #2f855a 100%);',
-      warning: 'background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);',
-      error: 'background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);'
-    }
-    return styles[type] || styles.info
-  }
-
-  // ============================================================================
-  // SISTEMA DE LOG - REQUERIDO POR USESYSTEMLOG
-  // ============================================================================
-
-  const systemLog = ref([])
-  const maxLogEntries = ref(100)
-
-  /**
-   * Agrega entrada al log del sistema
-   * REQUERIDO POR: useSystemLog.js y script.js original
-   */
-  const addToLog = (message, level = 'info') => {
-    const timestamp = new Date().toISOString().substring(0, 19).replace('T', ' ')
-    const logEntry = {
-      id: `log_${Date.now()}_${Math.random()}`,
-      timestamp,
-      level,
-      message,
-      fullTimestamp: new Date()
-    }
-    
-    systemLog.value.push(logEntry)
-    
-    // Mantener límite de entradas
-    if (systemLog.value.length > maxLogEntries.value) {
-      systemLog.value.shift()
-    }
-    
-    // Console log para debugging
-    const consoleMethods = {
-      info: 'log',
-      warning: 'warn', 
-      error: 'error',
-      success: 'log'
-    }
-    const method = consoleMethods[level] || 'log'
-    console[method](`[${timestamp}] [${level.toUpperCase()}] ${message}`)
-    
-    // Actualizar DOM log si existe
-    updateDOMLogDisplay()
-  }
-
-  /**
-   * Actualiza la visualización DOM del log para compatibilidad
-   */
-  const updateDOMLogDisplay = () => {
-    const logContainer = document.getElementById('systemLog')
-    if (!logContainer) return
-    
-    const logHTML = systemLog.value.slice(-20).map(entry => `
-      <div class="log-entry log-${entry.level}">
-        <span class="log-timestamp">[${entry.timestamp}]</span>
-        <span class="log-level">[${entry.level.toUpperCase()}]</span>
-        <span class="log-message">${entry.message}</span>
-      </div>
-    `).join('')
-    
-    logContainer.innerHTML = logHTML
-    logContainer.scrollTop = logContainer.scrollHeight
-  }
-
-  /**
-   * Limpia el log del sistema
-   */
-  const clearSystemLog = () => {
-    const previousLength = systemLog.value.length
-    systemLog.value.splice(0)
-    addToLog(`System log cleared (${previousLength} entries removed)`, 'info')
-  }
-
-  // ============================================================================
-  // GESTIÓN DE EMPRESAS - CRÍTICO PARA PROMPTS
-  // ============================================================================
-
-  /**
-   * Cambia la empresa actual
-   * MIGRADO: changeCompany() de script.js
-   */
-  const setCurrentCompanyId = (companyId) => {
-    if (!companyId) {
-      addToLog('Invalid company ID provided', 'error')
-      return false
-    }
-    
-    const oldCompanyId = currentCompanyId.value
-    currentCompanyId.value = companyId
-    
-    addToLog(`Company changed from ${oldCompanyId} to ${companyId}`, 'info')
-    
-    // Actualizar variable global para compatibilidad
-    if (typeof window !== 'undefined') {
-      window.currentCompanyId = companyId
-    }
-    
-    return true
-  }
-
-  /**
-   * Obtiene la empresa actual
-   */
-  const getCurrentCompany = () => {
-    return companies.value.find(c => c.id === currentCompanyId.value) || null
-  }
-
-  // ============================================================================
-  // GESTIÓN DE TABS
-  // ============================================================================
-
-  /**
-   * Cambia el tab activo
-   * MIGRADO: switchTab() de script.js
+   * Cambiar tab activo
+   * MIGRADO: switchTab() de script.js (parte de la lógica)
    */
   const setActiveTab = (tabName) => {
-    if (!availableTabs.value.includes(tabName)) {
-      addToLog(`Invalid tab name: ${tabName}`, 'error')
+    // Validación para tabs que requieren empresa seleccionada
+    const requiresCompany = ['prompts', 'documents', 'conversations']
+    
+    if (requiresCompany.includes(tabName) && !currentCompanyId.value) {
+      addNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
+      addToLog(`Tab switch blocked: ${tabName} requires company selection`, 'warning')
       return false
     }
     
-    const oldTab = activeTab.value
     activeTab.value = tabName
-    
-    addToLog(`Tab changed from ${oldTab} to ${tabName}`, 'info')
-    
-    // Emitir evento para compatibilidad
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tabChanged', { 
-        detail: { tabId: tabName, oldTab }
-      }))
-    }
-    
+    addToLog(`Switched to tab: ${tabName}`, 'info')
     return true
   }
-
-  // ============================================================================
-  // GESTIÓN DE LOADING STATES
-  // ============================================================================
-
-  const setLoadingOverlay = (visible) => {
-    isLoadingOverlay.value = visible
-  }
-
-  const setLoadingState = (key, loading) => {
-    loadingStates.value[key] = loading
-  }
-
-  const isLoading = (key) => {
-    return loadingStates.value[key] || false
-  }
-
-  // ============================================================================
-  // GESTIÓN DE CACHE - MIGRADO DESDE SCRIPT.JS
-  // ============================================================================
-
-  const cache = ref({
-    companies: null,
-    systemInfo: null,
-    lastUpdate: {},
-    prompts: {},
-    documents: {},
-    conversations: {}
-  })
-
-  const setCacheData = (key, data) => {
+  
+  /**
+   * Actualizar cache del sistema
+   */
+  const updateCache = (key, data) => {
     cache.value[key] = data
     cache.value.lastUpdate[key] = Date.now()
-    addToLog(`Cache updated: ${key}`, 'info')
   }
-
-  const getCacheData = (key) => {
-    return cache.value[key]
+  
+  /**
+   * Verificar si el cache es válido (no expirado)
+   */
+  const isCacheValid = (key, maxAge = 300000) => { // 5 minutos por defecto
+    const lastUpdate = cache.value.lastUpdate[key]
+    if (!lastUpdate) return false
+    
+    return (Date.now() - lastUpdate) < maxAge
   }
-
-  const clearCache = (key = null) => {
-    if (key) {
-      delete cache.value[key]
-      delete cache.value.lastUpdate[key]
-      addToLog(`Cache cleared: ${key}`, 'info')
-    } else {
-      cache.value = {
-        companies: null,
-        systemInfo: null,
-        lastUpdate: {},
-        prompts: {},
-        documents: {},
-        conversations: {}
-      }
-      addToLog('All cache cleared', 'info')
+  
+  /**
+   * Inicializar monitoreo en tiempo real
+   * MIGRADO: startRealTimeMonitoring() de script.js
+   */
+  const startMonitoring = (callback, interval = 30000) => {
+    if (monitoringInterval.value) {
+      clearInterval(monitoringInterval.value)
+    }
+    
+    monitoringInterval.value = setInterval(callback, interval)
+    addToLog('Real-time monitoring started', 'info')
+  }
+  
+  /**
+   * Detener monitoreo en tiempo real
+   * MIGRADO: stopRealTimeMonitoring() de script.js
+   */
+  const stopMonitoring = () => {
+    if (monitoringInterval.value) {
+      clearInterval(monitoringInterval.value)
+      monitoringInterval.value = null
+      addToLog('Real-time monitoring stopped', 'info')
     }
   }
-
+  
   // ============================================================================
-  // COMPUTED PROPERTIES
+  // MANTENER COMPATIBILIDAD CON VARIABLES GLOBALES
   // ============================================================================
-
-  const hasCompanySelected = computed(() => {
-    return currentCompanyId.value && currentCompanyId.value.trim() !== ''
-  })
-
-  const notificationCount = computed(() => {
-    return notifications.value.length
-  })
-
-  const errorNotificationCount = computed(() => {
-    return notifications.value.filter(n => n.type === 'error').length
-  })
-
-  const recentSystemErrors = computed(() => {
-    return systemLog.value.filter(entry => entry.level === 'error').slice(-5)
-  })
-
-  const systemLogCount = computed(() => {
-    return systemLog.value.length
-  })
-
-  const currentCompanyInfo = computed(() => {
-    return getCurrentCompany()
-  })
-
-  // ============================================================================
-  // WATCHERS
-  // ============================================================================
-
-  // Watcher para sincronizar con variables globales
-  watch(currentCompanyId, (newId) => {
+  
+  // CRÍTICO: Sincronizar store con variables globales para preservar compatibilidad
+  watchEffect(() => {
     if (typeof window !== 'undefined') {
-      window.currentCompanyId = newId
+      // Mantener variables globales sincronizadas
+      window.currentCompanyId = currentCompanyId.value
+      window.systemLog = systemLog.value
+      window.cache = cache.value
+      window.ADMIN_API_KEY = adminApiKey.value
+      
+      // Mantener constantes globales
+      window.API_BASE_URL = API_BASE_URL.value
+      window.DEFAULT_COMPANY_ID = DEFAULT_COMPANY_ID.value
     }
   })
-
-  // Watcher para limpiar cache cuando cambie la empresa
-  watch(currentCompanyId, (newId, oldId) => {
-    if (newId !== oldId) {
-      // Limpiar cache específico de empresa
-      clearCache('prompts')
-      clearCache('documents')
-      clearCache('conversations')
+  
+  // ============================================================================
+  // CLEANUP AL DESTRUIR EL STORE
+  // ============================================================================
+  
+  const $dispose = () => {
+    // Limpiar intervalos activos
+    if (monitoringInterval.value) {
+      clearInterval(monitoringInterval.value)
     }
-  })
-
-  // ============================================================================
-  // FUNCIONES DE UTILIDAD
-  // ============================================================================
-
-  /**
-   * Función helper para notificaciones rápidas
-   */
-  const showNotification = (message, type = 'info', duration = 5000) => {
-    return addNotification(message, type, duration)
-  }
-
-  /**
-   * Reinicia el estado de la aplicación
-   */
-  const resetAppState = () => {
-    clearAllNotifications()
-    clearSystemLog()
-    clearCache()
-    activeTab.value = 'dashboard'
-    addToLog('Application state reset', 'info')
-  }
-
-  /**
-   * Obtiene el estado completo para debugging
-   */
-  const getAppState = () => {
-    return {
-      currentCompanyId: currentCompanyId.value,
-      activeTab: activeTab.value,
-      hasCompanySelected: hasCompanySelected.value,
-      notificationCount: notificationCount.value,
-      systemLogCount: systemLogCount.value,
-      cache: Object.keys(cache.value).reduce((acc, key) => {
-        acc[key] = cache.value[key] ? 'present' : 'null'
-        return acc
-      }, {})
+    
+    // Limpiar variables globales
+    if (typeof window !== 'undefined') {
+      delete window.currentCompanyId
+      delete window.systemLog
+      delete window.cache
+      delete window.ADMIN_API_KEY
     }
   }
-
+  
   // ============================================================================
-  // RETURN STORE API
+  // RETURN DEL STORE
   // ============================================================================
-
+  
   return {
-    // Estado principal
+    // State
+    API_BASE_URL,
+    DEFAULT_COMPANY_ID,
     currentCompanyId,
-    companies,
-    isLoadingCompanies,
-    activeTab,
-    availableTabs,
-    isLoadingOverlay,
-    loadingStates,
-    adminApiKey,
-    isApiKeyValid,
-
-    // Sistema de notificaciones (REQUERIDO POR useNotifications)
-    notifications,
-    addNotification,
-    removeNotification,
-    clearAllNotifications,
-
-    // Sistema de log (REQUERIDO POR useSystemLog)
+    monitoringInterval,
     systemLog,
-    maxLogEntries,
+    adminApiKey,
+    cache,
+    activeTab,
+    isLoadingOverlay,
+    notifications,
+    
+    // Computed
+    hasCompanySelected,
+    isMonitoringActive,
+    recentLogEntries,
+    systemStats,
+    
+    // Actions
     addToLog,
     clearSystemLog,
-
-    // Gestión de empresas
-    setCurrentCompanyId,
-    getCurrentCompany,
-
-    // Gestión de tabs
-    setActiveTab,
-
-    // Loading states
+    setCurrentCompany,
     setLoadingOverlay,
-    setLoadingState,
-    isLoading,
-
-    // Cache
-    cache,
-    setCacheData,
-    getCacheData,
-    clearCache,
-
-    // Computed properties
-    hasCompanySelected,
-    notificationCount,
-    errorNotificationCount,
-    recentSystemErrors,
-    systemLogCount,
-    currentCompanyInfo,
-
-    // Utilidades
-    showNotification,
-    resetAppState,
-    getAppState
+    addNotification,
+    removeNotification,
+    setActiveTab,
+    updateCache,
+    isCacheValid,
+    startMonitoring,
+    stopMonitoring,
+    $dispose
   }
 })
