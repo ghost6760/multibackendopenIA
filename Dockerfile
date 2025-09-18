@@ -15,42 +15,35 @@ RUN apt-get update && \
 RUN npm config set audit false && npm config set fund false && npm config set loglevel warn
 
 # ---- FORZAR instalación de devDependencies SOLO en esta etapa ----
-# Algunas plataformas/CI exportan NPM_CONFIG_PRODUCTION=true. Lo anulamos aquí.
 ENV NODE_ENV=development
 ENV NPM_CONFIG_PRODUCTION=false
 
-# Copiar package.json(s) al contexto raíz del builder (para npm ci)
-COPY src/package*.json ./
-
-# Copiar index.html al root para que Vite lo encuentre como entrada
-COPY src/index.html ./
-
-# Copiar el resto del frontend en /frontend/src
+# Copiar package.json(s) al contexto raíz del builder
+COPY src/package*.json ./ 
+COPY src/index.html ./ 
 COPY src/ ./src/
 
-# Instalar dependencias (AHORA incluirá devDependencies)
+# Instalar dependencias (incluye devDependencies)
 RUN if [ -f package-lock.json ]; then \
       echo "✅ package-lock.json encontrado -> npm ci (incluye devDependencies)"; \
-      npm ci; \
+      npm ci --include=dev; \
     else \
-      echo "⚠ package-lock.json no encontrado -> npm install --package-lock-only && npm ci"; \
-      npm install --package-lock-only && npm ci; \
+      echo "⚠ package-lock.json no encontrado -> npm install --package-lock-only && npm ci --include=dev"; \
+      npm install --package-lock-only && npm ci --include=dev; \
     fi
 
-# Debug: listar archivos clave antes del build (útil en CI)
-RUN echo "🔎 /frontend listado (primeras entradas):" && ls -la /frontend | sed -n '1,200p' || true && \
-    echo "--- /frontend/src ---" && ls -la /frontend/src | sed -n '1,200p' || true
+# Debug node_modules para ver plugin-vue
+RUN ls -la node_modules/@vitejs | grep plugin-vue || echo "❌ plugin-vue no encontrado"
 
-# Ejecutar build desde /frontend (vite encontrará index.html en root y src en /frontend/src)
+# Ejecutar build desde /frontend
 RUN echo "🏗️ Ejecutando npm run build (en /frontend)..." && \
     npm run build 2>&1 | tee /frontend/build.log
 
-# Verificación: dist debe existir en /frontend/dist
+# Verificación dist
 RUN echo "📦 Verificando /frontend/dist ..." && \
     ls -la /frontend/dist || (echo "ERROR: /frontend/dist no existe" && cat /frontend/build.log && exit 1) && \
-    test -f /frontend/dist/index.html || (echo "ERROR: /frontend/dist/index.html no encontrado" && cat /frontend/build.log && exit 1) && \
-    echo "✅ /frontend/dist/index.html existe. Listado (limitado):" && \
-    find /frontend/dist -maxdepth 2 -type f -print | sed -n '1,200p' && du -sh /frontend/dist
+    test -f /frontend/dist/index.html || (echo "ERROR: /frontend/dist/index.html no encontrado" && cat /frontend/build.log && exit 1)
+
 
 # --- STAGE 2: Backend Python + static files ---
 FROM python:3.11-slim
