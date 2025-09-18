@@ -452,9 +452,15 @@ const loadPromptsSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    const response = await apiRequest('/api/admin/prompts/status')
+    // ✅ ENDPOINT CORREGIDO - Usar /api/admin/status como en script.js
+    const response = await apiRequest('/api/admin/status')
     
-    systemStatus.value = response.status || response
+    // Buscar en response.prompt_system como en script.js original
+    if (response && response.prompt_system) {
+      systemStatus.value = response.prompt_system
+    } else {
+      systemStatus.value = response
+    }
     
     appStore.addToLog('Prompts system status loaded', 'info')
     
