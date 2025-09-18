@@ -18,7 +18,7 @@ RUN npm config set audit false && \
 # Copiar archivos de dependencias (pueden o no existir)
 COPY src/package.json ./
 # Intentar copiar package-lock.json si existe (no falla si no existe)
-COPY src/package-loc[k].json ./
+COPY src/package-lock.json ./
 
 # 🔧 ESTRATEGIA CORREGIDA: Instalar TODAS las dependencias (incluyendo devDependencies)
 RUN echo "📦 Estrategia corregida de instalación..." && \
