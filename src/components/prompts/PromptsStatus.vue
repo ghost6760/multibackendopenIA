@@ -1,4 +1,3 @@
-<!-- PromptsStatus.vue - CORREGIDO con endpoints exactos del script.js -->
 <template>
   <div class="prompts-status-container">
     <!-- Header -->
@@ -74,6 +73,52 @@
             <span class="detail-label">Prompts Personalizados:</span>
             <span class="detail-value">{{ systemStatus.total_custom_prompts || 0 }}</span>
           </div>
+          
+          <!-- Migration Button -->
+          <div v-if="showMigrationButton" class="migration-section">
+            <button 
+              @click="migrateToPostgreSQL"
+              class="btn-migrate"
+              :disabled="isMigrating"
+            >
+              <span v-if="isMigrating">⏳ Migrando...</span>
+              <span v-else>🚀 Migrar a PostgreSQL</span>
+            </button>
+            <p class="migration-help">Crea las tablas necesarias en PostgreSQL</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Performance Metrics -->
+      <div v-if="systemStatus.metrics" class="status-card performance-metrics">
+        <div class="status-card-header">
+          <h4>📊 Métricas de Rendimiento</h4>
+        </div>
+        
+        <div class="status-card-body">
+          <div class="metrics-grid">
+            <div v-if="systemStatus.metrics.avg_response_time" class="metric-item">
+              <span class="metric-label">Tiempo promedio:</span>
+              <span class="metric-value">{{ systemStatus.metrics.avg_response_time }}ms</span>
+            </div>
+            
+            <div v-if="systemStatus.metrics.total_requests" class="metric-item">
+              <span class="metric-label">Total requests:</span>
+              <span class="metric-value">{{ systemStatus.metrics.total_requests }}</span>
+            </div>
+            
+            <div v-if="systemStatus.metrics.cache_hit_rate" class="metric-item">
+              <span class="metric-label">Cache hit rate:</span>
+              <span class="metric-value">{{ systemStatus.metrics.cache_hit_rate }}%</span>
+            </div>
+            
+            <div v-if="systemStatus.metrics.error_rate" class="metric-item">
+              <span class="metric-label">Error rate:</span>
+              <span class="metric-value" :class="{ 'error': systemStatus.metrics.error_rate > 5 }">
+                {{ systemStatus.metrics.error_rate }}%
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -91,17 +136,72 @@
               <span class="health-value success">✅ Operativo</span>
             </div>
             
+            <!-- Agents Status -->
+            <div class="health-item" v-if="systemStatus.agents_status">
+              <span class="health-label">Agentes:</span>
+              <span class="health-value" :class="getAgentsStatusClass()">
+                {{ getAgentsStatusText() }}
+              </span>
+            </div>
+            
             <!-- Last Update -->
             <div class="health-item" v-if="systemStatus.last_updated">
               <span class="health-label">Última actualización:</span>
               <span class="health-value">{{ formatDateTime(systemStatus.last_updated) }}</span>
             </div>
             
-            <!-- Current Company -->
-            <div class="health-item">
-              <span class="health-label">Empresa activa:</span>
-              <span class="health-value">{{ appStore.currentCompanyId || 'Ninguna' }}</span>
+            <!-- Uptime -->
+            <div class="health-item" v-if="systemStatus.uptime">
+              <span class="health-label">Uptime:</span>
+              <span class="health-value">{{ formatUptime(systemStatus.uptime) }}</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Tools -->
+      <div class="status-card system-tools">
+        <div class="status-card-header">
+          <h4>🔧 Herramientas del Sistema</h4>
+        </div>
+        
+        <div class="status-card-body">
+          <div class="tools-grid">
+            <button 
+              @click="repairAllPrompts"
+              class="tool-button repair-btn"
+              :disabled="isProcessing"
+            >
+              <span v-if="isProcessing">⏳ Reparando...</span>
+              <span v-else>🔧 Reparar Todos los Prompts</span>
+            </button>
+            
+            <button 
+              @click="validatePrompts"
+              class="tool-button validate-btn"
+              :disabled="isProcessing"
+            >
+              <span v-if="isProcessing">⏳ Validando...</span>
+              <span v-else>✅ Validar Prompts</span>
+            </button>
+            
+            <button 
+              @click="optimizeDatabase"
+              class="tool-button optimize-btn"
+              :disabled="isProcessing || !systemStatus.postgresql_available"
+            >
+              <span v-if="isProcessing">⏳ Optimizando...</span>
+              <span v-else>⚡ Optimizar BD</span>
+            </button>
+            
+            <button 
+              @click="exportSystemReport"
+              class="tool-button export-btn"
+              :disabled="isProcessing"
+            >
+              <span v-if="isProcessing">⏳ Exportando...</span>
+              <span v-else>📄 Exportar Reporte</span>
+            </button>
           </div>
         </div>
       </div>
@@ -135,6 +235,8 @@ const { showNotification } = useNotifications()
 
 const systemStatus = ref(null)
 const isLoading = ref(false)
+const isMigrating = ref(false)
+const isProcessing = ref(false)
 const error = ref(null)
 const lastUpdated = ref(null)
 const refreshInterval = ref(null)
@@ -175,14 +277,18 @@ const databaseStatusText = computed(() => {
   }
 })
 
+const showMigrationButton = computed(() => {
+  if (!systemStatus.value) return false
+  return systemStatus.value.postgresql_available && !systemStatus.value.tables_exist
+})
+
 // ============================================================================
-// FUNCIONES PRINCIPALES - ENDPOINT CORREGIDO
+// FUNCIONES PRINCIPALES - MIGRADAS DEL SCRIPT.JS
 // ============================================================================
 
 /**
- * Carga el estado del sistema - ENDPOINT CORREGIDO
- * ORIGINAL SCRIPT.JS: `/api/admin/status` ✅ 
- * ANTES (INCORRECTO): `/api/admin/prompts/status` ❌
+ * Carga el estado del sistema - MIGRADO: loadPromptsSystemStatus() de script.js
+ * PRESERVAR: Comportamiento exacto de la función original
  */
 const loadSystemStatus = async () => {
   isLoading.value = true
@@ -191,18 +297,12 @@ const loadSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    // ✅ ENDPOINT CORREGIDO - Como en script.js funcional
-    const response = await apiRequest('/api/admin/status')
+    // PRESERVAR: Endpoint exacto como en script.js
+    const response = await apiRequest('/api/admin/prompts/status')
     
-    // En script.js original, se busca response.prompt_system
-    if (response && response.prompt_system) {
-      systemStatus.value = response.prompt_system
-    } else {
-      // Fallback si viene la respuesta directa
-      systemStatus.value = response
-    }
-    
+    systemStatus.value = response
     lastUpdated.value = new Date().toISOString()
+    
     appStore.addToLog('Prompts system status loaded successfully', 'info')
     
   } catch (error) {
@@ -215,15 +315,179 @@ const loadSystemStatus = async () => {
 }
 
 /**
- * Actualizar estado - MIGRADO de script.js
+ * Migra a PostgreSQL - MIGRADO: migratePromptsToPostgreSQL() de script.js
+ * PRESERVAR: Comportamiento exacto de la función original
+ */
+const migrateToPostgreSQL = async () => {
+  if (!confirm('¿Estás seguro de migrar el sistema de prompts a PostgreSQL? Esta operación puede tardar unos minutos.')) {
+    return
+  }
+  
+  isMigrating.value = true
+  
+  try {
+    appStore.addToLog('Starting prompts migration to PostgreSQL', 'info')
+    
+    // PRESERVAR: Endpoint exacto como en script.js
+    const response = await apiRequest('/api/admin/prompts/migrate', {
+      method: 'POST'
+    })
+    
+    showNotification('Migración completada exitosamente', 'success')
+    appStore.addToLog('Prompts migration completed successfully', 'info')
+    
+    // Recargar estado después de la migración
+    await loadSystemStatus()
+    
+  } catch (error) {
+    appStore.addToLog(`Error during prompts migration: ${error.message}`, 'error')
+    showNotification('Error durante la migración: ' + error.message, 'error')
+  } finally {
+    isMigrating.value = false
+  }
+}
+
+/**
+ * Actualizar estado - MIGRADO: updateSystemStatusDisplay() de script.js
+ * PRESERVAR: Comportamiento exacto de la función original
  */
 const refreshStatus = async () => {
   await loadSystemStatus()
 }
 
 // ============================================================================
+// HERRAMIENTAS DEL SISTEMA
+// ============================================================================
+
+const repairAllPrompts = async () => {
+  if (!confirm('¿Reparar todos los prompts desde el repositorio? Esta operación sobrescribirá prompts corruptos.')) {
+    return
+  }
+  
+  isProcessing.value = true
+  
+  try {
+    appStore.addToLog('Starting repair of all prompts', 'info')
+    
+    const response = await apiRequest('/api/admin/prompts/repair', {
+      method: 'POST',
+      body: {
+        company_id: appStore.currentCompanyId,
+        repair_all: true
+      }
+    })
+    
+    showNotification(`Reparación completada: ${response.repaired_count || 0} prompts reparados`, 'success')
+    
+    // Recargar estado
+    await loadSystemStatus()
+    
+  } catch (error) {
+    showNotification('Error reparando prompts: ' + error.message, 'error')
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+const validatePrompts = async () => {
+  isProcessing.value = true
+  
+  try {
+    const response = await apiRequest('/api/admin/prompts/validate', {
+      method: 'POST'
+    })
+    
+    const { valid, invalid, total } = response
+    showNotification(`Validación completada: ${valid}/${total} prompts válidos`, valid === total ? 'success' : 'warning')
+    
+    if (invalid > 0) {
+      appStore.addToLog(`Found ${invalid} invalid prompts`, 'warning')
+    }
+    
+  } catch (error) {
+    showNotification('Error validando prompts: ' + error.message, 'error')
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+const optimizeDatabase = async () => {
+  if (!confirm('¿Optimizar la base de datos? Esta operación puede tardar unos minutos.')) {
+    return
+  }
+  
+  isProcessing.value = true
+  
+  try {
+    const response = await apiRequest('/api/admin/prompts/optimize', {
+      method: 'POST'
+    })
+    
+    showNotification('Base de datos optimizada exitosamente', 'success')
+    
+    // Recargar estado
+    await loadSystemStatus()
+    
+  } catch (error) {
+    showNotification('Error optimizando base de datos: ' + error.message, 'error')
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+const exportSystemReport = async () => {
+  isProcessing.value = true
+  
+  try {
+    const reportData = {
+      timestamp: new Date().toISOString(),
+      system_status: systemStatus.value,
+      company_id: appStore.currentCompanyId,
+      user_agent: navigator.userAgent,
+      app_version: '1.0.0' // Podría venir de una configuración
+    }
+    
+    const dataStr = JSON.stringify(reportData, null, 2)
+    const dataBlob = new Blob([dataStr], { type: 'application/json' })
+    
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(dataBlob)
+    a.download = `prompts_system_report_${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    
+    URL.revokeObjectURL(a.href)
+    showNotification('Reporte exportado exitosamente', 'success')
+    
+  } catch (error) {
+    showNotification('Error exportando reporte', 'error')
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+// ============================================================================
 // FUNCIONES DE UTILIDADES
 // ============================================================================
+
+const getAgentsStatusClass = () => {
+  if (!systemStatus.value?.agents_status) return ''
+  
+  const { active, total } = systemStatus.value.agents_status
+  const ratio = active / total
+  
+  if (ratio === 1) return 'success'
+  if (ratio >= 0.8) return 'warning'
+  return 'error'
+}
+
+const getAgentsStatusText = () => {
+  if (!systemStatus.value?.agents_status) return 'N/A'
+  
+  const { active, total } = systemStatus.value.agents_status
+  return `${active}/${total} activos`
+}
 
 const formatDateTime = (dateString) => {
   if (!dateString) return 'N/A'
@@ -231,6 +495,22 @@ const formatDateTime = (dateString) => {
     return new Date(dateString).toLocaleString()
   } catch (error) {
     return 'Fecha inválida'
+  }
+}
+
+const formatUptime = (uptime) => {
+  if (!uptime) return 'N/A'
+  
+  const days = Math.floor(uptime / (24 * 60 * 60))
+  const hours = Math.floor((uptime % (24 * 60 * 60)) / (60 * 60))
+  const minutes = Math.floor((uptime % (60 * 60)) / 60)
+  
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m`
+  } else if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  } else {
+    return `${minutes}m`
   }
 }
 
@@ -251,9 +531,10 @@ onMounted(async () => {
     }
   }, 30000)
   
-  // ✅ EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
   if (typeof window !== 'undefined') {
     window.loadPromptsSystemStatus = loadSystemStatus
+    window.migratePromptsToPostgreSQL = migrateToPostgreSQL
     window.updateSystemStatusDisplay = refreshStatus
   }
 })
@@ -267,6 +548,7 @@ onUnmounted(() => {
   // Limpiar funciones globales
   if (typeof window !== 'undefined') {
     delete window.loadPromptsSystemStatus
+    delete window.migratePromptsToPostgreSQL
     delete window.updateSystemStatusDisplay
   }
   
@@ -464,10 +746,136 @@ onUnmounted(() => {
   color: #dc3545;
 }
 
+.migration-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #dee2e6;
+  text-align: center;
+}
+
+.btn-migrate {
+  padding: 12px 24px;
+  background: #17a2b8;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1em;
+  transition: all 0.2s ease;
+}
+
+.btn-migrate:hover:not(:disabled) {
+  background: #117a8b;
+  transform: translateY(-1px);
+}
+
+.btn-migrate:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.migration-help {
+  margin: 10px 0 0 0;
+  font-size: 0.85em;
+  color: #6c757d;
+}
+
+.metrics-grid,
 .health-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 15px;
+}
+
+.metric-item {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+  text-align: center;
+}
+
+.metric-label {
+  display: block;
+  font-size: 0.85em;
+  color: #6c757d;
+  margin-bottom: 5px;
+}
+
+.metric-value {
+  display: block;
+  font-size: 1.2em;
+  font-weight: 600;
+  color: #495057;
+}
+
+.metric-value.error {
+  color: #dc3545;
+}
+
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.tool-button {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.tool-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.tool-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.repair-btn {
+  background: #fd7e14;
+  color: white;
+}
+
+.repair-btn:hover:not(:disabled) {
+  background: #e8690b;
+}
+
+.validate-btn {
+  background: #28a745;
+  color: white;
+}
+
+.validate-btn:hover:not(:disabled) {
+  background: #1e7e34;
+}
+
+.optimize-btn {
+  background: #6f42c1;
+  color: white;
+}
+
+.optimize-btn:hover:not(:disabled) {
+  background: #5a32a3;
+}
+
+.export-btn {
+  background: #17a2b8;
+  color: white;
+}
+
+.export-btn:hover:not(:disabled) {
+  background: #117a8b;
 }
 
 .status-footer {
@@ -511,7 +919,9 @@ onUnmounted(() => {
     justify-content: center;
   }
   
-  .health-grid {
+  .metrics-grid,
+  .health-grid,
+  .tools-grid {
     grid-template-columns: 1fr;
   }
   
