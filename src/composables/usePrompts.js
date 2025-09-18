@@ -263,11 +263,11 @@ export const usePrompts = () => {
       showNotification('Por favor selecciona una empresa primero', 'warning')
       return null
     }
-
+  
     try {
       isPreviewing.value = true
       let promptTemplate, messageToTest
-
+  
       if (agentName) {
         const textarea = document.getElementById(`prompt-${agentName}`)
         if (!textarea) {
@@ -286,14 +286,14 @@ export const usePrompts = () => {
           messageToTest = testMessage
         }
       }
-
+  
       if (!promptTemplate) {
         showNotification('El prompt no puede estar vacío', 'error')
         return null
       }
-
+  
       addToLog(`Previewing prompt for ${agentName}`, 'info')
-
+  
       // ✅ USAR SISTEMA DE CONVERSACIONES COMO EN SCRIPT.JS ORIGINAL
       // El script.js original no tiene endpoint de preview específico
       // Usar el sistema de test de conversaciones
@@ -306,7 +306,7 @@ export const usePrompts = () => {
           custom_prompt: promptTemplate
         }
       })
-
+  
       previewData.value = {
         agentName,
         promptTemplate,
@@ -314,15 +314,15 @@ export const usePrompts = () => {
         response,
         timestamp: new Date().toISOString()
       }
-
+  
       addToLog(`Prompt preview completed for ${agentName}`, 'success')
       return response
-
+  
     } catch (error) {
       addToLog(`Error previewing prompt: ${error.message}`, 'error')
       showNotification('Error en vista previa: ' + error.message, 'error')
       return null
-
+  
     } finally {
       isPreviewing.value = false
     }
@@ -335,12 +335,12 @@ export const usePrompts = () => {
   const loadPromptsSystemStatus = async () => {
     try {
       addToLog('Loading prompts system status', 'info')
-
+  
       // ✅ ENDPOINT CORRECTO - Como en script.js funcional
       const response = await apiRequest('/api/admin/status', {
         method: 'GET'
       })
-
+  
       if (response && response.prompt_system) {
         systemStatus.value = response.prompt_system
         updateSystemStatusDisplay(response.prompt_system)
@@ -349,7 +349,7 @@ export const usePrompts = () => {
       }
       
       return response
-
+  
     } catch (error) {
       addToLog(`Error loading prompts system status: ${error.message}`, 'error')
       return null
