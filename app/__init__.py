@@ -1,6 +1,6 @@
 # app/__init__.py - Multi-Tenant Flask Application Factory - VERSIÓN REFACTORIZADA
 
-from flask import Flask, request, send_from_directory, send_file, jsonify
+from flask import Flask, request, send_from_directory, send_file, jsonify, make_response
 from app.config import Config
 from app.utils.error_handlers import register_error_handlers
 from app.services.redis_service import init_redis
