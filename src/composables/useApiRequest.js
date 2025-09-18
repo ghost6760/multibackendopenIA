@@ -5,6 +5,12 @@
 import { ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 
+// ============================================================================
+// VARIABLE GLOBAL PARA API KEY ADMINISTRATIVA - MIGRADA DEL SCRIPT.JS
+// ============================================================================
+
+let ADMIN_API_KEY = null
+
 export const useApiRequest = () => {
   const appStore = useAppStore()
   const isLoading = ref(false)
@@ -22,14 +28,19 @@ export const useApiRequest = () => {
   const apiRequest = async (endpoint, options = {}) => {
     const url = `${appStore.API_BASE_URL}${endpoint}`
     
-    // Headers por defecto - PRESERVAR EXACTO
+    // ✅ Headers por defecto - PRESERVAR EXACTO DEL SCRIPT.JS
     const defaultHeaders = {
       'Content-Type': 'application/json'
     }
     
-    // Agregar company_id si está seleccionado - PRESERVAR EXACTO
+    // ✅ Agregar company_id si está seleccionado - PRESERVAR EXACTO
     if (appStore.currentCompanyId) {
       defaultHeaders['X-Company-ID'] = appStore.currentCompanyId
+    }
+    
+    // ✅ AGREGAR API KEY ADMINISTRATIVA - MIGRADO DEL SCRIPT.JS
+    if (ADMIN_API_KEY) {
+      defaultHeaders['X-Admin-API-Key'] = ADMIN_API_KEY
     }
     
     // Combinar headers - PRESERVAR EXACTO
@@ -42,7 +53,7 @@ export const useApiRequest = () => {
       ...options
     }
     
-    // CORRECCIÓN IMPORTANTE: Asegurar que el body se stringifique correctamente
+    // ✅ CORRECCIÓN IMPORTANTE: Asegurar que el body se stringifique correctamente
     // PRESERVAR EXACTA LA LÓGICA ORIGINAL
     if (options.body) {
       if (options.body instanceof FormData) {
@@ -62,22 +73,37 @@ export const useApiRequest = () => {
     lastError.value = null
     
     try {
-      // Log de petición - PRESERVAR EXACTO
+      // ✅ Log de petición - PRESERVAR EXACTO
+      console.log(`🔄 API Request: ${config.method} ${endpoint}`)
       appStore.addToLog(`API Request: ${config.method} ${endpoint}`, 'info')
       
       const response = await fetch(url, config)
-      const data = await response.json()
       
       if (!response.ok) {
-        throw new Error(data.message || `HTTP ${response.status}: ${response.statusText}`)
+        const errorText = await response.text()
+        let errorMessage
+        
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || `HTTP ${response.status}: ${response.statusText}`
+        } catch {
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        }
+        
+        throw new Error(errorMessage)
       }
       
-      // Log de respuesta exitosa - PRESERVAR EXACTO
+      const data = await response.json()
+      
+      // ✅ Log de respuesta exitosa - PRESERVAR EXACTO
+      console.log(`✅ API Response: ${config.method} ${endpoint}`, data)
       appStore.addToLog(`API Response: ${endpoint} - Success`, 'info')
+      
       return data
       
     } catch (error) {
-      // Log de error - PRESERVAR EXACTO
+      // ✅ Log de error - PRESERVAR EXACTO
+      console.error(`❌ API Error: ${config.method} ${endpoint}`, error)
       appStore.addToLog(`API Error: ${endpoint} - ${error.message}`, 'error')
       lastError.value = error
       throw error
@@ -85,6 +111,96 @@ export const useApiRequest = () => {
       isLoading.value = false
     }
   }
+  
+  // ============================================================================
+  // FUNCIONES PARA GESTIÓN DE API KEY ADMINISTRATIVA - MIGRADAS DEL SCRIPT.JS
+  // ============================================================================
+  
+  /**
+   * Establecer API Key administrativa - MIGRADO: setAdminApiKey() del script.js
+   */
+  const setAdminApiKey = (apiKey) => {
+    ADMIN_API_KEY = apiKey
+    
+    // ✅ Mantener compatibilidad global
+    if (typeof window !== 'undefined') {
+      window.ADMIN_API_KEY = apiKey
+    }
+    
+    console.log('🔑 Admin API Key configured')
+  }
+  
+  /**
+   * Obtener API Key administrativa actual
+   */
+  const getAdminApiKey = () => {
+    return ADMIN_API_KEY
+  }
+  
+  /**
+   * Limpiar API Key administrativa
+   */
+  const clearAdminApiKey = () => {
+    ADMIN_API_KEY = null
+    
+    // ✅ Limpiar también de window
+    if (typeof window !== 'undefined') {
+      window.ADMIN_API_KEY = null
+    }
+    
+    console.log('🗑️ Admin API Key cleared')
+  }
+  
+  /**
+   * Verificar si hay API Key configurada
+   */
+  const hasAdminApiKey = () => {
+    return Boolean(ADMIN_API_KEY)
+  }
+  
+  /**
+   * Probar API Key - MIGRADO: testApiKey() del script.js
+   */
+  const testApiKey = async (apiKey = null) => {
+    const keyToTest = apiKey || ADMIN_API_KEY
+    
+    if (!keyToTest) {
+      return { success: false, message: 'No API key provided' }
+    }
+    
+    try {
+      // ✅ Usar el mismo endpoint que el script.js original
+      const response = await apiRequest('/api/admin/test', {
+        method: 'GET',
+        headers: {
+          'X-Admin-API-Key': keyToTest
+        }
+      })
+      
+      if (response.status === 'success' || response.authenticated === true) {
+        return { success: true, message: 'API Key válida' }
+      } else {
+        return { success: false, message: 'API Key inválida' }
+      }
+      
+    } catch (error) {
+      // Si el endpoint no existe, hacer validación básica
+      if (error.message.includes('404') || error.message.includes('not found')) {
+        // Validación básica: API key debe tener formato válido
+        const isValid = keyToTest.length >= 16 && typeof keyToTest === 'string'
+        return {
+          success: isValid,
+          message: isValid ? 'API Key válida (validación básica)' : 'API Key inválida'
+        }
+      }
+      
+      return { success: false, message: `Error: ${error.message}` }
+    }
+  }
+  
+  // ============================================================================
+  // WRAPPERS DE CONVENIENCIA - PRESERVAR DEL ARCHIVO ORIGINAL
+  // ============================================================================
   
   /**
    * Wrapper para GET requests
@@ -141,16 +257,18 @@ export const useApiRequest = () => {
     try {
       const result = await apiRequest(endpoint, options)
       
-      if (successMessage) {
+      if (successMessage && appStore.addNotification) {
         appStore.addNotification(successMessage, 'success')
       }
       
       return result
     } catch (error) {
-      appStore.addNotification(
-        `Error en ${endpoint}: ${error.message}`, 
-        'error'
-      )
+      if (appStore.addNotification) {
+        appStore.addNotification(
+          `Error en ${endpoint}: ${error.message}`, 
+          'error'
+        )
+      }
       throw error
     }
   }
@@ -162,7 +280,7 @@ export const useApiRequest = () => {
     const key = cacheKey || endpoint
     
     // Verificar cache primero (solo para GET requests)
-    if ((!options.method || options.method === 'GET') && appStore.isCacheValid(key, maxAge)) {
+    if ((!options.method || options.method === 'GET') && appStore.isCacheValid && appStore.isCacheValid(key, maxAge)) {
       appStore.addToLog(`Cache hit: ${endpoint}`, 'info')
       return appStore.cache[key]
     }
@@ -170,7 +288,7 @@ export const useApiRequest = () => {
     // Hacer request y guardar en cache
     const result = await apiRequest(endpoint, options)
     
-    if (!options.method || options.method === 'GET') {
+    if ((!options.method || options.method === 'GET') && appStore.updateCache) {
       appStore.updateCache(key, result)
     }
     
@@ -241,17 +359,29 @@ export const useApiRequest = () => {
   }
   
   // ============================================================================
-  // COMPATIBILIDAD GLOBAL - CRÍTICO
+  // COMPATIBILIDAD GLOBAL - CRÍTICO PARA MANTENER FUNCIONES DEL SCRIPT.JS
   // ============================================================================
   
-  // Exponer apiRequest en el ámbito global para mantener compatibilidad
+  // ✅ Exponer funciones en el ámbito global para mantener compatibilidad
   if (typeof window !== 'undefined') {
     window.apiRequest = apiRequest
+    window.setAdminApiKey = setAdminApiKey
+    window.getAdminApiKey = getAdminApiKey
+    window.clearAdminApiKey = clearAdminApiKey
+    window.testApiKey = testApiKey
+    window.hasAdminApiKey = hasAdminApiKey
   }
   
   return {
-    // Función principal (debe mantener el mismo nombre y comportamiento)
+    // ✅ Función principal (debe mantener el mismo nombre y comportamiento)
     apiRequest,
+    
+    // ✅ Funciones de API Key administrativa - NUEVAS
+    setAdminApiKey,
+    getAdminApiKey,
+    clearAdminApiKey,
+    hasAdminApiKey,
+    testApiKey,
     
     // Wrappers de conveniencia
     get,
