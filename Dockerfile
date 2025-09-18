@@ -4,7 +4,6 @@
 
 # --- STAGE 1: Frontend build (Node) ---
 FROM node:18-bullseye AS frontend-builder
-
 WORKDIR /frontend
 
 # Herramientas útiles
@@ -15,8 +14,8 @@ RUN apt-get update && \
 # npm config para menos ruido
 RUN npm config set audit false && npm config set fund false && npm config set loglevel warn
 
-# --- FORZAR INSTALACIÓN DE devDependencies en ESTA ETAPA ---
-# algunas plataformas exportan NPM_CONFIG_PRODUCTION=true; anulamos eso aquí
+# ---- FORZAR instalación de devDependencies SOLO en esta etapa ----
+# Algunas plataformas/CI exportan NPM_CONFIG_PRODUCTION=true. Lo anulamos aquí.
 ENV NODE_ENV=development
 ENV NPM_CONFIG_PRODUCTION=false
 
