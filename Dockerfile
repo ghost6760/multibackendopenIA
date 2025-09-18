@@ -1,9 +1,10 @@
-# Dockerfile - SÚPER ROBUSTO con auto-generación de lockfile
-# Maneja todos los casos posibles automáticamente
+# Dockerfile - CORREGIDO - Backend Flask + Frontend Vue.js 3
+# FIX: Instala devDependencies necesarias para vite build
+# Multi-stage build: Node.js para frontend + Python para backend
 # ============================================================================
 
 # ============================================================================
-# STAGE 1: Build Frontend Vue.js - CON FALLBACKS AUTOMÁTICOS
+# STAGE 1: Build Frontend Vue.js - CORREGIDO PARA VITE
 # ============================================================================
 FROM node:18-alpine as frontend-builder
 
@@ -19,22 +20,23 @@ COPY src/package.json ./
 # Intentar copiar package-lock.json si existe (no falla si no existe)
 COPY src/package-loc[k].json ./
 
-# ESTRATEGIA INTELIGENTE DE INSTALACIÓN
-RUN echo "📦 Estrategia inteligente de instalación de dependencias..." && \
+# 🔧 ESTRATEGIA CORREGIDA: Instalar TODAS las dependencias (incluyendo devDependencies)
+RUN echo "📦 Estrategia corregida de instalación..." && \
     if [ -f package-lock.json ]; then \
-        echo "✅ package-lock.json encontrado, usando npm ci"; \
-        npm ci --omit=dev; \
+        echo "✅ package-lock.json encontrado, instalando con npm ci"; \
+        npm ci; \
     else \
         echo "📝 package-lock.json no encontrado, generando automáticamente..."; \
         npm install --package-lock-only && \
-        echo "✅ package-lock.json generado, ahora instalando con npm ci"; \
-        npm ci --omit=dev; \
+        echo "✅ package-lock.json generado, ahora instalando TODAS las dependencias"; \
+        npm ci; \
     fi && \
-    echo "✅ Dependencias instaladas correctamente"
+    echo "✅ Todas las dependencias instaladas (incluidas devDependencies para build)"
 
-# Verificar instalación
-RUN echo "📋 Dependencias verificadas:" && \
-    npm list --depth=0 || true
+# Verificar que vite esté instalado
+RUN echo "🔍 Verificando vite:" && \
+    npx vite --version && \
+    echo "✅ Vite está disponible"
 
 # Copiar todo el código fuente del frontend
 COPY src/ ./
@@ -46,10 +48,10 @@ RUN echo "🔍 Verificando archivos críticos:" && \
     test -f index.html && echo "✅ index.html" || echo "❌ index.html" && \
     test -d src && echo "✅ src/ directory" || echo "⚠️ src/ directory no encontrado"
 
-# Build con manejo de errores
-RUN echo "🏗️ Iniciando build de Vue.js..." && \
+# Build con vite disponible
+RUN echo "🏗️ Iniciando build de Vue.js con vite..." && \
     npm run build 2>&1 | tee build.log && \
-    echo "✅ Build completado"
+    echo "✅ Build completado exitosamente"
 
 # Verificación exhaustiva del build
 RUN echo "📊 Verificación del build:" && \
@@ -62,7 +64,7 @@ RUN echo "📊 Verificación del build:" && \
     echo "✅ Build verificado exitosamente"
 
 # ============================================================================
-# STAGE 2: Backend Python + Verificaciones adicionales
+# STAGE 2: Backend Python + Frontend estático
 # ============================================================================
 FROM python:3.11-slim
 
