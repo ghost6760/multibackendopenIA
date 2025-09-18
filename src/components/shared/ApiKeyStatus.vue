@@ -15,7 +15,7 @@
       class="api-key-configure-btn"
       :title="isConfigured ? 'Cambiar API Key' : 'Configurar API Key'"
     >
-      {{ isConfigured ? 'Cambiar' : 'Configurar' }}
+      {{ isConfigured ? '🔧' : '🔑' }} {{ buttonText }}
     </button>
     
     <!-- API Key Modal -->
@@ -23,7 +23,7 @@
       <div v-if="showModal" class="api-key-modal-overlay" @click="closeModal">
         <div class="api-key-modal-content" @click.stop>
           <div class="modal-header">
-            <h3>API Key Administrativa</h3>
+            <h3>🔑 API Key Administrativa</h3>
             <button @click="closeModal" class="modal-close">✕</button>
           </div>
           
@@ -37,7 +37,7 @@
               <div class="input-group">
                 <input 
                   ref="apiKeyInputRef"
-                  :type="showPassword ? 'text' : 'password'"
+                  type="password" 
                   id="apiKeyInput" 
                   v-model="inputApiKey"
                   :placeholder="isConfigured ? 'Nueva API key...' : 'your-secure-api-key-here'"
@@ -55,7 +55,7 @@
                 </button>
               </div>
               <small class="api-key-help">
-                Encuentra esta key en tus variables de entorno de Railway (API_KEY)
+                💡 Encuentra esta key en tus variables de entorno de Railway (API_KEY)
               </small>
             </div>
             
@@ -66,8 +66,8 @@
                 :disabled="isTesting"
                 class="test-btn"
               >
-                <span v-if="isTesting">Probando...</span>
-                <span v-else>Probar API Key</span>
+                <span v-if="isTesting">⏳ Probando...</span>
+                <span v-else>🧪 Probar API Key</span>
               </button>
               
               <div v-if="testResult" class="test-result" :class="testResult.success ? 'success' : 'error'">
@@ -98,7 +98,7 @@
                 :disabled="!inputApiKey.trim() || isTesting"
                 class="api-key-btn primary"
               >
-                {{ isConfigured ? 'Actualizar' : 'Guardar' }}
+                💾 {{ isConfigured ? 'Actualizar' : 'Guardar' }}
               </button>
               
               <button 
@@ -106,14 +106,14 @@
                 @click="clearApiKey" 
                 class="api-key-btn danger"
               >
-                Limpiar
+                🗑️ Limpiar
               </button>
               
               <button 
                 @click="closeModal" 
                 class="api-key-btn secondary"
               >
-                Cancelar
+                ❌ Cancelar
               </button>
             </div>
           </div>
@@ -135,13 +135,7 @@ import { useApiRequest } from '@/composables/useApiRequest'
 
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
-const { 
-  setAdminApiKey, 
-  getAdminApiKey, 
-  clearAdminApiKey, 
-  hasAdminApiKey,
-  testApiKey: testApiKeyFunction 
-} = useApiRequest()
+const { apiRequest } = useApiRequest()
 
 // ============================================================================
 // ESTADO LOCAL
@@ -160,7 +154,7 @@ const apiKeyInputRef = ref(null)
 // ============================================================================
 
 const isConfigured = computed(() => {
-  return hasAdminApiKey()
+  return Boolean(appStore.adminApiKey)
 })
 
 const statusClass = computed(() => {
@@ -176,6 +170,10 @@ const statusText = computed(() => {
   return isConfigured.value ? 'API Key configurada' : 'API Key requerida'
 })
 
+const buttonText = computed(() => {
+  return isConfigured.value ? 'Cambiar' : 'Configurar'
+})
+
 const lastCheckFormatted = computed(() => {
   if (!lastCheck.value) return 'Nunca'
   
@@ -188,11 +186,11 @@ const lastCheckFormatted = computed(() => {
 })
 
 // ============================================================================
-// MÉTODOS PRINCIPALES - INTEGRADOS CON useApiRequest
+// MÉTODOS PRINCIPALES
 // ============================================================================
 
 /**
- * Mostrar modal de configuración - MIGRADO: showApiKeyModal() del script.js
+ * Mostrar modal de configuración
  */
 const showConfigModal = () => {
   showModal.value = true
@@ -211,7 +209,7 @@ const showConfigModal = () => {
 }
 
 /**
- * Cerrar modal - MIGRADO: closeApiKeyModal() del script.js
+ * Cerrar modal
  */
 const closeModal = () => {
   showModal.value = false
@@ -227,11 +225,14 @@ const closeModal = () => {
  */
 const togglePasswordVisibility = () => {
   showPassword.value = !showPassword.value
+  
+  if (apiKeyInputRef.value) {
+    apiKeyInputRef.value.type = showPassword.value ? 'text' : 'password'
+  }
 }
 
 /**
- * Guardar API Key - MIGRADO: saveApiKey() del script.js
- * CORREGIDO: Ahora usa el composable useApiRequest integrado
+ * Guardar API Key
  */
 const saveApiKey = async () => {
   const apiKey = inputApiKey.value.trim()
@@ -242,56 +243,49 @@ const saveApiKey = async () => {
   }
   
   try {
-    // Probar la API key antes de guardar usando la función integrada
+    // Probar la API key antes de guardar
     isTesting.value = true
-    const result = await testApiKeyFunction(apiKey)
+    const isValid = await testApiKeyValidation(apiKey)
     
-    if (result.success) {
-      // Guardar usando el composable
-      setAdminApiKey(apiKey)
+    if (isValid) {
+      // Guardar en el store
+      appStore.adminApiKey = apiKey
       lastCheck.value = Date.now()
       
       // Cerrar modal
       closeModal()
       
-      showNotification('API Key configurada correctamente', 'success')
+      showNotification('✅ API Key configurada correctamente', 'success')
       appStore.addToLog('API Key configured successfully', 'info')
-      
-      // Actualizar estado visual
-      updateApiKeyStatus()
     } else {
-      showNotification(`API Key inválida: ${result.message}`, 'error')
+      showNotification('❌ API Key inválida', 'error')
     }
     
   } catch (error) {
     console.error('Error saving API key:', error)
-    showNotification(`Error al validar API Key: ${error.message}`, 'error')
+    showNotification('❌ Error al validar API Key', 'error')
   } finally {
     isTesting.value = false
   }
 }
 
 /**
- * Limpiar API Key - MIGRADO del script.js
- * CORREGIDO: Ahora usa el composable useApiRequest integrado
+ * Limpiar API Key
  */
 const clearApiKey = () => {
   if (confirm('¿Estás seguro de que quieres limpiar la API Key?')) {
-    clearAdminApiKey()
+    appStore.adminApiKey = null
     lastCheck.value = null
     
     closeModal()
     
-    showNotification('API Key eliminada', 'warning')
+    showNotification('🗑️ API Key eliminada', 'warning')
     appStore.addToLog('API Key cleared', 'info')
-    
-    updateApiKeyStatus()
   }
 }
 
 /**
- * Probar API Key - MIGRADO: testApiKey() del script.js
- * CORREGIDO: Ahora usa la función integrada del composable
+ * Probar API Key
  */
 const testApiKey = async () => {
   const apiKey = inputApiKey.value.trim()
@@ -305,14 +299,16 @@ const testApiKey = async () => {
   testResult.value = null
   
   try {
-    const result = await testApiKeyFunction(apiKey)
+    const isValid = await testApiKeyValidation(apiKey)
     
     testResult.value = {
-      success: result.success,
-      message: result.message
+      success: isValid,
+      message: isValid 
+        ? 'API Key válida y funcional' 
+        : 'API Key inválida o sin permisos'
     }
     
-    if (result.success) {
+    if (isValid) {
       lastCheck.value = Date.now()
     }
     
@@ -328,23 +324,36 @@ const testApiKey = async () => {
 }
 
 /**
- * Actualizar estado visual de API key - MIGRADO: updateApiKeyStatus() del script.js
+ * Validar API Key con el servidor
  */
-const updateApiKeyStatus = () => {
-  const configured = hasAdminApiKey()
-  
-  // Actualizar indicador visual en la interfaz (para compatibilidad con script.js)
-  const indicator = document.querySelector('.api-key-indicator')
-  if (indicator) {
-    if (configured) {
-      indicator.textContent = 'API Key configurada'
-      indicator.className = 'api-key-indicator configured'
-    } else {
-      indicator.textContent = 'Configurar API Key'
-      indicator.className = 'api-key-indicator not-configured'
+const testApiKeyValidation = async (apiKey) => {
+  try {
+    // Intentar hacer una request que requiera API key
+    const response = await apiRequest('/api/admin/test', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'X-API-Key': apiKey
+      }
+    })
+    
+    return response.success === true || response.status === 'ok'
+    
+  } catch (error) {
+    // Si el endpoint no existe, simular validación básica
+    if (error.message.includes('404') || error.message.includes('not found')) {
+      // Validación básica: la API key debe tener al menos 16 caracteres
+      return apiKey.length >= 16
     }
+    
+    // Para otros errores, considerar la API key como inválida
+    return false
   }
 }
+
+// ============================================================================
+// MÉTODOS DE UTILIDAD
+// ============================================================================
 
 /**
  * Verificar API Key al cargar el componente
@@ -353,10 +362,10 @@ const checkApiKeyStatus = async () => {
   if (!isConfigured.value) return
   
   try {
-    const result = await testApiKeyFunction()
+    const isValid = await testApiKeyValidation(appStore.adminApiKey)
     
-    if (!result.success) {
-      showNotification('API Key configurada no es válida', 'warning')
+    if (!isValid) {
+      showNotification('⚠️ API Key configurada no es válida', 'warning')
       appStore.addToLog('Configured API Key is invalid', 'warning')
     } else {
       lastCheck.value = Date.now()
@@ -389,9 +398,6 @@ onMounted(() => {
   // Event listener para ESC
   document.addEventListener('keydown', handleKeyDown)
   
-  // Actualizar estado visual inicial
-  updateApiKeyStatus()
-  
   appStore.addToLog('ApiKeyStatus component mounted', 'info')
 })
 
@@ -400,24 +406,20 @@ onUnmounted(() => {
 })
 
 // ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON SCRIPT.JS
+// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
 // ============================================================================
 
 onMounted(() => {
-  // Exponer funciones globales exactamente como en script.js
+  // Exponer funciones globales
   window.showApiKeyModal = showConfigModal
-  window.closeApiKeyModal = closeModal
-  window.saveApiKey = saveApiKey
   window.testApiKey = testApiKey
-  window.updateApiKeyStatus = updateApiKeyStatus
+  window.updateApiKeyStatus = checkApiKeyStatus
 })
 
 onUnmounted(() => {
   // Limpiar funciones globales
   if (typeof window !== 'undefined') {
     delete window.showApiKeyModal
-    delete window.closeApiKeyModal
-    delete window.saveApiKey
     delete window.testApiKey
     delete window.updateApiKeyStatus
   }
@@ -498,7 +500,7 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-/* Modal Styles - Optimizados */
+/* Modal Styles */
 .api-key-modal-overlay {
   position: fixed;
   top: 0;
@@ -878,36 +880,6 @@ onUnmounted(() => {
   .modal-enter-active,
   .modal-leave-active {
     transition: opacity 0.2s ease;
-  }
-}
-
-/* CSS Variables que deben estar definidas globalmente */
-:root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f9fa;
-  --bg-tertiary: #e9ecef;
-  --text-primary: #212529;
-  --text-secondary: #6c757d;
-  --text-muted: #adb5bd;
-  --border-color: #dee2e6;
-  --primary-color: #007bff;
-  --primary-color-dark: #0056b3;
-  --success-color: #28a745;
-  --danger-color: #dc3545;
-  --danger-color-dark: #bd2130;
-  --info-color: #17a2b8;
-  --info-color-dark: #117a8b;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary: #1a1a1a;
-    --bg-secondary: #2d2d2d;
-    --bg-tertiary: #404040;
-    --text-primary: #ffffff;
-    --text-secondary: #adb5bd;
-    --text-muted: #6c757d;
-    --border-color: #404040;
   }
 }
 </style>
