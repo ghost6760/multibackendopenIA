@@ -1,42 +1,47 @@
-# --- STAGE 1: Frontend build (Node) - versión robusta usando npm --prefix en src ---
+# -----------------------------------------------------------------------------
+# Dockerfile (Frontend Vue 3 + Backend Flask) - enfoque robusto para Vite build
+# -----------------------------------------------------------------------------
+
+# --- STAGE 1: Frontend build (Node) ---
 FROM node:18-bullseye AS frontend-builder
 
 WORKDIR /frontend
 
-# Herramientas útiles (git en caso de dependencias desde git)
+# Herramientas útiles
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+# npm config para menos ruido
 RUN npm config set audit false && npm config set fund false && npm config set loglevel warn
 
-# Copiar TODO el frontend dentro de /frontend/src
+# Copiar package.json(s) al contexto raíz del builder (para npm ci)
+COPY src/package*.json ./
+
+# Copiar index.html al root para que Vite lo encuentre como entrada
+COPY src/index.html ./
+
+# Copiar el resto del frontend en /frontend/src
 COPY src/ ./src/
 
-# Instalar dependencias dentro de src (usa package-lock si existe)
-RUN if [ -f src/package-lock.json ]; then \
-      echo "✅ package-lock.json en src -> npm ci (en src)"; \
-      npm --prefix ./src ci; \
+# Instalar dependencias (en /frontend, usando package.json copiado)
+RUN if [ -f package-lock.json ]; then \
+      echo "✅ package-lock.json encontrado -> npm ci"; \
+      npm ci; \
     else \
-      echo "⚠ package-lock.json no encontrado en src -> npm install --prefix ./src --package-lock-only && npm ci"; \
-      npm --prefix ./src install --package-lock-only && npm --prefix ./src ci; \
+      echo "⚠ package-lock.json no encontrado -> npm install --package-lock-only && npm ci"; \
+      npm install --package-lock-only && npm ci; \
     fi
 
-# Debug: listar archivos clave dentro de src
-RUN echo "🔎 /frontend/src listado (primeros archivos):" && ls -la /frontend/src | sed -n '1,200p' || true
+# Debug: listar archivos clave antes del build (útil en CI)
+RUN echo "🔎 /frontend listado (primeras entradas):" && ls -la /frontend | sed -n '1,200p' || true && \
+    echo "--- /frontend/src ---" && ls -la /frontend/src | sed -n '1,200p' || true
 
-# Ejecutar build desde src (la salida queda en src/dist)
-RUN echo "🏗️ Ejecutando build en /frontend/src (npm --prefix ./src run build)" && \
-    npm --prefix ./src run build 2>&1 | tee /frontend/build.log || (echo "⚠️ npm build returned non-zero, revisar /frontend/build.log" && cat /frontend/build.log && exit 1)
+# Ejecutar build desde /frontend (vite encontrará index.html en root y src en /frontend/src)
+RUN echo "🏗️ Ejecutando npm run build (en /frontend)..." && \
+    npm run build 2>&1 | tee /frontend/build.log
 
-# Mover el dist generado a /frontend/dist (para que la siguiente etapa lo copie fácilmente)
-RUN if [ -d src/dist ]; then \
-      mv src/dist ./dist && echo "✅ dist movido a /frontend/dist"; \
-    else \
-      echo "❌ ERROR: src/dist no existe, mostrando /frontend/build.log" && cat /frontend/build.log && exit 1; \
-    fi
-
-# Verificación final
+# Verificación: dist debe existir en /frontend/dist
 RUN echo "📦 Verificando /frontend/dist ..." && \
     ls -la /frontend/dist || (echo "ERROR: /frontend/dist no existe" && cat /frontend/build.log && exit 1) && \
     test -f /frontend/dist/index.html || (echo "ERROR: /frontend/dist/index.html no encontrado" && cat /frontend/build.log && exit 1) && \
@@ -52,12 +57,12 @@ ENV PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Dependencias del sistema
+# Dependencias del sistema necesarias
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc g++ curl libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Python deps
+# Instalar dependencias Python
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -68,28 +73,27 @@ COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 COPY migrate_prompts_to_postgresql.py postgresql_schema.sql ./
 COPY migrate_companies_to_postgresql.py ./
 
-# Copiar assets estáticos desde builder
+# Copiar build estático desde el builder
 COPY --from=frontend-builder /frontend/dist ./static
 
-# Verificaciones en build
+# Verificaciones en build para atrapar problemas temprano
 RUN echo "🔧 Verificando backend y static files..." && \
     test -f wsgi.py && echo "✅ wsgi.py encontrado" || (echo "❌ wsgi.py faltante" && exit 1) && \
     test -d app && echo "✅ app/ directory encontrado" || (echo "❌ app/ faltante" && exit 1) && \
     test -d static && echo "✅ static/ copiado" || (echo "❌ static/ no copiado" && ls -la . && exit 1) && \
     test -f static/index.html && echo "✅ static/index.html OK" || (echo "❌ static/index.html NO existe" && ls -la static || exit 1)
 
-# Crear usuario no-root y permisos
+# Crear usuario no-root y aplicar permisos
 RUN useradd --create-home --shell /bin/bash --uid 1000 appuser && \
     chown -R appuser:appuser /app
 
-# Start script (migraciones en runtime, verificación final y Gunicorn)
+# Script de arranque (runtime migrations + gunicorn)
 USER root
 RUN cat > /app/start.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 echo "🚀 Iniciando aplicación multi-tenant..."
-echo "📁 Verificando static dir:"
 ls -la /app/static | sed -n '1,200p' || true
 
 if [ ! -f /app/static/index.html ]; then
@@ -117,5 +121,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 USER appuser
 EXPOSE 8080
 CMD ["/app/start.sh"]
+
 
 
