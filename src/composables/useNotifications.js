@@ -1,12 +1,13 @@
-// composables/useNotifications.js
-// Sistema de notificaciones - MIGRACIÓN desde script.js showNotification()
-// CRÍTICO: Mantener comportamiento idéntico para preservar compatibilidad
+/**
+ * useNotifications.js - Sistema de notificaciones corregido
+ * MIGRACIÓN desde script.js showNotification()
+ * CRÍTICO: Mantener comportamiento idéntico para preservar compatibilidad
+ * CORRECCIÓN: Eliminar dependencia circular con store
+ */
 
 import { computed } from 'vue'
-import { useAppStore } from '@/stores/app'
 
 export const useNotifications = () => {
-  const appStore = useAppStore()
   
   /**
    * Muestra una notificación al usuario
@@ -19,29 +20,117 @@ export const useNotifications = () => {
    * @returns {string} ID de la notificación
    */
   const showNotification = (message, type = 'info', duration = 5000) => {
-    // Usar el store para mantener el estado
-    const notificationId = appStore.addNotification(message, type, duration)
+    // MÉTODO 1: Usar el store solo si está disponible
+    if (typeof window !== 'undefined' && window.useAppStore) {
+      try {
+        const { useAppStore } = window.useAppStore()
+        if (useAppStore && useAppStore.addNotification) {
+          return useAppStore.addNotification(message, type, duration)
+        }
+      } catch (error) {
+        console.warn('Store not available, using DOM notifications')
+      }
+    }
     
-    // Log de la notificación para debugging
-    appStore.addToLog(`Notification: [${type.toUpperCase()}] ${message}`, 'info')
+    // MÉTODO 2: Fallback - crear notificación DOM directamente
+    return createDirectNotification(message, type, duration)
+  }
+  
+  /**
+   * Crea notificación DOM directa sin dependencias del store
+   * PRESERVAR: Comportamiento idéntico al script.js original
+   */
+  const createDirectNotification = (message, type, duration) => {
+    const notificationId = `notification_${Date.now()}_${Math.random()}`
+    
+    // Buscar o crear container
+    let container = document.getElementById('notificationContainer')
+    if (!container) {
+      container = document.createElement('div')
+      container.id = 'notificationContainer'
+      container.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10000;
+        pointer-events: none;
+      `
+      document.body.appendChild(container)
+    }
+    
+    // Crear notificación
+    const notification = document.createElement('div')
+    notification.className = `notification notification-${type}`
+    notification.textContent = message
+    notification.id = notificationId
+    notification.style.cssText = `
+      margin-bottom: 10px;
+      padding: 12px 20px;
+      border-radius: 6px;
+      color: white;
+      font-weight: 500;
+      transform: translateX(400px);
+      transition: transform 0.3s ease;
+      pointer-events: auto;
+      min-width: 300px;
+      word-wrap: break-word;
+      ${getNotificationStyles(type)}
+    `
+    
+    container.appendChild(notification)
+    
+    // Mostrar con animación
+    setTimeout(() => {
+      notification.style.transform = 'translateX(0)'
+    }, 100)
+    
+    // Auto-ocultar si tiene duración
+    if (duration > 0) {
+      setTimeout(() => {
+        hideDirectNotification(notificationId)
+      }, duration)
+    }
+    
+    // Log a consola
+    console.log(`[NOTIFICATION ${type.toUpperCase()}] ${message}`)
     
     return notificationId
   }
   
   /**
-   * Oculta una notificación específica
+   * Oculta notificación directa
    */
-  const hideNotification = (notificationId) => {
-    appStore.removeNotification(notificationId)
+  const hideDirectNotification = (notificationId) => {
+    const notification = document.getElementById(notificationId)
+    if (notification) {
+      notification.style.transform = 'translateX(400px)'
+      setTimeout(() => {
+        notification.remove()
+      }, 300)
+    }
+  }
+  
+  /**
+   * Estilos para notificaciones
+   */
+  const getNotificationStyles = (type) => {
+    const styles = {
+      info: 'background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);',
+      success: 'background: linear-gradient(135deg, #38a169 0%, #2f855a 100%);',
+      warning: 'background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);',
+      error: 'background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);'
+    }
+    return styles[type] || styles.info
   }
   
   /**
    * Oculta todas las notificaciones
    */
   const clearAllNotifications = () => {
-    appStore.notifications.forEach(notification => {
-      appStore.removeNotification(notification.id)
-    })
+    const container = document.getElementById('notificationContainer')
+    if (container) {
+      container.innerHTML = ''
+    }
   }
   
   /**
@@ -76,99 +165,13 @@ export const useNotifications = () => {
     return showNotification(message, 'success', duration)
   }
   
-  const notifyValidationError = (field, message, duration = 5000) => {
-    const fullMessage = `${field}: ${message}`
-    return showNotification(fullMessage, 'warning', duration)
-  }
-  
   const notifyCompanyRequired = (duration = 5000) => {
     return showNotification('⚠️ Por favor selecciona una empresa primero', 'warning', duration)
   }
   
-  /**
-   * Notificación con acción (botón)
-   */
-  const notifyWithAction = (message, type, actionText, actionCallback, duration = 0) => {
-    const notification = {
-      message,
-      type,
-      duration,
-      action: {
-        text: actionText,
-        callback: actionCallback
-      }
-    }
-    
-    // Para notificaciones con acción, usar duration 0 por defecto (no auto-ocultar)
-    return showNotification(notification.message, type, duration)
-  }
-  
-  /**
-   * Notificación de carga/progreso
-   */
   const notifyLoading = (message, duration = 0) => {
     return showNotification(`⏳ ${message}`, 'info', duration)
   }
-  
-  /**
-   * Actualizar notificación existente (útil para progreso)
-   */
-  const updateNotification = (notificationId, newMessage, newType = null) => {
-    const notification = appStore.notifications.find(n => n.id === notificationId)
-    if (notification) {
-      notification.message = newMessage
-      if (newType) {
-        notification.type = newType
-      }
-      notification.timestamp = Date.now()
-    }
-  }
-  
-  /**
-   * Notificación con timeout personalizado y callback
-   */
-  const notifyWithCallback = (message, type, duration, onShow = null, onHide = null) => {
-    const notificationId = showNotification(message, type, duration)
-    
-    if (onShow) {
-      onShow(notificationId)
-    }
-    
-    if (onHide && duration > 0) {
-      setTimeout(() => {
-        onHide(notificationId)
-      }, duration)
-    }
-    
-    return notificationId
-  }
-  
-  // ============================================================================
-  // COMPUTED PROPERTIES PARA COMPONENTES
-  // ============================================================================
-  
-  const notifications = computed(() => appStore.notifications)
-  
-  const hasNotifications = computed(() => appStore.notifications.length > 0)
-  
-  const errorNotifications = computed(() => 
-    appStore.notifications.filter(n => n.type === 'error')
-  )
-  
-  const warningNotifications = computed(() => 
-    appStore.notifications.filter(n => n.type === 'warning')
-  )
-  
-  const notificationsByType = computed(() => {
-    const grouped = {}
-    appStore.notifications.forEach(notification => {
-      if (!grouped[notification.type]) {
-        grouped[notification.type] = []
-      }
-      grouped[notification.type].push(notification)
-    })
-    return grouped
-  })
   
   // ============================================================================
   // COMPATIBILIDAD GLOBAL - CRÍTICO
@@ -184,9 +187,7 @@ export const useNotifications = () => {
     showNotification,
     
     // Gestión de notificaciones
-    hideNotification,
     clearAllNotifications,
-    updateNotification,
     
     // Shortcuts por tipo
     notifySuccess,
@@ -197,17 +198,7 @@ export const useNotifications = () => {
     // Notificaciones especializadas
     notifyApiError,
     notifyApiSuccess,
-    notifyValidationError,
     notifyCompanyRequired,
-    notifyLoading,
-    notifyWithAction,
-    notifyWithCallback,
-    
-    // Estado reactivo
-    notifications,
-    hasNotifications,
-    errorNotifications,
-    warningNotifications,
-    notificationsByType
+    notifyLoading
   }
 }
