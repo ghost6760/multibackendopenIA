@@ -89,7 +89,7 @@
             :disabled="isRunningHealthCheck"
           >
             <span v-if="isRunningHealthCheck">⏳</span>
-            <span v-else">🏥</span>
+            <span v-else>🏥</span>
             Health Check
           </button>
         </div>
