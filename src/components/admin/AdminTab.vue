@@ -132,7 +132,7 @@
             :class="['btn', isMonitoring ? 'btn-danger' : 'btn-success']"
           >
             <span v-if="isMonitoring">⏹️ Detener Monitoreo</span>
-            <span v-else">▶️ Iniciar Monitoreo</span>
+            <span v-else>▶️ Iniciar Monitoreo</span>
           </button>
           <span v-if="isMonitoring" class="monitoring-status">
             📊 Activo - Próxima actualización en {{ nextUpdateCountdown }}s
