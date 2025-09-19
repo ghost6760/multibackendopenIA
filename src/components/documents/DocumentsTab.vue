@@ -134,7 +134,7 @@
                 class="search-btn"
               >
                 <span v-if="isSearching">⏳</span>
-                <span v-else">🔍</span>
+                <span v-else>🔍</span>
               </button>
             </div>
           </div>
