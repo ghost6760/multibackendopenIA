@@ -1,3 +1,4 @@
+# PromptPreview.vue
 <template>
   <!-- Modal Overlay -->
   <Teleport to="body">
