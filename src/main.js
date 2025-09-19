@@ -1,4 +1,4 @@
-// main.js - Configuración corregida para eliminar warnings
+// main.js - Configuración corregida para eliminar errores de Vue
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
@@ -16,48 +16,76 @@ app.use(pinia)
 // MANEJO DE ERRORES Y WARNINGS - VERSIÓN CORREGIDA
 // ============================================================================
 
-// Configuración global para manejo de errores
+// Configuración mejorada para manejo de errores
 app.config.errorHandler = (err, instance, info) => {
-  console.error('🚨 Vue Error:', {
-    error: err.message || err,
-    info: info,
-    componentName: instance?.$options?.name || instance?.$?.type?.name || 'Unknown',
-    timestamp: new Date().toISOString()
-  })
+  // Crear objeto de error seguro
+  const errorInfo = {
+    message: err?.message || String(err),
+    info: String(info),
+    componentName: getComponentName(instance),
+    timestamp: new Date().toISOString(),
+    stack: err?.stack || 'No stack available'
+  }
   
-  // Enviar error al log del sistema si está disponible
-  if (window.addToLog) {
-    window.addToLog(`Vue Error: ${err.message} (${info})`, 'error')
+  console.error('🚨 Vue Error:', errorInfo)
+  
+  // Log al sistema si está disponible
+  if (typeof window !== 'undefined' && window.addToLog) {
+    try {
+      window.addToLog(`Vue Error: ${errorInfo.message} (${errorInfo.info})`, 'error')
+    } catch (logError) {
+      console.warn('Failed to log to system:', logError)
+    }
   }
   
   // Mostrar notificación al usuario si está disponible
-  if (window.showNotification) {
-    window.showNotification(`Error de la aplicación: ${err.message}`, 'error')
+  if (typeof window !== 'undefined' && window.showNotification) {
+    try {
+      window.showNotification(`Error de la aplicación: ${errorInfo.message}`, 'error')
+    } catch (notifyError) {
+      console.warn('Failed to show notification:', notifyError)
+    }
   }
 }
 
-// ⚠️ CONFIGURACIÓN CORREGIDA DEL WARN HANDLER
+// Configuración mejorada del warn handler solo en desarrollo
 if (import.meta.env.DEV) {
   app.config.warnHandler = (msg, instance, trace) => {
-    // Validar que tenemos valores seguros antes de loggear
-    const safeMessage = typeof msg === 'string' ? msg : String(msg)
+    // Validar y sanitizar inputs
+    const safeMessage = typeof msg === 'string' ? msg : String(msg || 'Unknown warning')
     const componentName = getComponentName(instance)
     const safeTrace = trace || 'No trace available'
     
-    // Usar console.warn nativo en lugar de objeto complejo para evitar referencias circulares
-    console.warn(`⚠️ Vue Warning: ${safeMessage}`)
+    // Filtrar warnings conocidos que no son críticos
+    const ignoredWarnings = [
+      'Failed to resolve component',
+      'Component is missing template',
+      'Invalid prop type'
+    ]
     
-    if (componentName !== 'Unknown') {
-      console.warn(`📍 Component: ${componentName}`)
-    }
+    const shouldIgnore = ignoredWarnings.some(warning => 
+      safeMessage.toLowerCase().includes(warning.toLowerCase())
+    )
     
-    if (safeTrace && safeTrace !== 'No trace available') {
-      console.warn(`🔍 Trace:`, safeTrace)
+    if (!shouldIgnore) {
+      console.warn(`⚠️ Vue Warning: ${safeMessage}`)
+      
+      if (componentName !== 'Unknown') {
+        console.warn(`📍 Component: ${componentName}`)
+      }
+      
+      if (safeTrace && safeTrace !== 'No trace available') {
+        console.warn(`🔍 Trace:`, safeTrace)
+      }
     }
     
     // Log simplificado al sistema si está disponible
-    if (window.addToLog) {
-      window.addToLog(`Vue Warning: ${safeMessage} (${componentName})`, 'warning')
+    if (typeof window !== 'undefined' && window.addToLog && !shouldIgnore) {
+      try {
+        window.addToLog(`Vue Warning: ${safeMessage} (${componentName})`, 'warning')
+      } catch (logError) {
+        console.warn('Failed to log warning to system:', logError)
+      }
     }
   }
 }
@@ -97,14 +125,22 @@ app.config.globalProperties.$log = (message, level = 'info') => {
   const timestamp = new Date().toISOString()
   console.log(`[${level.toUpperCase()}] ${timestamp}:`, message)
   
-  if (window.addToLog) {
-    window.addToLog(message, level)
+  if (typeof window !== 'undefined' && window.addToLog) {
+    try {
+      window.addToLog(message, level)
+    } catch (error) {
+      console.warn('Failed to add to log:', error)
+    }
   }
 }
 
 app.config.globalProperties.$notify = (message, type = 'info', duration = 5000) => {
-  if (window.showNotification) {
-    return window.showNotification(message, type, duration)
+  if (typeof window !== 'undefined' && window.showNotification) {
+    try {
+      return window.showNotification(message, type, duration)
+    } catch (error) {
+      console.warn('Failed to show notification:', error)
+    }
   }
   console.log(`[NOTIFICATION ${type.toUpperCase()}]`, message)
 }
@@ -119,7 +155,11 @@ app.config.globalProperties.$DEFAULT_COMPANY_ID = 'benova'
 
 app.directive('focus', {
   mounted(el) {
-    el.focus()
+    try {
+      el.focus()
+    } catch (error) {
+      console.warn('Focus directive failed:', error)
+    }
   }
 })
 
@@ -127,23 +167,37 @@ app.directive('click-outside', {
   mounted(el, binding) {
     el.clickOutsideEvent = function(event) {
       if (!(el === event.target || el.contains(event.target))) {
-        binding.value(event)
+        try {
+          binding.value(event)
+        } catch (error) {
+          console.warn('Click outside handler failed:', error)
+        }
       }
     }
     document.addEventListener('click', el.clickOutsideEvent)
   },
   unmounted(el) {
-    document.removeEventListener('click', el.clickOutsideEvent)
+    if (el.clickOutsideEvent) {
+      document.removeEventListener('click', el.clickOutsideEvent)
+    }
   }
 })
 
 app.directive('tooltip', {
   mounted(el, binding) {
-    el.setAttribute('title', binding.value)
-    el.style.cursor = 'help'
+    try {
+      el.setAttribute('title', binding.value)
+      el.style.cursor = 'help'
+    } catch (error) {
+      console.warn('Tooltip directive failed:', error)
+    }
   },
   updated(el, binding) {
-    el.setAttribute('title', binding.value)
+    try {
+      el.setAttribute('title', binding.value)
+    } catch (error) {
+      console.warn('Tooltip directive update failed:', error)
+    }
   }
 })
 
@@ -153,16 +207,24 @@ app.directive('tooltip', {
 
 const initializeGlobalCompatibility = () => {
   if (typeof window !== 'undefined') {
-    window.API_BASE_URL = window.location.origin
-    window.DEFAULT_COMPANY_ID = 'benova'
-    window.isVueAppReady = true
-    
-    window.addEventListener('vueAppMounted', () => {
-      console.log('✅ Vue.js 3 app mounted and ready')
-    })
-    
-    window.getVueApp = () => app
-    console.log('🔗 Global compatibility layer initialized')
+    // Establecer variables globales de manera segura
+    try {
+      window.API_BASE_URL = window.location.origin
+      window.DEFAULT_COMPANY_ID = 'benova'
+      window.isVueAppReady = true
+      
+      // Listener para evento de app montada
+      window.addEventListener('vueAppMounted', () => {
+        console.log('✅ Vue.js 3 app mounted and ready')
+      })
+      
+      // Función para obtener la instancia de Vue
+      window.getVueApp = () => app
+      
+      console.log('🔗 Global compatibility layer initialized')
+    } catch (error) {
+      console.error('Failed to initialize global compatibility:', error)
+    }
   }
 }
 
@@ -173,46 +235,74 @@ const initializeGlobalCompatibility = () => {
 const setupGlobalEventListeners = () => {
   // Error tracking global para JavaScript nativo
   window.addEventListener('error', (event) => {
-    console.error('🚨 Global JavaScript Error:', {
+    const errorInfo = {
       message: event.error?.message || event.message,
       filename: event.filename,
       lineno: event.lineno,
       colno: event.colno,
       timestamp: new Date().toISOString(),
       url: window.location.href
-    })
+    }
+    console.error('🚨 Global JavaScript Error:', errorInfo)
+    
+    // Log al sistema si está disponible
+    if (window.addToLog) {
+      try {
+        window.addToLog(`JS Error: ${errorInfo.message}`, 'error')
+      } catch (logError) {
+        console.warn('Failed to log JS error:', logError)
+      }
+    }
   })
   
   // Error tracking para promises rechazadas
   window.addEventListener('unhandledrejection', (event) => {
-    console.error('🚨 Unhandled Promise Rejection:', {
+    const rejectionInfo = {
       reason: event.reason,
       timestamp: new Date().toISOString(),
       url: window.location.href
-    })
+    }
+    console.error('🚨 Unhandled Promise Rejection:', rejectionInfo)
+    
+    // Log al sistema si está disponible
+    if (window.addToLog) {
+      try {
+        window.addToLog(`Promise Rejection: ${event.reason}`, 'error')
+      } catch (logError) {
+        console.warn('Failed to log promise rejection:', logError)
+      }
+    }
   })
   
   // Listener para cambios de visibilidad
   document.addEventListener('visibilitychange', () => {
-    const event = new CustomEvent('appVisibilityChanged', {
-      detail: {
-        visible: !document.hidden,
-        timestamp: Date.now()
-      }
-    })
-    window.dispatchEvent(event)
+    try {
+      const event = new CustomEvent('appVisibilityChanged', {
+        detail: {
+          visible: !document.hidden,
+          timestamp: Date.now()
+        }
+      })
+      window.dispatchEvent(event)
+    } catch (error) {
+      console.warn('Failed to dispatch visibility change:', error)
+    }
   })
   
   // Listener para cambios de tamaño de ventana
   window.addEventListener('resize', () => {
-    const event = new CustomEvent('appResized', {
-      detail: {
-        width: window.innerWidth,
-        height: window.innerHeight,
-        timestamp: Date.now()
-      }
-    })
-    window.dispatchEvent(event)
+    try {
+      const event = new CustomEvent('appResized', {
+        detail: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          timestamp: Date.now()
+        }
+      })
+      window.dispatchEvent(event)
+    } catch (error) {
+      console.warn('Failed to dispatch resize event:', error)
+    }
   })
 }
 
@@ -224,19 +314,23 @@ const initializeApp = async () => {
   try {
     console.log('🚀 Initializing Vue.js 3 MultibackendOpenIA Frontend...')
     
+    // Inicializar compatibilidad global
     initializeGlobalCompatibility()
+    
+    // Configurar event listeners
     setupGlobalEventListeners()
     
     // Montar la aplicación Vue
     app.mount('#app')
     
     // Emitir evento de que la aplicación está lista
-    window.dispatchEvent(new CustomEvent('vueAppMounted', {
+    const mountedEvent = new CustomEvent('vueAppMounted', {
       detail: {
         timestamp: Date.now(),
         version: '1.0.0'
       }
-    }))
+    })
+    window.dispatchEvent(mountedEvent)
     
     console.log('✅ Vue.js 3 app mounted successfully')
     console.log('🎯 Migration from Vanilla JS to Vue.js 3 completed')
@@ -245,63 +339,27 @@ const initializeApp = async () => {
     console.error('❌ Error initializing Vue.js 3 app:', error)
     
     // Fallback: mostrar error en el DOM
-    const errorElement = document.createElement('div')
-    errorElement.innerHTML = `
-      <div style="
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: #fee;
-        border: 2px solid #f00;
-        padding: 20px;
-        border-radius: 8px;
-        font-family: system-ui;
-        text-align: center;
-        z-index: 10000;
-      ">
-        <h3>❌ Error de Inicialización</h3>
-        <p>No se pudo cargar la aplicación Vue.js</p>
-        <pre style="font-size: 12px; background: #f5f5f5; padding: 10px; border-radius: 4px;">
-          ${error.message}
-        </pre>
-        <button onclick="window.location.reload()" style="
-          margin-top: 10px;
-          padding: 8px 16px;
-          background: #007cba;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-        ">
-          Recargar Página
-        </button>
-      </div>
-    `
-    document.body.appendChild(errorElement)
+    const appElement = document.getElementById('app')
+    if (appElement) {
+      appElement.innerHTML = `
+        <div style="padding: 20px; background: #f8d7da; color: #721c24; border-radius: 4px; margin: 20px;">
+          <h3>Error Initializing Application</h3>
+          <p><strong>Error:</strong> ${error.message}</p>
+          <p>Please refresh the page or contact support if the problem persists.</p>
+          <button onclick="window.location.reload()" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            🔄 Refresh Page
+          </button>
+        </div>
+      `
+    }
   }
 }
 
 // ============================================================================
-// CONFIGURACIÓN DE DESARROLLO
+// INICIALIZAR APLICACIÓN
 // ============================================================================
 
-if (import.meta.env.DEV) {
-  window.devTools = {
-    app,
-    pinia,
-    version: '1.0.0-dev',
-    logLevel: 'debug'
-  }
-  
-  console.log('🔧 Development mode enabled')
-  console.log('🛠️ Access dev tools via window.devTools')
-}
-
-// ============================================================================
-// INICIALIZACIÓN FINAL
-// ============================================================================
-
+// Verificar que el DOM esté listo
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initializeApp)
 } else {
