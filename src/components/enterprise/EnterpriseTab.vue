@@ -317,7 +317,7 @@
           <div class="modal-actions">
             <button type="submit" @click="saveEnterpriseCompany" class="btn btn-primary" :disabled="isSaving || !isValidJSON">
               <span v-if="isSaving">⏳ Guardando...</span>
-              <span v-else">💾 {{ isEditMode ? 'Actualizar' : 'Crear' }} Empresa</span>
+              <span v-else>💾 {{ isEditMode ? 'Actualizar' : 'Crear' }} Empresa</span>
             </button>
             <button @click="closeCompanyModal" class="btn btn-secondary">
               ❌ Cancelar
