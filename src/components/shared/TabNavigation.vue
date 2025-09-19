@@ -25,7 +25,7 @@
         
         <!-- Notification badge -->
         <span 
-          v-if="tab.notificationCount > 0" 
+          v-if="tab.notificationCount > 0 && showNotificationCounts" 
           class="tab-badge"
           :class="{ 'high-count': tab.notificationCount > 99 }"
         >
@@ -95,10 +95,9 @@ const { showNotification } = useNotifications()
 
 const isRefreshing = ref(false)
 const showNotificationCounts = ref(true)
-const tabNotifications = ref({})
 
 // ============================================================================
-// TABS CONFIGURATION
+// TABS CONFIGURATION - EXACTA DE SCRIPT.JS
 // ============================================================================
 
 const tabs = ref([
@@ -179,25 +178,21 @@ const showAdminActions = computed(() => {
 })
 
 // ============================================================================
-// MÉTODOS PRINCIPALES
+// MÉTODOS PRINCIPALES - PRESERVAR COMPORTAMIENTO DE SCRIPT.JS
 // ============================================================================
 
 /**
  * Maneja el click en un tab
- * MIGRADO: Parte de switchTab() de script.js
+ * MIGRADO: Parte de switchTab() de script.js - COMPORTAMIENTO EXACTO
  */
 const handleTabClick = (tab) => {
   if (tab.disabled) {
     return
   }
   
-  // Validación para tabs que requieren empresa seleccionada
+  // Validación para tabs que requieren empresa seleccionada - EXACTO DE SCRIPT.JS
   if (tab.requiresCompany && !hasCompanySelected.value) {
     showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
-    
-    // Resaltar el selector de empresas
-    window.dispatchEvent(new CustomEvent('highlightCompanySelector'))
-    
     appStore.addToLog(`Tab switch blocked: ${tab.id} requires company selection`, 'warning')
     return
   }
@@ -211,7 +206,7 @@ const handleTabClick = (tab) => {
 
 /**
  * Refresca el contenido del tab activo
- * MIGRADO: refreshActiveTab() de script.js
+ * MIGRADO: refreshActiveTab() de script.js - NOMBRE Y COMPORTAMIENTO EXACTO
  */
 const refreshActiveTab = async () => {
   if (isRefreshing.value) return
@@ -221,10 +216,10 @@ const refreshActiveTab = async () => {
   try {
     appStore.addToLog(`Refreshing active tab: ${props.activeTab}`, 'info')
     
-    // Emitir evento para que el tab activo se recargue
-    window.dispatchEvent(new CustomEvent('loadTabContent', {
-      detail: { tabName: props.activeTab }
-    }))
+    // Usar función global si está disponible para compatibilidad
+    if (typeof window !== 'undefined' && window.refreshActiveTab && window.refreshActiveTab !== refreshActiveTab) {
+      await window.refreshActiveTab()
+    }
     
     // Simular delay de refresh
     await new Promise(resolve => setTimeout(resolve, 1000))
@@ -243,14 +238,12 @@ const refreshActiveTab = async () => {
 
 /**
  * Actualiza el contador de notificaciones de un tab
- * MIGRADO: updateTabNotificationCount() de script.js
+ * MIGRADO: updateTabNotificationCount() de script.js - NOMBRE EXACTO
  */
 const updateTabNotificationCount = (tabName, count) => {
   const tab = tabs.value.find(t => t.id === tabName)
   if (tab) {
     tab.notificationCount = Math.max(0, count)
-    tabNotifications.value[tabName] = count
-    
     appStore.addToLog(`Tab notification count updated: ${tabName} = ${count}`, 'info')
   }
 }
@@ -308,61 +301,43 @@ const setTabDisabled = (tabId, disabled) => {
   }
 }
 
-/**
- * Agrega una notificación visual de cambio de tab
- */
-const addTabChangeAnimation = (tabId) => {
-  const tabElement = document.querySelector(`[data-tab="${tabId}"]`)
-  if (tabElement) {
-    tabElement.classList.add('tab-changing')
-    setTimeout(() => {
-      tabElement.classList.remove('tab-changing')
-    }, 500)
-  }
-}
-
 // ============================================================================
-// LIFECYCLE HOOKS
+// LIFECYCLE HOOKS - SIMPLIFICADO
 // ============================================================================
 
 onMounted(() => {
   appStore.addToLog('TabNavigation component mounted', 'info')
-  
-  // Event listeners para actualizar contadores de notificaciones
-  window.addEventListener('updateTabNotificationCount', (event) => {
-    const { tabName, count } = event.detail
-    updateTabNotificationCount(tabName, count)
-  })
-  
-  // Event listener para cambios de tab externos
-  window.addEventListener('tabChanged', (event) => {
-    const { tabId } = event.detail
-    addTabChangeAnimation(tabId)
-  })
-})
-
-onUnmounted(() => {
-  window.removeEventListener('updateTabNotificationCount', () => {})
-  window.removeEventListener('tabChanged', () => {})
 })
 
 // ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - NOMBRES EXACTOS DE SCRIPT.JS
 // ============================================================================
 
 onMounted(() => {
-  // Exponer funciones globales
-  window.updateTabNotificationCount = updateTabNotificationCount
-  window.refreshActiveTab = refreshActiveTab
-  window.setTabDisabled = setTabDisabled
+  // Exponer funciones globales para mantener compatibilidad
+  if (typeof window !== 'undefined') {
+    window.updateTabNotificationCount = updateTabNotificationCount
+    window.setTabDisabled = setTabDisabled
+    
+    // Solo exponer refreshActiveTab si no existe globalmente
+    if (!window.refreshActiveTab) {
+      window.refreshActiveTab = refreshActiveTab
+    }
+  }
 })
 
 onUnmounted(() => {
-  // Limpiar funciones globales
+  // Limpiar funciones globales solo si las creamos aquí
   if (typeof window !== 'undefined') {
-    delete window.updateTabNotificationCount
-    delete window.refreshActiveTab
-    delete window.setTabDisabled
+    if (window.updateTabNotificationCount === updateTabNotificationCount) {
+      delete window.updateTabNotificationCount
+    }
+    if (window.setTabDisabled === setTabDisabled) {
+      delete window.setTabDisabled
+    }
+    if (window.refreshActiveTab === refreshActiveTab) {
+      delete window.refreshActiveTab
+    }
   }
 })
 </script>
@@ -525,20 +500,6 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-/* Tab changing animation */
-.tab-changing {
-  animation: tab-change 0.5s ease;
-}
-
-@keyframes tab-change {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-}
-
 /* Responsive design */
 @media (max-width: 1024px) {
   .tabs {
@@ -628,10 +589,6 @@ onUnmounted(() => {
   }
   
   .spinning {
-    animation: none;
-  }
-  
-  .tab-changing {
     animation: none;
   }
 }
