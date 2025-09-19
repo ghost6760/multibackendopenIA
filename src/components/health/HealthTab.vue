@@ -19,7 +19,7 @@
           </button>
           <button @click="toggleAutoRefresh" :class="['btn', autoRefresh ? 'btn-warning' : 'btn-secondary']">
             <span v-if="autoRefresh">⏸️ Pausar Auto-refresh</span>
-            <span v-else">▶️ Auto-refresh</span>
+            <span v-else>▶️ Auto-refresh</span>
           </button>
         </div>
       </div>
@@ -168,7 +168,7 @@
             :class="['btn', isRealTimeActive ? 'btn-danger' : 'btn-success']"
           >
             <span v-if="isRealTimeActive">⏹️ Detener</span>
-            <span v-else">📡 Iniciar</span>
+            <span v-else>📡 Iniciar</span>
           </button>
           <span v-if="isRealTimeActive" class="next-update">
             Próxima actualización: {{ nextUpdateIn }}s
