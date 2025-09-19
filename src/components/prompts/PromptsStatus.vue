@@ -82,7 +82,7 @@
               :disabled="isMigrating"
             >
               <span v-if="isMigrating">⏳ Migrando...</span>
-              <span v-else>🚀 Migrar a PostgreSQL</span>
+              <span v-else">🚀 Migrar a PostgreSQL</span>
             </button>
             <p class="migration-help">Crea las tablas necesarias en PostgreSQL</p>
           </div>
@@ -200,7 +200,7 @@
               :disabled="isProcessing"
             >
               <span v-if="isProcessing">⏳ Exportando...</span>
-              <span v-else>📄 Exportar Reporte</span>
+              <span v-else">📄 Exportar Reporte</span>
             </button>
           </div>
         </div>
@@ -283,11 +283,11 @@ const showMigrationButton = computed(() => {
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - MIGRADAS DEL SCRIPT.JS
+// FUNCIONES PRINCIPALES - MIGRADAS DEL SCRIPT.JS - ENDPOINTS CORREGIDOS
 // ============================================================================
 
 /**
- * Carga el estado del sistema - MIGRADO: loadPromptsSystemStatus() de script.js
+ * Carga el estado del sistema - CORREGIDO: usar /api/admin/status como script.js
  * PRESERVAR: Comportamiento exacto de la función original
  */
 const loadSystemStatus = async () => {
@@ -297,10 +297,11 @@ const loadSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    // PRESERVAR: Endpoint exacto como en script.js
-    const response = await apiRequest('/api/admin/prompts/status')
+    // ✅ CORRECCIÓN: Usar el endpoint correcto como en script.js
+    const response = await apiRequest('/api/admin/status')
     
-    systemStatus.value = response
+    // ✅ CORRECCIÓN: Extraer prompt_system como hace script.js
+    systemStatus.value = response.prompt_system || response
     lastUpdated.value = new Date().toISOString()
     
     appStore.addToLog('Prompts system status loaded successfully', 'info')
@@ -328,9 +329,12 @@ const migrateToPostgreSQL = async () => {
   try {
     appStore.addToLog('Starting prompts migration to PostgreSQL', 'info')
     
-    // PRESERVAR: Endpoint exacto como en script.js
+    // ✅ CORRECCIÓN: Usar endpoint correcto como script.js
     const response = await apiRequest('/api/admin/prompts/migrate', {
-      method: 'POST'
+      method: 'POST',
+      body: {
+        force: false
+      }
     })
     
     showNotification('Migración completada exitosamente', 'success')
@@ -444,7 +448,7 @@ const exportSystemReport = async () => {
       system_status: systemStatus.value,
       company_id: appStore.currentCompanyId,
       user_agent: navigator.userAgent,
-      app_version: '1.0.0' // Podría venir de una configuración
+      app_version: '1.0.0'
     }
     
     const dataStr = JSON.stringify(reportData, null, 2)
