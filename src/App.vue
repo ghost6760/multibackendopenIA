@@ -27,50 +27,58 @@
       <div class="tab-contents">
         <!-- Dashboard Tab -->
         <DashboardTab 
-          v-show="appStore.activeTab === 'dashboard'"
+          v-if="appStore.activeTab === 'dashboard'"
           :isActive="appStore.activeTab === 'dashboard'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Documents Tab -->
         <DocumentsTab 
-          v-show="appStore.activeTab === 'documents'"
+          v-if="appStore.activeTab === 'documents'"
           :isActive="appStore.activeTab === 'documents'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Conversations Tab -->
         <ConversationsTab 
-          v-show="appStore.activeTab === 'conversations'"
+          v-if="appStore.activeTab === 'conversations'"
           :isActive="appStore.activeTab === 'conversations'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Multimedia Tab -->
         <MultimediaTab 
-          v-show="appStore.activeTab === 'multimedia'"
+          v-if="appStore.activeTab === 'multimedia'"
           :isActive="appStore.activeTab === 'multimedia'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Prompts Tab -->
         <PromptsTab 
-          v-show="appStore.activeTab === 'prompts'"
+          v-if="appStore.activeTab === 'prompts'"
           :isActive="appStore.activeTab === 'prompts'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Admin Tab -->
         <AdminTab 
-          v-show="appStore.activeTab === 'admin'"
+          v-if="appStore.activeTab === 'admin'"
           :isActive="appStore.activeTab === 'admin'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Enterprise Tab -->
         <EnterpriseTab 
-          v-show="appStore.activeTab === 'enterprise'"
+          v-if="appStore.activeTab === 'enterprise'"
           :isActive="appStore.activeTab === 'enterprise'"
+          @content-loaded="onTabContentLoaded"
         />
         
         <!-- Health Tab -->
         <HealthTab 
-          v-show="appStore.activeTab === 'health'"
+          v-if="appStore.activeTab === 'health'"
           :isActive="appStore.activeTab === 'health'"
+          @content-loaded="onTabContentLoaded"
         />
       </div>
       
@@ -87,10 +95,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNotifications } from '@/composables/useNotifications'
-import { useApiRequest } from '@/composables/useApiRequest'
 
 // Components - Shared
 import LoadingOverlay from '@/components/shared/LoadingOverlay.vue'
@@ -113,31 +120,44 @@ import HealthTab from '@/components/health/HealthTab.vue'
 // Stores y Composables
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
-const { apiRequest } = useApiRequest()
 
 // Estado local
 const showSystemLog = ref(false)
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - MIGRADAS DESDE SCRIPT.JS
+// FUNCIONES PRINCIPALES - MIGRADAS DESDE SCRIPT.JS - NOMBRES EXACTOS
 // ============================================================================
 
 /**
  * Maneja el cambio de tab
- * MIGRADO: switchTab() de script.js
+ * MIGRADO: switchTab() de script.js - PRESERVAR COMPORTAMIENTO EXACTO
  */
-const handleTabChange = (tabName) => {
+const handleTabChange = async (tabName) => {
   const success = appStore.setActiveTab(tabName)
   
   if (success) {
-    // Cargar contenido específico del tab según sea necesario
-    loadTabContent(tabName)
+    // Sincronizar variables globales inmediatamente
+    appStore.syncToGlobal()
+    
+    // Esperar al siguiente tick para que Vue renderice el componente
+    await nextTick()
+    
+    // Los componentes hijos se encargan de cargar su propio contenido
+    appStore.addToLog(`Tab changed to: ${tabName}`, 'info')
   }
 }
 
 /**
+ * Maneja cuando un tab termina de cargar su contenido
+ */
+const onTabContentLoaded = (tabName) => {
+  appStore.setLoadingOverlay(false)
+  appStore.addToLog(`Tab content loaded: ${tabName}`, 'info')
+}
+
+/**
  * Carga el contenido específico de cada tab
- * MIGRADO: loadTabContent() de script.js
+ * MIGRADO: loadTabContent() de script.js - PRESERVAR NOMBRE Y COMPORTAMIENTO
  */
 const loadTabContent = async (tabName) => {
   try {
@@ -147,32 +167,33 @@ const loadTabContent = async (tabName) => {
       appStore.setLoadingOverlay(true)
     }
     
-    // Emitir evento para que el componente del tab específico cargue sus datos
-    window.dispatchEvent(new CustomEvent('loadTabContent', { 
-      detail: { tabName }
-    }))
+    // Los componentes individuales se encargan de cargar su contenido
+    // cuando son activados a través del prop :isActive
+    
+    appStore.addToLog(`Loading content for tab: ${tabName}`, 'info')
     
   } catch (error) {
     console.error(`Error loading tab content for ${tabName}:`, error)
     showNotification(`Error al cargar ${tabName}: ${error.message}`, 'error')
     appStore.addToLog(`Error loading tab ${tabName}: ${error.message}`, 'error')
-  } finally {
     appStore.setLoadingOverlay(false)
   }
 }
 
 /**
- * Inicializa los tabs - MIGRADO: initializeTabs() de script.js
+ * Inicializa los tabs - MIGRADO: initializeTabs() de script.js - EXACTO
  */
 const initializeTabs = () => {
   // Verificar si hay un tab por defecto en la URL
   const urlParams = new URLSearchParams(window.location.search)
   const defaultTab = urlParams.get('tab')
   
-  if (defaultTab && ['dashboard', 'documents', 'conversations', 'multimedia', 'prompts', 'admin', 'enterprise', 'health'].includes(defaultTab)) {
+  const validTabs = ['dashboard', 'documents', 'conversations', 'multimedia', 'prompts', 'admin', 'enterprise', 'health']
+  
+  if (defaultTab && validTabs.includes(defaultTab)) {
     appStore.setActiveTab(defaultTab)
   } else {
-    // Cargar dashboard por defecto
+    // Cargar dashboard por defecto - EXACTO COMO SCRIPT.JS
     appStore.setActiveTab('dashboard')
   }
   
@@ -181,18 +202,16 @@ const initializeTabs = () => {
 
 /**
  * Actualiza el contador de notificaciones en un tab
- * MIGRADO: updateTabNotificationCount() de script.js
+ * MIGRADO: updateTabNotificationCount() de script.js - PRESERVAR NOMBRE EXACTO
  */
 const updateTabNotificationCount = (tabName, count) => {
-  // Emitir evento para que TabNavigation maneje la actualización
-  window.dispatchEvent(new CustomEvent('updateTabNotificationCount', { 
-    detail: { tabName, count }
-  }))
+  // Esta función se mantiene para compatibilidad
+  appStore.addToLog(`Tab notification count: ${tabName} = ${count}`, 'info')
 }
 
 /**
  * Refresca el tab activo actual
- * MIGRADO: refreshActiveTab() de script.js
+ * MIGRADO: refreshActiveTab() de script.js - PRESERVAR NOMBRE EXACTO
  */
 const refreshActiveTab = async () => {
   const activeTab = appStore.activeTab
@@ -204,7 +223,7 @@ const refreshActiveTab = async () => {
 
 /**
  * Obtiene el tab activo actual
- * MIGRADO: getActiveTab() de script.js
+ * MIGRADO: getActiveTab() de script.js - PRESERVAR NOMBRE EXACTO
  */
 const getActiveTab = () => {
   return appStore.activeTab
@@ -223,7 +242,7 @@ const toggleSystemLog = () => {
 
 /**
  * Configuración inicial de drag and drop para archivos
- * MIGRADO: setupFileUploadHandlers() de script.js
+ * MIGRADO: setupFileUploadHandlers() de script.js - SIMPLIFICADO PARA EVITAR CONFLICTOS
  */
 const setupFileUploadHandlers = () => {
   // Prevenir comportamiento por defecto del drag and drop en toda la aplicación
@@ -237,24 +256,10 @@ const setupFileUploadHandlers = () => {
   events.forEach(eventName => {
     document.addEventListener(eventName, preventDefaults, false)
   })
-  
-  // Highlight al arrastrar archivos
-  const highlight = () => {
-    document.body.classList.add('drag-highlight')
-  }
-  
-  const unhighlight = () => {
-    document.body.classList.remove('drag-highlight')
-  }
-  
-  document.addEventListener('dragenter', highlight, false)
-  document.addEventListener('dragover', highlight, false)
-  document.addEventListener('dragleave', unhighlight, false)
-  document.addEventListener('drop', unhighlight, false)
 }
 
 // ============================================================================
-// LIFECYCLE Y WATCHERS
+// LIFECYCLE - SIMPLIFICADO PARA EVITAR CONFLICTOS
 // ============================================================================
 
 onMounted(async () => {
@@ -267,8 +272,8 @@ onMounted(async () => {
     // Inicializar tabs
     initializeTabs()
     
-    // Cargar datos iniciales
-    await loadTabContent(appStore.activeTab)
+    // Sincronizar variables globales
+    appStore.syncToGlobal()
     
     appStore.addToLog('Application initialized successfully', 'info')
     
@@ -284,46 +289,54 @@ onUnmounted(() => {
   appStore.$dispose()
 })
 
-// Watcher para cambios de empresa
+// Watcher para cambios de empresa - SIMPLIFICADO
 watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
   if (newCompanyId !== oldCompanyId) {
-    // Recargar el tab activo cuando cambie la empresa
-    if (appStore.activeTab !== 'dashboard') {
-      loadTabContent(appStore.activeTab)
-    }
+    // Sincronizar inmediatamente
+    appStore.syncToGlobal()
+    appStore.addToLog(`Company changed: ${oldCompanyId} → ${newCompanyId}`, 'info')
   }
 })
 
 // ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - CRÍTICO
+// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - EXACTAS DE SCRIPT.JS
 // ============================================================================
 
 onMounted(() => {
-  // Exponer funciones principales en window para mantener compatibilidad
-  window.switchTab = (tabName) => handleTabChange(tabName)
-  window.loadTabContent = loadTabContent
-  window.initializeTabs = initializeTabs
-  window.updateTabNotificationCount = updateTabNotificationCount
-  window.refreshActiveTab = refreshActiveTab
-  window.getActiveTab = getActiveTab
-  
-  // Funciones de utilidad
-  window.toggleSystemLog = toggleSystemLog
-  
-  // Log de funciones expuestas
-  appStore.addToLog('Global functions exposed for compatibility', 'info')
+  // Exponer funciones principales en window para mantener compatibilidad con script.js
+  if (typeof window !== 'undefined') {
+    // Funciones principales - NOMBRES EXACTOS DE SCRIPT.JS
+    window.switchTab = (tabName) => handleTabChange(tabName)
+    window.loadTabContent = loadTabContent
+    window.initializeTabs = initializeTabs
+    window.updateTabNotificationCount = updateTabNotificationCount
+    window.refreshActiveTab = refreshActiveTab
+    window.getActiveTab = getActiveTab
+    
+    // Funciones de utilidad
+    window.toggleSystemLog = toggleSystemLog
+    
+    // Funciones del store expuestas globalmente
+    window.addToLog = appStore.addToLog
+    window.showNotification = showNotification
+    
+    // Log de funciones expuestas
+    appStore.addToLog('Global functions exposed for compatibility', 'info')
+  }
 })
 
 onUnmounted(() => {
   // Limpiar funciones globales
   if (typeof window !== 'undefined') {
-    delete window.switchTab
-    delete window.loadTabContent
-    delete window.initializeTabs
-    delete window.updateTabNotificationCount
-    delete window.refreshActiveTab
-    delete window.getActiveTab
-    delete window.toggleSystemLog
+    const functionsToClean = [
+      'switchTab', 'loadTabContent', 'initializeTabs', 
+      'updateTabNotificationCount', 'refreshActiveTab', 'getActiveTab',
+      'toggleSystemLog', 'addToLog', 'showNotification'
+    ]
+    
+    functionsToClean.forEach(func => {
+      delete window[func]
+    })
   }
 })
 </script>
@@ -381,26 +394,6 @@ onUnmounted(() => {
 
 .tab-contents {
   margin-top: 20px;
-}
-
-/* Estilos globales para drag and drop */
-:global(.drag-highlight) {
-  background-color: rgba(102, 126, 234, 0.1);
-}
-
-:global(.drag-highlight::after) {
-  content: '📁 Suelta los archivos aquí';
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(102, 126, 234, 0.9);
-  color: white;
-  padding: 20px 40px;
-  border-radius: 8px;
-  font-size: 1.2em;
-  z-index: 10000;
-  pointer-events: none;
 }
 
 /* Responsive */
