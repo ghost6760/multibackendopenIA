@@ -1,3 +1,4 @@
+# PromptEditor.vue
 <template>
   <div class="prompt-editor-container">
     <!-- Editor Header -->
