@@ -1,3 +1,4 @@
+# PromptsStatus.vue
 <template>
   <div class="prompts-status-container">
     <!-- Header -->
