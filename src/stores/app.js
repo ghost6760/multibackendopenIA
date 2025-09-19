@@ -1,12 +1,12 @@
-// stores/app.js - Store Principal de Pinia
+// stores/app.js - Store Principal de Pinia CORREGIDO
 // Migración de variables globales desde script.js a Vue.js 3 + Pinia
 
 import { defineStore } from 'pinia'
-import { ref, computed, watchEffect } from 'vue'
+import { ref, computed } from 'vue'
 
 export const useAppStore = defineStore('app', () => {
   // ============================================================================
-  // VARIABLES GLOBALES MIGRADAS DESDE SCRIPT.JS
+  // VARIABLES GLOBALES MIGRADAS DESDE SCRIPT.JS - VALORES EXACTOS
   // ============================================================================
   
   // Configuración API - PRESERVAR VALORES EXACTOS
@@ -14,7 +14,7 @@ export const useAppStore = defineStore('app', () => {
   const DEFAULT_COMPANY_ID = ref('benova')
   
   // Estado global principal - MIGRADO DE script.js
-  const currentCompanyId = ref(DEFAULT_COMPANY_ID.value)
+  const currentCompanyId = ref('benova') // Valor por defecto como en script.js
   const monitoringInterval = ref(null)
   const systemLog = ref([])
   const adminApiKey = ref(null)
@@ -36,7 +36,7 @@ export const useAppStore = defineStore('app', () => {
   // ============================================================================
   
   const hasCompanySelected = computed(() => {
-    return Boolean(currentCompanyId.value)
+    return Boolean(currentCompanyId.value && currentCompanyId.value !== '')
   })
   
   const isMonitoringActive = computed(() => {
@@ -59,12 +59,12 @@ export const useAppStore = defineStore('app', () => {
   })
   
   // ============================================================================
-  // ACTIONS - MIGRADAS DESDE FUNCIONES GLOBALES
+  // ACTIONS - MIGRADAS DESDE FUNCIONES GLOBALES DE SCRIPT.JS
   // ============================================================================
   
   /**
    * Agregar entrada al log del sistema
-   * MIGRADO: addToLog() de script.js
+   * MIGRADO: addToLog() de script.js - PRESERVAR COMPORTAMIENTO EXACTO
    */
   const addToLog = (message, level = 'info') => {
     const timestamp = new Date().toISOString().substring(0, 19).replace('T', ' ')
@@ -82,12 +82,8 @@ export const useAppStore = defineStore('app', () => {
       systemLog.value.shift()
     }
     
-    // Emitir evento para componentes que necesiten reaccionar
-    if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(new CustomEvent('systemLogUpdated', { 
-        detail: logEntry 
-      }))
-    }
+    // Log simple sin crear loops
+    console.log(`[${level.toUpperCase()}] ${timestamp}: ${message}`)
   }
   
   /**
@@ -101,7 +97,7 @@ export const useAppStore = defineStore('app', () => {
   
   /**
    * Cambiar empresa activa
-   * MIGRADO: handleCompanyChange() de script.js
+   * MIGRADO: handleCompanyChange() de script.js - PRESERVAR COMPORTAMIENTO EXACTO
    */
   const setCurrentCompany = (companyId) => {
     if (companyId !== currentCompanyId.value) {
@@ -113,11 +109,9 @@ export const useAppStore = defineStore('app', () => {
       
       addToLog(`Company changed: ${previousCompany} → ${companyId}`, 'info')
       
-      // Emitir evento para que los componentes reaccionen
-      if (typeof window !== 'undefined' && window.dispatchEvent) {
-        window.dispatchEvent(new CustomEvent('companyChanged', { 
-          detail: { previous: previousCompany, current: companyId }
-        }))
+      // Sincronizar con variable global INMEDIATAMENTE
+      if (typeof window !== 'undefined') {
+        window.currentCompanyId = companyId
       }
     }
   }
@@ -167,10 +161,10 @@ export const useAppStore = defineStore('app', () => {
   
   /**
    * Cambiar tab activo
-   * MIGRADO: switchTab() de script.js (parte de la lógica)
+   * MIGRADO: switchTab() de script.js (parte de la lógica) - COMPORTAMIENTO EXACTO
    */
   const setActiveTab = (tabName) => {
-    // Validación para tabs que requieren empresa seleccionada
+    // Validación para tabs que requieren empresa seleccionada - EXACTO DE SCRIPT.JS
     const requiresCompany = ['prompts', 'documents', 'conversations']
     
     if (requiresCompany.includes(tabName) && !currentCompanyId.value) {
@@ -228,23 +222,20 @@ export const useAppStore = defineStore('app', () => {
   }
   
   // ============================================================================
-  // MANTENER COMPATIBILIDAD CON VARIABLES GLOBALES
+  // SINCRONIZACIÓN CON VARIABLES GLOBALES - SIN WATCHEFFECT PROBLEMÁTICO
   // ============================================================================
   
-  // CRÍTICO: Sincronizar store con variables globales para preservar compatibilidad
-  watchEffect(() => {
+  /**
+   * Sincronizar manualmente con variables globales cuando sea necesario
+   * REEMPLAZA el watchEffect problemático
+   */
+  const syncToGlobal = () => {
     if (typeof window !== 'undefined') {
-      // Mantener variables globales sincronizadas
       window.currentCompanyId = currentCompanyId.value
-      window.systemLog = systemLog.value
-      window.cache = cache.value
-      window.ADMIN_API_KEY = adminApiKey.value
-      
-      // Mantener constantes globales
       window.API_BASE_URL = API_BASE_URL.value
       window.DEFAULT_COMPANY_ID = DEFAULT_COMPANY_ID.value
     }
-  })
+  }
   
   // ============================================================================
   // CLEANUP AL DESTRUIR EL STORE
@@ -264,6 +255,9 @@ export const useAppStore = defineStore('app', () => {
       delete window.ADMIN_API_KEY
     }
   }
+  
+  // Sincronizar al crear el store
+  syncToGlobal()
   
   // ============================================================================
   // RETURN DEL STORE
@@ -300,6 +294,7 @@ export const useAppStore = defineStore('app', () => {
     isCacheValid,
     startMonitoring,
     stopMonitoring,
+    syncToGlobal,
     $dispose
   }
 })
