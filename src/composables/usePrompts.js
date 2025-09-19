@@ -17,6 +17,11 @@ export const usePrompts = () => {
   const { showNotification } = useNotifications()
   const { addToLog } = useSystemLog()
 
+  // Estado básico
+  const systemStatus = ref(null)
+  const isLoading = ref(false)
+  const isMigrating = ref(false)
+
   // ============================================================================
   // ESTADO LOCAL - ESTRUCTURA COMPATIBLE CON SCRIPT.JS ORIGINAL
   // ============================================================================
@@ -425,45 +430,56 @@ export const usePrompts = () => {
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const migratePromptsToPostgreSQL = async () => {
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
-    }
-
-    if (!confirm('¿Estás seguro de migrar los prompts a PostgreSQL? Esta operación puede tomar tiempo.')) {
+    if (!confirm('¿Migrar prompts de JSON a PostgreSQL?\n\nEsta operación migrará todos los prompts personalizados existentes a la base de datos PostgreSQL.')) {
       return false
     }
 
     try {
       isMigrating.value = true
-      addToLog('Starting prompts migration to PostgreSQL', 'info')
-      showNotification('Iniciando migración a PostgreSQL...', 'info')
-
-      // PRESERVAR: Request como script.js (endpoint puede no existir aún)
+      appStore.addToLog('Starting migration from JSON to PostgreSQL...', 'info')
+      
+      // ✅ CORRECCIÓN: Usar estructura de body exacta como script.js
       const response = await apiRequest('/api/admin/prompts/migrate', {
         method: 'POST',
         body: {
-          company_id: appStore.currentCompanyId
+          force: false  // Como en script.js original
         }
       })
-
-      migrationResults.value = response
       
-      showNotification('Migración a PostgreSQL completada', 'success')
-      addToLog('Prompts migration to PostgreSQL completed', 'success')
-
-      // Recargar prompts después de la migración
-      await loadCurrentPrompts()
+      if (response.statistics) {
+        const stats = response.statistics
+        showNotification(
+          `Migración completada: ${stats.prompts_migrated} prompts de ${stats.companies_migrated} empresas`, 
+          'success'
+        )
+        
+        appStore.addToLog(`Migration statistics: ${JSON.stringify(stats, null, 2)}`, 'info')
+      }
       
       return true
 
     } catch (error) {
-      addToLog(`Error migrating prompts: ${error.message}`, 'error')
+      appStore.addToLog(`Error in migration: ${error.message}`, 'error')
       showNotification('Error en migración: ' + error.message, 'error')
       return false
 
     } finally {
       isMigrating.value = false
+    }
+  }
+
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON SCRIPT.JS
+  if (typeof window !== 'undefined') {
+    window.loadPromptsSystemStatus = loadPromptsSystemStatus
+    window.migratePromptsToPostgreSQL = migratePromptsToPostgreSQL
+  }
+
+  return {
+    systemStatus,
+    isLoading,
+    isMigrating,
+    loadPromptsSystemStatus,
+    migratePromptsToPostgreSQL
     }
   }
 
@@ -473,21 +489,21 @@ export const usePrompts = () => {
    */
   const loadPromptsSystemStatus = async () => {
     try {
-      addToLog('Loading prompts system status', 'info')
+      appStore.addToLog('Loading prompts system status', 'info')
       
-      // PRESERVAR: Endpoint como script.js (puede no existir aún)
-      const response = await apiRequest('/api/admin/prompts/status', {
+      // ✅ CORRECCIÓN: Usar el endpoint correcto como en script.js
+      const response = await apiRequest('/api/admin/status', {
         method: 'GET'
       })
 
-      systemStatus.value = response.status || response
-      addToLog('Prompts system status loaded', 'info')
+      // ✅ CORRECCIÓN: Extraer prompt_system como hace script.js
+      systemStatus.value = response.prompt_system || response
+      appStore.addToLog('Prompts system status loaded', 'info')
       
       return response
 
     } catch (error) {
-      addToLog(`Error loading prompts system status: ${error.message}`, 'error')
-      // No mostrar error al usuario, solo log
+      appStore.addToLog(`Error loading prompts system status: ${error.message}`, 'error')
       systemStatus.value = null
       return null
     }
