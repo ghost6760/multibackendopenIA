@@ -298,11 +298,23 @@ const loadSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    // ✅ CORRECCIÓN: Usar el endpoint correcto como en script.js
-    const response = await apiRequest('/api/admin/status')
+    // ✅ CORRECCIÓN: Usar el endpoint correcto con company_id
+    const response = await apiRequest(`/api/admin/status?company_id=${appStore.currentCompanyId}`)
     
-    // ✅ CORRECCIÓN: Extraer prompt_system como hace script.js
-    systemStatus.value = response.prompt_system || response
+    // ✅ CORRECCIÓN: La respuesta tiene la estructura directa, no nested
+    // El backend devuelve: {postgresql_available, tables_exist, total_custom_prompts, etc}
+    systemStatus.value = {
+      postgresql_available: response.postgresql_available || false,
+      tables_exist: response.tables_exist || false,
+      total_custom_prompts: response.total_custom_prompts || 0,
+      fallback_active: response.fallback_active || false,
+      fallback_used: response.fallback_used || null,
+      metrics: response.metrics || null,
+      agents_status: response.agents_status || null,
+      last_updated: response.last_updated || new Date().toISOString(),
+      uptime: response.uptime || null
+    }
+    
     lastUpdated.value = new Date().toISOString()
     
     appStore.addToLog('Prompts system status loaded successfully', 'info')
@@ -315,7 +327,6 @@ const loadSystemStatus = async () => {
     isLoading.value = false
   }
 }
-
 /**
  * Migra a PostgreSQL - MIGRADO: migratePromptsToPostgreSQL() de script.js
  * PRESERVAR: Comportamiento exacto de la función original
