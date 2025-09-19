@@ -1,504 +1,578 @@
 <template>
-  <div class="prompts-tab">
-    <!-- Header con filtros y acciones -->
-    <div class="prompts-header">
-      <div class="header-title">
-        <h2>📝 Gestión de Prompts</h2>
-        <p class="subtitle">Administra y personaliza los prompts de los agentes de IA</p>
-      </div>
-      
-      <div class="header-actions">
-        <button 
-          @click="loadCurrentPrompts" 
-          :disabled="isLoading"
-          class="btn btn-primary"
-        >
-          <span v-if="isLoading">⏳ Cargando...</span>
-          <span v-else>🔄 Recargar</span>
-        </button>
-        
-        <button 
-          @click="repairPrompts" 
-          :disabled="isRepairing"
-          class="btn btn-warning"
-        >
-          <span v-if="isRepairing">⏳ Reparando...</span>
-          <span v-else>🔧 Reparar</span>
-        </button>
-        
-        <button 
-          @click="exportPrompts" 
-          class="btn btn-info"
-        >
-          📥 Exportar
-        </button>
-        
-        <button 
-          @click="importPrompts" 
-          class="btn btn-secondary"
-        >
-          📤 Importar
-        </button>
-      </div>
+  <div class="prompts-tab" v-if="isActive">
+    <!-- Header del Tab -->
+    <div class="tab-header">
+      <h2>🤖 Sistema de Prompts</h2>
+      <p class="tab-description">
+        Gestiona y personaliza los prompts de los agentes IA
+      </p>
     </div>
 
-    <!-- Filtros -->
-    <div class="prompts-filters">
-      <div class="filter-group">
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="🔍 Buscar prompts..."
-          class="filter-input"
-        />
-        
-        <select v-model="selectedCategory" class="filter-select">
-          <option value="">Todas las categorías</option>
-          <option v-for="category in promptCategories" :key="category" :value="category">
-            {{ category }}
-          </option>
-        </select>
-        
-        <select v-model="selectedStatus" class="filter-select">
-          <option value="">Todos los estados</option>
-          <option value="custom">Personalizados</option>
-          <option value="default">Por defecto</option>
-          <option value="modified">Modificados</option>
-        </select>
-        
-        <button @click="clearFilters" class="btn btn-sm">❌ Limpiar</button>
-      </div>
-    </div>
+    <!-- Estado del Sistema -->
+    <PromptsStatus 
+      @status-loaded="handleStatusLoaded"
+      @migration-complete="handleMigrationComplete"
+    />
 
     <!-- Loading State -->
-    <div v-if="isLoading && !hasPrompts" class="loading-container">
+    <div v-if="isLoading" class="loading-section">
       <div class="loading-spinner"></div>
-      <p>Cargando prompts...</p>
+      <p>Cargando sistema de prompts...</p>
     </div>
 
-    <!-- Lista de Prompts -->
-    <div v-else-if="hasPrompts" class="prompts-list">
-      <div 
-        v-for="prompt in filteredPrompts" 
-        :key="prompt.name"
-        class="prompt-card"
-        :class="{ 
-          'prompt-custom': prompt.isCustom,
-          'prompt-modified': prompt.isModified 
-        }"
-      >
-        <div class="prompt-header">
-          <div class="prompt-title">
-            <h3>{{ prompt.displayName }}</h3>
-            <div class="prompt-badges">
-              <span 
-                v-if="prompt.isCustom" 
-                class="badge badge-custom"
-              >
-                ✅ Personalizado
-              </span>
-              <span 
-                v-else 
-                class="badge badge-default"
-              >
-                🔵 Por defecto
-              </span>
-              <span 
-                v-if="prompt.fallbackLevel && prompt.fallbackLevel !== 'postgresql'" 
-                class="badge badge-fallback"
-              >
-                Fallback: {{ prompt.fallbackLevel }}
-              </span>
-            </div>
-          </div>
-          
-          <div class="prompt-actions">
-            <button 
-              @click="previewPrompt(prompt)"
-              class="btn btn-sm btn-info"
-            >
-              👁️ Vista Previa
-            </button>
-            
-            <button 
-              v-if="prompt.isCustom || prompt.isModified"
-              @click="resetPrompt(prompt.name)"
-              class="btn btn-sm btn-warning"
-              :disabled="isResetting"
-            >
-              🔄 Restaurar
-            </button>
-          </div>
-        </div>
-
-        <div class="prompt-content">
-          <textarea
-            :id="`prompt-${prompt.name}`"
-            v-model="prompt.content"
-            @input="markAsModified(prompt)"
-            class="prompt-editor"
-            :placeholder="`Prompt para ${prompt.displayName}...`"
-            rows="8"
-          ></textarea>
-          
-          <div class="prompt-metadata">
-            <span v-if="prompt.lastModified" class="metadata-item">
-              📅 Modificado: {{ formatDateTime(prompt.lastModified) }}
-            </span>
-            <span v-if="prompt.version" class="metadata-item">
-              🏷️ Versión: {{ prompt.version }}
-            </span>
-          </div>
-        </div>
-
-        <div class="prompt-footer">
-          <button 
-            @click="updatePrompt(prompt.name)"
-            :disabled="isUpdating || !prompt.isModified"
-            class="btn btn-primary"
-          >
-            <span v-if="isUpdating">⏳ Actualizando...</span>
-            <span v-else>💾 Actualizar</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Estado vacío -->
-    <div v-else class="empty-state">
-      <div class="empty-icon">📝</div>
-      <h3>No hay prompts disponibles</h3>
-      <p>Carga los prompts desde el servidor o crea uno nuevo.</p>
-      <button @click="loadCurrentPrompts" class="btn btn-primary">
-        🔄 Cargar Prompts
+    <!-- Error State -->
+    <div v-else-if="error" class="error-section">
+      <h3>❌ Error en el Sistema de Prompts</h3>
+      <p>{{ error }}</p>
+      <button @click="retryLoad" class="btn-retry">
+        🔄 Reintentar Carga
       </button>
     </div>
 
-    <!-- Modal de Vista Previa -->
-    <div v-if="previewData" class="modal-overlay" @click="closePreviewModal">
-      <div class="modal-content" @click.stop>
-        <div class="modal-header">
-          <h3>👁️ Vista Previa: {{ previewData.displayName }}</h3>
-          <button @click="closePreviewModal" class="modal-close">❌</button>
-        </div>
-        
-        <div class="modal-body">
-          <div v-if="previewData.preview_result" class="preview-processed">
-            <h5>🤖 Respuesta del Agente:</h5>
-            <div class="preview-response">
-              {{ previewData.preview_result.response || 'Sin respuesta' }}
-            </div>
-            
-            <div v-if="previewData.preview_result.metadata" class="preview-metadata">
-              <h5>📊 Metadatos:</h5>
-              <pre class="metadata-json">{{ formatJSON(previewData.preview_result.metadata) }}</pre>
-            </div>
+    <!-- Main Content -->
+    <div v-else-if="systemReady" class="prompts-content">
+      
+      <!-- Company & Agent Selector -->
+      <div class="prompts-selector-section">
+        <div class="selector-row">
+          <div class="company-info">
+            <h4>📢 Empresa Actual</h4>
+            <p>{{ currentCompany?.name || currentCompanyId }}</p>
           </div>
           
-          <div v-else class="preview-raw">
-            <h5>📝 Contenido Original:</h5>
-            <div class="preview-text">
-              {{ previewData.content }}
+          <div class="agent-selector">
+            <label for="agent-select">🤖 Seleccionar Agente:</label>
+            <select 
+              id="agent-select"
+              v-model="selectedAgent"
+              @change="loadAgentPrompts"
+              :disabled="isLoadingAgent"
+            >
+              <option value="">-- Selecciona un agente --</option>
+              <option 
+                v-for="agent in availableAgents" 
+                :key="agent.name"
+                :value="agent.name"
+              >
+                {{ agent.display_name || agent.name }}
+                ({{ agent.status === 'active' ? '✅' : '❌' }})
+              </option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Prompts Management -->
+      <div v-if="selectedAgent" class="agent-prompts-section">
+        <div class="agent-header">
+          <h3>🔧 Prompts para: {{ selectedAgent }}</h3>
+          <div class="agent-actions">
+            <button 
+              @click="refreshAgentPrompts"
+              :disabled="isLoadingAgent"
+              class="btn-refresh"
+            >
+              <span v-if="isLoadingAgent">⏳</span>
+              <span v-else>🔄</span>
+              Actualizar
+            </button>
+            
+            <button 
+              @click="resetAllPrompts"
+              :disabled="isLoadingAgent"
+              class="btn-reset"
+              title="Resetear todos los prompts a valores por defecto"
+            >
+              🔄 Reset All
+            </button>
+          </div>
+        </div>
+
+        <!-- Agent Prompt Editor -->
+        <div v-if="currentPromptData" class="prompt-editor-section">
+          <PromptEditor
+            :promptData="currentPromptData"
+            :placeholder="`Personaliza el prompt para el agente ${selectedAgent}...`"
+            @update="handlePromptUpdate"
+            @reset="handlePromptReset"
+            @preview="handlePromptPreview"
+            @change="handlePromptChange"
+          />
+        </div>
+
+        <!-- Agent Status Info -->
+        <div v-if="agentStatus" class="agent-status-info">
+          <h4>📊 Estado del Agente</h4>
+          <div class="status-grid">
+            <div class="status-item">
+              <span class="status-label">Estado:</span>
+              <span :class="['status-value', agentStatus.active ? 'active' : 'inactive']">
+                {{ agentStatus.active ? '🟢 Activo' : '🔴 Inactivo' }}
+              </span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Prompt Personalizado:</span>
+              <span :class="['status-value', currentPromptData?.is_custom ? 'custom' : 'default']">
+                {{ currentPromptData?.is_custom ? '✅ Sí' : '🔵 Por defecto' }}
+              </span>
+            </div>
+            <div class="status-item" v-if="currentPromptData?.last_modified">
+              <span class="status-label">Última Modificación:</span>
+              <span class="status-value">
+                {{ formatDateTime(currentPromptData.last_modified) }}
+              </span>
             </div>
           </div>
         </div>
-        
-        <div class="modal-footer">
-          <button @click="closePreviewModal" class="btn btn-secondary">
-            ❌ Cerrar
-          </button>
+      </div>
+
+      <!-- No Agent Selected -->
+      <div v-else class="no-agent-section">
+        <div class="no-agent-message">
+          <h3>🤖 Selecciona un Agente</h3>
+          <p>Elige un agente de la lista para ver y editar sus prompts</p>
         </div>
       </div>
     </div>
 
-    <!-- Input oculto para importar archivos -->
-    <input
-      ref="fileInput"
-      type="file"
-      accept=".json,.txt"
-      @change="handleFileImport"
-      hidden
+    <!-- Preview Modal -->
+    <PromptPreview
+      :visible="showPreview"
+      :agentName="selectedAgent"
+      :promptContent="previewPromptContent"
+      :testMessage="previewTestMessage"
+      :promptData="currentPromptData"
+      @close="closePreview"
+      @preview-complete="handlePreviewComplete"
     />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { usePrompts } from '@/composables/usePrompts'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useApiRequest } from '@/composables/useApiRequest'
+import { useNotifications } from '@/composables/useNotifications'
+
+// Components
+import PromptsStatus from './PromptsStatus.vue'
+import PromptEditor from './PromptEditor.vue'
+import PromptPreview from './PromptPreview.vue'
 
 // ============================================================================
-// COMPOSABLES Y STORES
+// PROPS
 // ============================================================================
 
-const {
-  // Estado reactivo del composable
-  prompts,
-  isLoading,
-  isUpdating,
-  isResetting,
-  isRepairing,
-  systemStatus,
-  previewData,
-  
-  // Computed properties
-  promptsArray,
-  hasPrompts,
-  
-  // Funciones principales
-  loadCurrentPrompts,
-  updatePrompt,
-  resetPrompt,
-  previewPrompt,
-  repairPrompts,
-  exportPrompts
-} = usePrompts()
+const props = defineProps({
+  isActive: {
+    type: Boolean,
+    default: false
+  }
+})
+
+// ============================================================================
+// COMPOSABLES
+// ============================================================================
 
 const appStore = useAppStore()
+const { apiRequest } = useApiRequest()
+const { showNotification } = useNotifications()
 
 // ============================================================================
-// ESTADO LOCAL DEL COMPONENTE
+// ESTADO REACTIVO
 // ============================================================================
 
-const fileInput = ref(null)
+const isLoading = ref(false)
+const isLoadingAgent = ref(false)
+const error = ref(null)
+const systemReady = ref(false)
+const systemStatus = ref(null)
 
-// Filtros locales
-const searchQuery = ref('')
-const selectedCategory = ref('')
-const selectedStatus = ref('')
+// Agent Management
+const selectedAgent = ref('')
+const availableAgents = ref([])
+const currentPromptData = ref(null)
+const agentStatus = ref(null)
+
+// Preview Management
+const showPreview = ref(false)
+const previewPromptContent = ref('')
+const previewTestMessage = ref('test')
 
 // ============================================================================
 // COMPUTED PROPERTIES
 // ============================================================================
 
-const promptCategories = computed(() => {
-  const categories = new Set()
-  promptsArray.value.forEach(prompt => {
-    if (prompt.category) {
-      categories.add(prompt.category)
-    }
-  })
-  return Array.from(categories).sort()
-})
-
-const filteredPrompts = computed(() => {
-  let filtered = promptsArray.value
-
-  // Filtro por búsqueda
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter(prompt => 
-      prompt.displayName.toLowerCase().includes(query) ||
-      (prompt.content || '').toLowerCase().includes(query)
-    )
-  }
-
-  // Filtro por categoría
-  if (selectedCategory.value) {
-    filtered = filtered.filter(prompt => 
-      prompt.category === selectedCategory.value
-    )
-  }
-
-  // Filtro por estado
-  if (selectedStatus.value) {
-    switch (selectedStatus.value) {
-      case 'custom':
-        filtered = filtered.filter(prompt => prompt.isCustom)
-        break
-      case 'default':
-        filtered = filtered.filter(prompt => !prompt.isCustom)
-        break
-      case 'modified':
-        filtered = filtered.filter(prompt => prompt.isModified)
-        break
-    }
-  }
-
-  return filtered
-})
+const currentCompany = computed(() => appStore.currentCompany)
+const currentCompanyId = computed(() => appStore.currentCompanyId)
 
 // ============================================================================
-// MÉTODOS LOCALES
+// FUNCIONES PRINCIPALES - MIGRADAS DESDE SCRIPT.JS
 // ============================================================================
 
-const markAsModified = (prompt) => {
-  // Marcar prompt como modificado para habilitar botón de guardar
-  prompt.isModified = true
+/**
+ * Carga los agentes disponibles para la empresa actual
+ * MIGRADO: loadAgents() de script.js
+ */
+const loadAvailableAgents = async () => {
+  try {
+    isLoading.value = true
+    error.value = null
+    
+    appStore.addToLog('Loading available agents for prompts...', 'info')
+    
+    const response = await apiRequest('/api/prompts/agents')
+    
+    if (response.success) {
+      availableAgents.value = response.agents || []
+      appStore.addToLog(`Loaded ${availableAgents.value.length} agents`, 'info')
+      
+      // Auto-seleccionar el primer agente si hay alguno
+      if (availableAgents.value.length > 0 && !selectedAgent.value) {
+        selectedAgent.value = availableAgents.value[0].name
+        await loadAgentPrompts()
+      }
+    } else {
+      throw new Error(response.error || 'Error loading agents')
+    }
+    
+  } catch (err) {
+    error.value = `Error loading agents: ${err.message}`
+    appStore.addToLog(error.value, 'error')
+    showNotification(error.value, 'error')
+  } finally {
+    isLoading.value = false
+  }
 }
 
-const clearFilters = () => {
-  searchQuery.value = ''
-  selectedCategory.value = ''
-  selectedStatus.value = ''
-}
-
-const closePreviewModal = () => {
-  previewData.value = null
-}
-
-const importPrompts = () => {
-  fileInput.value?.click()
-}
-
-const handleFileImport = async (event) => {
-  const file = event.target.files[0]
-  if (!file) return
+/**
+ * Carga los prompts del agente seleccionado
+ * MIGRADO: loadAgentPrompts() de script.js
+ */
+const loadAgentPrompts = async () => {
+  if (!selectedAgent.value) {
+    currentPromptData.value = null
+    agentStatus.value = null
+    return
+  }
   
   try {
-    const fileText = await file.text()
-    const importedData = JSON.parse(fileText)
+    isLoadingAgent.value = true
     
-    if (!importedData || typeof importedData !== 'object') {
-      throw new Error('El archivo debe contener un objeto JSON válido con prompts')
+    appStore.addToLog(`Loading prompts for agent: ${selectedAgent.value}`, 'info')
+    
+    const response = await apiRequest(`/api/prompts/agent/${selectedAgent.value}`)
+    
+    if (response.success) {
+      currentPromptData.value = response.prompt_data
+      agentStatus.value = response.agent_status
+      
+      appStore.addToLog(`Prompts loaded for ${selectedAgent.value}`, 'info')
+    } else {
+      throw new Error(response.error || 'Error loading agent prompts')
     }
     
-    // Aquí podrías implementar la lógica de importación al backend
-    // Por ahora solo mostramos una notificación
-    appStore.showNotification(`Listo para importar prompts`, 'info')
-    
-  } catch (error) {
-    appStore.showNotification(`Error importando archivo: ${error.message}`, 'error')
+  } catch (err) {
+    const errorMsg = `Error loading prompts for ${selectedAgent.value}: ${err.message}`
+    appStore.addToLog(errorMsg, 'error')
+    showNotification(errorMsg, 'error')
+  } finally {
+    isLoadingAgent.value = false
   }
-  
-  // Limpiar input
-  event.target.value = ''
 }
 
+/**
+ * Actualiza un prompt del agente
+ * MIGRADO: updateAgentPrompt() de script.js
+ */
+const handlePromptUpdate = async (promptData) => {
+  try {
+    appStore.addToLog(`Updating prompt for agent: ${selectedAgent.value}`, 'info')
+    
+    const response = await apiRequest(`/api/prompts/agent/${selectedAgent.value}`, {
+      method: 'POST',
+      body: {
+        prompt_content: promptData.content,
+        action: 'update'
+      }
+    })
+    
+    if (response.success) {
+      currentPromptData.value = response.prompt_data
+      showNotification(`Prompt actualizado para ${selectedAgent.value}`, 'success')
+      appStore.addToLog(`Prompt updated successfully for ${selectedAgent.value}`, 'info')
+    } else {
+      throw new Error(response.error || 'Error updating prompt')
+    }
+    
+  } catch (err) {
+    const errorMsg = `Error updating prompt: ${err.message}`
+    appStore.addToLog(errorMsg, 'error')
+    showNotification(errorMsg, 'error')
+  }
+}
+
+/**
+ * Resetea un prompt a su valor por defecto
+ * MIGRADO: resetAgentPrompt() de script.js
+ */
+const handlePromptReset = async () => {
+  try {
+    appStore.addToLog(`Resetting prompt for agent: ${selectedAgent.value}`, 'info')
+    
+    const response = await apiRequest(`/api/prompts/agent/${selectedAgent.value}`, {
+      method: 'POST',
+      body: {
+        action: 'reset'
+      }
+    })
+    
+    if (response.success) {
+      currentPromptData.value = response.prompt_data
+      showNotification(`Prompt reseteado para ${selectedAgent.value}`, 'success')
+      appStore.addToLog(`Prompt reset successfully for ${selectedAgent.value}`, 'info')
+    } else {
+      throw new Error(response.error || 'Error resetting prompt')
+    }
+    
+  } catch (err) {
+    const errorMsg = `Error resetting prompt: ${err.message}`
+    appStore.addToLog(errorMsg, 'error')
+    showNotification(errorMsg, 'error')
+  }
+}
+
+/**
+ * Muestra la vista previa del prompt
+ * MIGRADO: showPromptPreview() de script.js
+ */
+const handlePromptPreview = (previewData) => {
+  previewPromptContent.value = previewData.content
+  previewTestMessage.value = previewData.testMessage || 'test'
+  showPreview.value = true
+}
+
+/**
+ * Maneja cambios en el prompt editor
+ */
+const handlePromptChange = (changeData) => {
+  // Lógica adicional para manejar cambios si es necesario
+  appStore.addToLog(`Prompt content changed for ${selectedAgent.value}`, 'debug')
+}
+
+/**
+ * Refresca los prompts del agente actual
+ */
+const refreshAgentPrompts = async () => {
+  if (selectedAgent.value) {
+    await loadAgentPrompts()
+  }
+}
+
+/**
+ * Resetea todos los prompts
+ */
+const resetAllPrompts = async () => {
+  if (!confirm('¿Estás seguro de que quieres resetear TODOS los prompts a sus valores por defecto?')) {
+    return
+  }
+  
+  try {
+    appStore.addToLog('Resetting all prompts...', 'info')
+    
+    const response = await apiRequest('/api/prompts/reset-all', {
+      method: 'POST'
+    })
+    
+    if (response.success) {
+      showNotification('Todos los prompts han sido reseteados', 'success')
+      await loadAgentPrompts() // Recargar el agente actual
+      appStore.addToLog('All prompts reset successfully', 'info')
+    } else {
+      throw new Error(response.error || 'Error resetting all prompts')
+    }
+    
+  } catch (err) {
+    const errorMsg = `Error resetting all prompts: ${err.message}`
+    appStore.addToLog(errorMsg, 'error')
+    showNotification(errorMsg, 'error')
+  }
+}
+
+/**
+ * Cierra el modal de preview
+ */
+const closePreview = () => {
+  showPreview.value = false
+  previewPromptContent.value = ''
+  previewTestMessage.value = 'test'
+}
+
+/**
+ * Maneja la finalización del preview
+ */
+const handlePreviewComplete = (previewResult) => {
+  appStore.addToLog(`Preview completed for ${selectedAgent.value}`, 'info')
+  // Lógica adicional si es necesario
+}
+
+/**
+ * Maneja cuando el sistema de prompts está listo
+ */
+const handleStatusLoaded = (statusData) => {
+  systemStatus.value = statusData
+  systemReady.value = true
+  
+  if (statusData?.postgresql_available && statusData?.tables_exist) {
+    loadAvailableAgents()
+  }
+}
+
+/**
+ * Maneja la finalización de migración
+ */
+const handleMigrationComplete = () => {
+  systemReady.value = true
+  loadAvailableAgents()
+}
+
+/**
+ * Reintenta cargar el sistema
+ */
+const retryLoad = () => {
+  error.value = null
+  systemReady.value = false
+  // El componente PromptsStatus se reiniciará automáticamente
+}
+
+/**
+ * Formatea una fecha/hora
+ */
 const formatDateTime = (dateString) => {
   if (!dateString) return 'N/A'
   try {
     return new Date(dateString).toLocaleString()
-  } catch (error) {
+  } catch {
     return 'Fecha inválida'
   }
 }
 
-const formatJSON = (obj) => {
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch (error) {
-    return 'Error formatting JSON: ' + error.message
+// ============================================================================
+// WATCHERS
+// ============================================================================
+
+// Recargar agentes cuando cambie la empresa
+watch(() => appStore.currentCompanyId, async (newCompanyId) => {
+  if (newCompanyId && systemReady.value) {
+    selectedAgent.value = ''
+    currentPromptData.value = null
+    agentStatus.value = null
+    await loadAvailableAgents()
   }
-}
+})
+
+// Recargar cuando el tab se active
+watch(() => props.isActive, async (isActive) => {
+  if (isActive && systemReady.value && availableAgents.value.length === 0) {
+    await loadAvailableAgents()
+  }
+})
 
 // ============================================================================
-// LIFECYCLE HOOKS
+// LIFECYCLE
 // ============================================================================
 
 onMounted(async () => {
   appStore.addToLog('PromptsTab component mounted', 'info')
   
-  // Cargar datos iniciales solo si hay empresa seleccionada
-  if (appStore.currentCompanyId) {
-    await loadCurrentPrompts()
-  }
+  // Configurar listeners de eventos
+  window.addEventListener('loadTabContent', handleLoadTabContent)
   
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON SCRIPT.JS
-  window.loadCurrentPrompts = loadCurrentPrompts
-  window.updatePrompt = updatePrompt
-  window.resetPrompt = resetPrompt
-  window.previewPrompt = previewPrompt
-  window.repairPrompts = repairPrompts
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  if (typeof window !== 'undefined') {
+    window.loadPromptsTab = loadAvailableAgents
+    window.refreshPromptsTab = refreshAgentPrompts
+    window.resetAllPromptsTab = resetAllPrompts
+    window.getSelectedAgent = () => selectedAgent.value
+    window.setSelectedAgent = (agentName) => {
+      selectedAgent.value = agentName
+      loadAgentPrompts()
+    }
+  }
 })
 
 onUnmounted(() => {
+  // Limpiar listeners
+  window.removeEventListener('loadTabContent', handleLoadTabContent)
+  
   // Limpiar funciones globales
   if (typeof window !== 'undefined') {
-    delete window.loadCurrentPrompts
-    delete window.updatePrompt
-    delete window.resetPrompt
-    delete window.previewPrompt
-    delete window.repairPrompts
+    delete window.loadPromptsTab
+    delete window.refreshPromptsTab
+    delete window.resetAllPromptsTab
+    delete window.getSelectedAgent
+    delete window.setSelectedAgent
   }
   
   appStore.addToLog('PromptsTab component unmounted', 'info')
 })
 
 // ============================================================================
-// WATCHERS
+// EVENT HANDLERS
 // ============================================================================
 
-// Watcher para recargar cuando cambie la empresa
-watch(() => appStore.currentCompanyId, async (newCompanyId) => {
-  if (newCompanyId) {
-    await loadCurrentPrompts()
+const handleLoadTabContent = (event) => {
+  if (event.detail?.tabName === 'prompts' && props.isActive) {
+    if (systemReady.value) {
+      loadAvailableAgents()
+    }
   }
-})
+}
 </script>
 
 <style scoped>
+/* ===== ESTILOS PARA PROMPTS TAB ===== */
+
 .prompts-tab {
-  padding: 24px;
+  padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
 }
 
-.prompts-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
-  gap: 16px;
+.tab-header {
+  margin-bottom: 20px;
+  text-align: center;
 }
 
-.header-title h2 {
+.tab-header h2 {
   margin: 0 0 8px 0;
   color: #2c3e50;
+  font-size: 2em;
 }
 
-.subtitle {
+.tab-description {
   margin: 0;
-  color: #7f8c8d;
-  font-size: 14px;
+  color: #6c757d;
+  font-size: 1.1em;
 }
 
-.header-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.prompts-filters {
-  background: #f8f9fa;
-  padding: 16px;
-  border-radius: 8px;
-  margin-bottom: 24px;
-}
-
-.filter-group {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.filter-input,
-.filter-select {
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
-}
-
-.filter-input {
-  min-width: 200px;
-}
-
-.loading-container {
+/* Loading & Error States */
+.loading-section, .error-section {
   text-align: center;
-  padding: 48px 24px;
+  padding: 40px 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin: 20px 0;
 }
 
 .loading-spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #007bff;
+  border-radius: 50%;
   width: 40px;
   height: 40px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #3498db;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
+  animation: spin 2s linear infinite;
+  margin: 0 auto 15px;
 }
 
 @keyframes spin {
@@ -506,250 +580,253 @@ watch(() => appStore.currentCompanyId, async (newCompanyId) => {
   100% { transform: rotate(360deg); }
 }
 
-.prompts-list {
-  display: grid;
-  gap: 24px;
+.error-section h3 {
+  color: #dc3545;
+  margin-bottom: 10px;
 }
 
-.prompt-card {
-  background: white;
-  border: 1px solid #e0e0e0;
+.btn-retry {
+  background-color: #17a2b8;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  margin-top: 15px;
+}
+
+.btn-retry:hover {
+  background-color: #117a8b;
+}
+
+/* Selector Section */
+.prompts-selector-section {
+  background: #fff;
+  border: 1px solid #dee2e6;
   border-radius: 8px;
   padding: 20px;
-  transition: all 0.2s;
+  margin-bottom: 20px;
 }
 
-.prompt-card:hover {
-  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+.selector-row {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  flex-wrap: wrap;
 }
 
-.prompt-custom {
-  border-left: 4px solid #27ae60;
+.company-info h4 {
+  margin: 0 0 5px 0;
+  color: #495057;
+  font-size: 1em;
 }
 
-.prompt-modified {
-  border-left: 4px solid #f39c12;
+.company-info p {
+  margin: 0;
+  font-weight: bold;
+  color: #007bff;
+  font-size: 1.1em;
 }
 
-.prompt-header {
+.agent-selector {
+  flex: 1;
+  min-width: 300px;
+}
+
+.agent-selector label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #495057;
+}
+
+.agent-selector select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 1em;
+  background-color: white;
+}
+
+.agent-selector select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+/* Agent Prompts Section */
+.agent-prompts-section {
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.agent-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  gap: 12px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #dee2e6;
 }
 
-.prompt-title h3 {
-  margin: 0 0 8px 0;
+.agent-header h3 {
+  margin: 0;
   color: #2c3e50;
 }
 
-.prompt-badges {
+.agent-actions {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
 }
 
-.badge {
-  padding: 4px 8px;
+.btn-refresh, .btn-reset {
+  padding: 8px 15px;
+  border: none;
   border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
 }
 
-.badge-custom {
-  background: #d5edda;
-  color: #155724;
+.btn-refresh {
+  background-color: #28a745;
+  color: white;
 }
 
-.badge-default {
-  background: #cce5ff;
-  color: #004085;
+.btn-refresh:hover:not(:disabled) {
+  background-color: #218838;
 }
 
-.badge-fallback {
-  background: #fff3cd;
-  color: #856404;
+.btn-reset {
+  background-color: #ffc107;
+  color: #212529;
 }
 
-.prompt-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+.btn-reset:hover:not(:disabled) {
+  background-color: #e0a800;
 }
 
-.prompt-content {
-  margin-bottom: 16px;
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
-.prompt-editor {
-  width: 100%;
-  min-height: 120px;
-  padding: 12px;
-  border: 1px solid #ddd;
+/* Prompt Editor Section */
+.prompt-editor-section {
+  margin-bottom: 20px;
+}
+
+/* Agent Status Info */
+.agent-status-info {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
   border-radius: 4px;
-  font-family: 'Monaco', 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.4;
-  resize: vertical;
-  transition: border-color 0.2s;
+  padding: 15px;
 }
 
-.prompt-editor:focus {
-  outline: none;
-  border-color: #3498db;
-  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+.agent-status-info h4 {
+  margin: 0 0 15px 0;
+  color: #495057;
 }
 
-.prompt-metadata {
-  display: flex;
-  gap: 16px;
-  margin-top: 8px;
-  flex-wrap: wrap;
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 15px;
 }
 
-.metadata-item {
-  font-size: 12px;
-  color: #7f8c8d;
-}
-
-.prompt-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 48px 24px;
-  color: #7f8c8d;
-}
-
-.empty-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-}
-
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-}
-
-.modal-content {
-  background: white;
-  border-radius: 8px;
-  max-width: 800px;
-  max-height: 80vh;
-  width: 90%;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-header {
+.status-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #eee;
+  padding: 8px 0;
 }
 
-.modal-header h3 {
+.status-label {
+  font-weight: bold;
+  color: #6c757d;
+}
+
+.status-value {
+  font-weight: bold;
+}
+
+.status-value.active {
+  color: #28a745;
+}
+
+.status-value.inactive {
+  color: #dc3545;
+}
+
+.status-value.custom {
+  color: #17a2b8;
+}
+
+.status-value.default {
+  color: #6c757d;
+}
+
+/* No Agent Section */
+.no-agent-section {
+  text-align: center;
+  padding: 60px 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 2px dashed #dee2e6;
+}
+
+.no-agent-message h3 {
+  margin: 0 0 10px 0;
+  color: #6c757d;
+  font-size: 1.5em;
+}
+
+.no-agent-message p {
   margin: 0;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-.modal-body {
-  padding: 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.preview-response {
-  background: #f8f9fa;
-  padding: 16px;
-  border-radius: 4px;
-  border-left: 4px solid #3498db;
-  margin-bottom: 16px;
-  font-family: system-ui;
-  line-height: 1.5;
-}
-
-.preview-metadata {
-  margin-top: 16px;
-}
-
-.metadata-json {
-  background: #f4f4f4;
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  overflow-x: auto;
-}
-
-.preview-text {
-  background: #f8f9fa;
-  padding: 16px;
-  border-radius: 4px;
-  white-space: pre-wrap;
-  font-family: 'Monaco', 'Consolas', monospace;
-  font-size: 13px;
-}
-
-.modal-footer {
-  padding: 20px;
-  border-top: 1px solid #eee;
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
+  color: #adb5bd;
+  font-size: 1.1em;
 }
 
 /* Responsive Design */
 @media (max-width: 768px) {
   .prompts-tab {
-    padding: 16px;
+    padding: 15px;
   }
   
-  .prompts-header {
+  .selector-row {
     flex-direction: column;
     align-items: stretch;
+    gap: 15px;
   }
   
-  .header-actions {
-    justify-content: center;
-  }
-  
-  .filter-group {
+  .agent-header {
     flex-direction: column;
     align-items: stretch;
+    gap: 15px;
   }
   
-  .filter-input {
-    min-width: unset;
+  .agent-actions {
+    justify-content: stretch;
   }
   
-  .prompt-header {
+  .agent-actions button {
+    flex: 1;
+  }
+  
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .status-item {
     flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .prompt-actions {
-    justify-content: center;
+    align-items: flex-start;
+    gap: 5px;
   }
 }
 </style>
