@@ -342,6 +342,38 @@ export default {
     isActive: {
       type: Boolean,
       default: false
+    },
+    
+    // Método para debug manual
+    async debugPrompts() {
+      console.log('=== DEBUG PROMPTS ===')
+      console.log('1. Current Company ID:', this.currentCompanyId)
+      console.log('2. Current Agents State:', JSON.stringify(this.agents, null, 2))
+      console.log('3. Has Prompts?:', this.hasPrompts)
+      console.log('4. Is Loading?:', this.isLoadingPrompts)
+      console.log('5. Error?:', this.error)
+      
+      // Hacer petición manual para ver respuesta raw
+      try {
+        const response = await fetch(`/api/admin/prompts?company_id=${this.currentCompanyId}`)
+        const data = await response.json()
+        console.log('6. RAW API Response:', data)
+        
+        // Analizar estructura
+        if (data.agents) {
+          console.log('7. Agent Keys in Response:', Object.keys(data.agents))
+          console.log('8. Agent Values:')
+          Object.entries(data.agents).forEach(([key, value]) => {
+            console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
+                       value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
+          })
+        }
+        
+        return data
+      } catch (err) {
+        console.error('Debug Error:', err)
+        return null
+      }
     }
   },
   data() {
@@ -388,6 +420,10 @@ export default {
     window.loadCurrentPrompts = () => this.loadPrompts()
     window.updatePrompt = (agentName) => this.updatePrompt(agentName)
     window.resetPrompt = (agentName) => this.resetPrompt(agentName)
+    window.debugPrompts = () => this.debugPrompts()
+    
+    // Exponer instancia para debug
+    window.PromptsTabInstance = this
   },
   methods: {
     async loadPrompts() {
@@ -413,8 +449,15 @@ export default {
         
         const data = await response.json()
         console.log('Prompts response:', data)
+        console.log('Agents detail:', JSON.stringify(data.agents, null, 2))
         
         if (data && data.agents) {
+          // DEBUG: Ver exactamente qué agentes vienen
+          console.log('Available agents in response:')
+          Object.keys(data.agents).forEach(key => {
+            console.log(`- ${key}:`, data.agents[key] ? 'Has data' : 'Empty')
+          })
+          
           // Asignar los agentes recibidos
           this.agents = {
             leadCaptureAgent: data.agents.leadCaptureAgent || null,
@@ -424,7 +467,17 @@ export default {
             routingAgent: data.agents.routingAgent || null
           }
           
+          // DEBUG: Ver estado después de asignar
+          console.log('Assigned agents:', this.agents)
+          console.log('Has prompts?', this.hasPrompts)
+          console.log('hasPrompts calculation test:')
+          Object.keys(this.agents).forEach(key => {
+            console.log(`  ${key} !== null?`, this.agents[key] !== null)
+          })
           console.log(`Loaded ${Object.keys(data.agents).length} prompts`)
+          
+          // Forzar actualización de la vista
+          this.$forceUpdate()
         } else {
           this.error = 'No se recibieron prompts del servidor'
         }
