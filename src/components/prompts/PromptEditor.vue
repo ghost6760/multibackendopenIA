@@ -1,4 +1,4 @@
-# PromptEditor.vue - CORRECCIÓN DE REACTIVIDAD
+# PromptEditor.vue
 <template>
   <div class="prompt-editor-container">
     <!-- Editor Header -->
@@ -33,17 +33,6 @@
           👁️
         </button>
       </div>
-    </div>
-
-    <!-- ✅ DEBUG INFO (temporal) -->
-    <div v-if="showDebugInfo" class="debug-info">
-      <small>
-        <strong>DEBUG:</strong>
-        PropData Content: {{ promptData.content?.length || 0 }} chars |
-        Internal Content: {{ internalContent.length }} chars |
-        Has Changes: {{ hasUnsavedChanges }} |
-        Watcher Triggered: {{ watcherTriggerCount }} times
-      </small>
     </div>
 
     <!-- Editor Textarea -->
@@ -107,10 +96,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 
 // ============================================================================
-// PROPS Y EMITS
+// PROPS Y EMITS - COMPATIBLE CON PROMPTSTAB.VUE
 // ============================================================================
 
 const props = defineProps({
@@ -118,6 +107,7 @@ const props = defineProps({
     type: Object,
     required: true,
     validator(value) {
+      // Validar estructura requerida
       return value && 
              typeof value.id === 'string' && 
              typeof value.displayName === 'string' &&
@@ -140,10 +130,6 @@ const internalContent = ref('')
 const originalContent = ref('')
 const isProcessing = ref(false)
 const validationErrors = ref([])
-
-// ✅ DEBUG: Variables para debugging
-const showDebugInfo = ref(false) // Cambiar a true para debug
-const watcherTriggerCount = ref(0)
 
 // ============================================================================
 // COMPUTED PROPERTIES
@@ -175,79 +161,34 @@ const statusText = computed(() => {
 })
 
 // ============================================================================
-// ✅ WATCHERS MEJORADOS CON LOGGING
+// WATCHERS
 // ============================================================================
 
-// ✅ CRÍTICO: Watcher mejorado con logging detallado
-watch(() => props.promptData, (newData, oldData) => {
-  watcherTriggerCount.value++
-  
-  console.log(`🔄 PromptEditor watcher triggered for ${newData?.displayName}:`, {
-    triggerCount: watcherTriggerCount.value,
-    hasNewData: !!newData,
-    newContent: newData?.content || '',
-    newContentLength: newData?.content?.length || 0,
-    oldContent: oldData?.content || '',
-    oldContentLength: oldData?.content?.length || 0,
-    contentChanged: newData?.content !== oldData?.content
-  })
-  
+watch(() => props.promptData, (newData) => {
   if (newData) {
-    const newContent = newData.content || ''
-    
-    // ✅ Siempre actualizar si el contenido ha cambiado
-    if (newContent !== internalContent.value) {
-      console.log(`📝 Updating internal content for ${newData.displayName}:`, {
-        from: internalContent.value.substring(0, 50) + '...',
-        to: newContent.substring(0, 50) + '...',
-        lengthChange: `${internalContent.value.length} → ${newContent.length}`
-      })
-      
-      internalContent.value = newContent
-      originalContent.value = newContent
-      
-      // ✅ Forzar validación después de actualizar
-      nextTick(() => {
-        validateContent()
-      })
-    }
+    internalContent.value = newData.content || ''
+    originalContent.value = internalContent.value
+    validateContent()
   }
 }, { immediate: true, deep: true })
 
-// ✅ NUEVO: Watcher adicional para detectar cambios específicos en content
-watch(() => props.promptData?.content, (newContent, oldContent) => {
-  console.log(`🔄 Content-specific watcher for ${props.promptData?.displayName}:`, {
-    newContent: newContent?.substring(0, 50) + '...',
-    oldContent: oldContent?.substring(0, 50) + '...',
-    contentLength: newContent?.length || 0,
-    changed: newContent !== oldContent
+watch(internalContent, () => {
+  validateContent()
+  emit('change', {
+    content: internalContent.value,
+    hasChanges: hasUnsavedChanges.value,
+    isValid: validationErrors.value.length === 0,
+    promptData: props.promptData
   })
-  
-  if (newContent !== undefined && newContent !== internalContent.value) {
-    console.log(`📝 Content changed, updating internal...`)
-    internalContent.value = newContent
-    originalContent.value = newContent
-    validateContent()
-  }
-}, { immediate: true })
-
-// ✅ Watcher para cambios en internalContent
-watch(internalContent, (newValue, oldValue) => {
-  if (newValue !== oldValue) {
-    validateContent()
-    emit('change', {
-      content: newValue,
-      hasChanges: hasUnsavedChanges.value,
-      isValid: validationErrors.value.length === 0,
-      promptData: props.promptData
-    })
-  }
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES
+// FUNCIONES PRINCIPALES CORREGIDAS - EMITIR SOLO agentName
 // ============================================================================
 
+/**
+ * Actualiza el prompt - ✅ CORREGIDO: Emitir solo agentName, no objeto completo
+ */
 const updatePrompt = async () => {
   const content = internalContent.value.trim()
   if (!content) {
@@ -263,9 +204,10 @@ const updatePrompt = async () => {
   try {
     isProcessing.value = true
     
+    // Actualizar contenido original para detectar cambios futuros
     originalContent.value = content
     
-    console.log(`🔄 Emitting update for ${props.promptData.id}`)
+    // ✅ CORREGIDO: Emitir solo el nombre del agente, igual que el monolito
     emit('update', props.promptData.id || props.promptData.name)
     
   } finally {
@@ -273,6 +215,9 @@ const updatePrompt = async () => {
   }
 }
 
+/**
+ * Resetea el prompt - ✅ CORREGIDO: Emitir solo agentName
+ */
 const resetToDefault = async () => {
   if (!props.promptData.isCustom) {
     console.warn('Este prompt ya está en su valor por defecto')
@@ -288,7 +233,7 @@ const resetToDefault = async () => {
   try {
     isProcessing.value = true
     
-    console.log(`🔄 Emitting reset for ${props.promptData.id}`)
+    // ✅ CORREGIDO: Emitir solo el nombre del agente
     emit('reset', props.promptData.id || props.promptData.name)
     
   } finally {
@@ -296,6 +241,9 @@ const resetToDefault = async () => {
   }
 }
 
+/**
+ * Muestra vista previa - ✅ CORREGIDO: Emitir solo agentName
+ */
 const showPreview = async () => {
   const content = internalContent.value.trim()
   if (!content) {
@@ -306,7 +254,7 @@ const showPreview = async () => {
   try {
     isProcessing.value = true
     
-    console.log(`🔄 Emitting preview for ${props.promptData.id}`)
+    // ✅ CORREGIDO: Emitir solo el nombre del agente
     emit('preview', props.promptData.id || props.promptData.name)
     
   } finally {
@@ -315,7 +263,7 @@ const showPreview = async () => {
 }
 
 // ============================================================================
-// FUNCIONES DE VALIDACIÓN Y UTILIDADES
+// FUNCIONES DE VALIDACIÓN Y UTILIDADES (SIN CAMBIOS)
 // ============================================================================
 
 const validateContent = () => {
@@ -330,28 +278,23 @@ const validateContent = () => {
     errors.push('Solo se permite una instancia de {user_message}')
   }
   
-  // ✅ CORRECCIÓN: Validación de variables mejorada
+  // Validar variables de template básicas
   const forbiddenPatterns = [
-    { pattern: /\{\{[^}]+\}\}/g, message: 'Usa {variable} en lugar de {{variable}}' },
-    { pattern: /\$\{[^}]+\}/g, message: 'Usa {variable} en lugar de ${variable}' },
-    { pattern: /\{[^}]+\}\s*[≤<>]\s*\d+/g, message: 'Evita operadores matemáticos cerca de variables' }
+    /\{\{[^}]+\}\}/g, // Dobles llaves {{ }}
+    /\$\{[^}]+\}/g,   // Variables de template ${ }
   ]
   
-  forbiddenPatterns.forEach(({ pattern, message }) => {
+  forbiddenPatterns.forEach(pattern => {
     if (pattern.test(content)) {
-      errors.push(`Formato de variable no válido: ${message}`)
+      errors.push('Formato de variable no válido. Usa {variable} en lugar de {{variable}} o ${variable}')
     }
   })
   
   validationErrors.value = errors
-  
-  // ✅ LOGGING de validación
-  if (errors.length > 0) {
-    console.log(`⚠️ Validation errors for ${props.promptData?.displayName}:`, errors)
-  }
 }
 
 const onContentChange = () => {
+  // Validación automática al cambiar contenido
   validateContent()
 }
 
@@ -390,39 +333,16 @@ const formatDateTime = (dateString) => {
 }
 
 // ============================================================================
-// ✅ FUNCIÓN DEBUG PARA VERIFICAR ESTADO
-// ============================================================================
-
-const debugEditor = () => {
-  console.log(`=== 🔍 DEBUG PROMPT EDITOR: ${props.promptData?.displayName} ===`)
-  console.log('1. Props promptData:', props.promptData)
-  console.log('2. Internal content length:', internalContent.value.length)
-  console.log('3. Original content length:', originalContent.value.length)
-  console.log('4. Has unsaved changes:', hasUnsavedChanges.value)
-  console.log('5. Validation errors:', validationErrors.value)
-  console.log('6. Watcher trigger count:', watcherTriggerCount.value)
-  console.log('7. Content preview:', internalContent.value.substring(0, 100) + '...')
-}
-
-// ============================================================================
 // LIFECYCLE
 // ============================================================================
 
 onMounted(() => {
-  // ✅ LOG de montaje
-  console.log(`🔄 PromptEditor mounted for ${props.promptData?.displayName}:`, {
-    promptDataContent: props.promptData?.content?.length || 0,
-    internalContent: internalContent.value.length,
-    hasContent: !!props.promptData?.content
-  })
-  
   // Validación inicial
   validateContent()
   
-  // ✅ EXPONER FUNCIÓN DEBUG GLOBALMENTE
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
   const agentName = props.promptData.id || props.promptData.name
   if (agentName && typeof window !== 'undefined') {
-    window[`debugEditor_${agentName}`] = debugEditor
     window[`updatePrompt_${agentName}`] = updatePrompt
     window[`resetPrompt_${agentName}`] = resetToDefault
     window[`previewPrompt_${agentName}`] = showPreview
@@ -431,7 +351,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* ===== ESTILOS EXISTENTES ===== */
+/* ===== ESTILOS PARA PROMPT EDITOR ===== */
 
 .prompt-editor-container {
   background: white;
@@ -445,16 +365,6 @@ onMounted(() => {
 .prompt-editor-container:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-}
-
-/* ✅ NUEVO: Estilos para debug info */
-.debug-info {
-  background: #fff3cd;
-  border-bottom: 1px solid #ffeaa7;
-  padding: 8px 15px;
-  font-family: monospace;
-  font-size: 11px;
-  color: #856404;
 }
 
 .prompt-editor-header {
@@ -692,5 +602,18 @@ button:disabled {
   .validation-messages {
     text-align: left;
   }
+}
+
+/* Estados de animación */
+.prompt-editor-container.saving {
+  opacity: 0.7;
+}
+
+.prompt-editor-container.error {
+  border-color: #dc3545;
+}
+
+.prompt-editor-container.success {
+  border-color: #28a745;
 }
 </style>
