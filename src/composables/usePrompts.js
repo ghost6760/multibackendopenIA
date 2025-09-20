@@ -447,6 +447,23 @@ export const usePrompts = () => {
     console.log('6. Is Loading?:', isLoadingPrompts.value)
     console.log('7. Error?:', error.value)
     
+    // ✅ NUEVO: Debug específico para validación
+    console.log('8. VALIDATION DEBUG:')
+    agentsList.value.forEach(agent => {
+      console.log(`\n--- ${agent.displayName} ---`)
+      console.log('Content length:', agent.content.length)
+      console.log('Has {user_message}:', agent.content.includes('{user_message}'))
+      
+      // Detectar patrones problemáticos
+      const doubleBreaces = agent.content.match(/\{\{[^}]+\}\}/g)
+      const dollarVars = agent.content.match(/\$\{[^}]+\}/g)
+      const invalidPatterns = agent.content.match(/\{[^}]+\}\s*[≤<>]\s*\d+/g)
+      
+      if (doubleBreaces) console.log('⚠️ Double braces found:', doubleBreaces)
+      if (dollarVars) console.log('⚠️ Dollar variables found:', dollarVars) 
+      if (invalidPatterns) console.log('⚠️ Invalid patterns found:', invalidPatterns)
+    })
+    
     try {
       const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       const data = await response.json()
