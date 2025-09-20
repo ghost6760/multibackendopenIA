@@ -471,6 +471,104 @@ export const usePrompts = () => {
     }
   })
 
+  /**
+   * Función debug - MIGRADA EXACTA del monolito
+   */
+  const debugPrompts = async () => {
+    console.log('=== DEBUG PROMPTS ===')
+    console.log('1. Current Company ID:', currentCompanyId.value)
+    console.log('2. Current Agents State:', JSON.stringify(agents.value, null, 2))
+    console.log('3. Has Prompts?:', hasPrompts.value)
+    console.log('4. Is Loading?:', isLoadingPrompts.value)
+    console.log('5. Error?:', error.value)
+    
+    // Hacer petición manual para ver respuesta raw
+    try {
+      const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
+      const data = await response.json()
+      console.log('6. RAW API Response:', data)
+      
+      // Analizar estructura
+      if (data.agents) {
+        console.log('7. Agent Keys in Response:', Object.keys(data.agents))
+        console.log('8. Agent Values:')
+        Object.entries(data.agents).forEach(([key, value]) => {
+          console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
+                     value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
+        })
+      }
+      
+      return data
+    } catch (err) {
+      console.error('Debug Error:', err)
+      return null
+    }
+  }
+  
+  /**
+   * Test endpoints - MIGRADA EXACTA del monolito
+   */
+  const testEndpoints = async () => {
+    console.log('=== TESTING ENDPOINTS ===')
+    const testAgent = 'emergency_agent'
+    
+    // Test GET
+    console.log('\n1. Testing GET /api/admin/prompts')
+    try {
+      const getResponse = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
+      console.log('GET Status:', getResponse.status)
+      const getData = await getResponse.json()
+      console.log('GET Response:', getData)
+    } catch (err) {
+      console.error('GET Error:', err)
+    }
+    
+    // Test UPDATE (sin realmente actualizar)
+    console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
+    console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
+    console.log('Body:', {
+      company_id: currentCompanyId.value,
+      prompt_template: 'test'
+    })
+    
+    // Test DELETE
+    console.log('\n3. Testing DELETE endpoint')
+    console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${currentCompanyId.value}`)
+    
+    // Test PREVIEW
+    console.log('\n4. Testing PREVIEW endpoint')
+    try {
+      const previewResponse = await fetch('/api/admin/prompts/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          agent_name: testAgent,
+          company_id: currentCompanyId.value,
+          prompt_template: 'test prompt',
+          message: 'test message'
+        })
+      })
+      console.log('Preview Status:', previewResponse.status)
+      if (previewResponse.status !== 404) {
+        const previewData = await previewResponse.json()
+        console.log('Preview Response:', previewData)
+      } else {
+        console.log('Preview endpoint not found (404)')
+      }
+    } catch (err) {
+      console.error('Preview Error:', err)
+    }
+    
+    // Test REPAIR
+    console.log('\n5. Testing REPAIR endpoint')
+    console.log('Endpoint: /api/admin/prompts/repair')
+    console.log('Would send:', {
+      company_id: currentCompanyId.value,
+      agents: Object.keys(agents.value)
+    })
+  }
   // ============================================================================
   // RETORNO DEL COMPOSABLE
   // ============================================================================
@@ -503,6 +601,10 @@ export const usePrompts = () => {
     closePreview,
     repairAllPrompts,
     exportPrompts,
-    formatDate
+    formatDate,
+      
+    // ✅ AGREGAR: Funciones debug faltantes
+    debugPrompts,
+    testEndpoints
   }
 }
