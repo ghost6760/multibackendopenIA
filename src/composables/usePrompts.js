@@ -44,15 +44,18 @@ export const usePrompts = () => {
   // ============================================================================
 
   const hasPrompts = computed(() => {
+    // ✅ EXACTO al monolito: misma lógica de detección
     return Object.keys(agents.value).some(key => agents.value[key] !== null)
   })
 
   const currentCompanyId = computed(() => {
-    return appStore.currentCompanyId
+    // ✅ EXACTO al monolito: misma lógica de fallback
+    return window.currentCompanyId || localStorage.getItem('currentCompanyId') || 'dental_clinic'
   })
 
   const currentCompanyName = computed(() => {
-    return appStore.currentCompanyName || currentCompanyId.value
+    // ✅ EXACTO al monolito: mismo fallback
+    return window.currentCompanyName || currentCompanyId.value
   })
 
   // Lista de agentes para iterar en componentes
