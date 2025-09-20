@@ -1,4 +1,5 @@
 # PromptsTab.vue
+# PromptsTab.vue
 <template>
   <div class="prompts-tab" v-if="isActive">
     <!-- Header del Tab -->
