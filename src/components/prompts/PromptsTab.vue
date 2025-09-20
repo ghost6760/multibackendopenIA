@@ -374,6 +374,69 @@ export default {
         console.error('Debug Error:', err)
         return null
       }
+    },
+    
+    // Método para test manual de endpoints
+    async testEndpoints() {
+      console.log('=== TESTING ENDPOINTS ===')
+      const testAgent = 'emergency_agent'
+      
+      // Test GET
+      console.log('\n1. Testing GET /api/admin/prompts')
+      try {
+        const getResponse = await fetch(`/api/admin/prompts?company_id=${this.currentCompanyId}`)
+        console.log('GET Status:', getResponse.status)
+        const getData = await getResponse.json()
+        console.log('GET Response:', getData)
+      } catch (err) {
+        console.error('GET Error:', err)
+      }
+      
+      // Test UPDATE (sin realmente actualizar)
+      console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
+      console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
+      console.log('Body:', {
+        company_id: this.currentCompanyId,
+        prompt_template: 'test'
+      })
+      
+      // Test DELETE
+      console.log('\n3. Testing DELETE endpoint')
+      console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${this.currentCompanyId}`)
+      
+      // Test PREVIEW
+      console.log('\n4. Testing PREVIEW endpoint')
+      try {
+        const previewResponse = await fetch('/api/admin/prompts/preview', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            agent_name: testAgent,
+            company_id: this.currentCompanyId,
+            prompt_template: 'test prompt',
+            message: 'test message'
+          })
+        })
+        console.log('Preview Status:', previewResponse.status)
+        if (previewResponse.status !== 404) {
+          const previewData = await previewResponse.json()
+          console.log('Preview Response:', previewData)
+        } else {
+          console.log('Preview endpoint not found (404)')
+        }
+      } catch (err) {
+        console.error('Preview Error:', err)
+      }
+      
+      // Test REPAIR
+      console.log('\n5. Testing REPAIR endpoint')
+      console.log('Endpoint: /api/admin/prompts/repair')
+      console.log('Would send:', {
+        company_id: this.currentCompanyId,
+        agents: Object.keys(this.agents)
+      })
     }
   },
   data() {
@@ -425,6 +488,7 @@ export default {
     window.updatePrompt = (agentName) => this.updatePrompt(agentName)
     window.resetPrompt = (agentName) => this.resetPrompt(agentName)
     window.debugPrompts = () => this.debugPrompts()
+    window.testPromptEndpoints = () => this.testEndpoints()
     
     // Exponer instancia para debug
     window.PromptsTabInstance = this
@@ -511,11 +575,11 @@ export default {
         
         console.log(`Updating prompt for ${agentName}`)
         
+        // IMPORTANTE: El backend espera el agentName sin company_id en la URL
         const response = await fetch(`/api/admin/prompts/${agentName}`, {
           method: 'PUT',
           headers: {
-            'Content-Type': 'application/json',
-            'X-Company-ID': this.currentCompanyId
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             company_id: this.currentCompanyId,
@@ -524,17 +588,28 @@ export default {
         })
         
         const data = await response.json()
+        console.log('Update response:', data)
         
         if (response.ok) {
           // Actualizar el estado local
           if (this.agents[agentName]) {
             this.agents[agentName].is_custom = true
             this.agents[agentName].last_modified = new Date().toISOString()
+            if (data.version) {
+              this.agents[agentName].version = data.version
+            }
           }
           
-          alert(`Prompt de ${agentName} actualizado exitosamente`)
+          let successMessage = `Prompt de ${agentName} actualizado exitosamente`
+          if (data.version) {
+            successMessage += ` (v${data.version})`
+          }
+          alert(successMessage)
+          
+          // Recargar los prompts para sincronizar con el backend
+          await this.loadPrompts()
         } else {
-          throw new Error(data.error || 'Error actualizando prompt')
+          throw new Error(data.error || data.message || 'Error actualizando prompt')
         }
         
       } catch (err) {
@@ -560,21 +635,34 @@ export default {
         
         console.log(`Resetting prompt for ${agentName}`)
         
+        // El endpoint DELETE necesita company_id como query param
         const response = await fetch(`/api/admin/prompts/${agentName}?company_id=${this.currentCompanyId}`, {
           method: 'DELETE',
           headers: {
-            'Content-Type': 'application/json',
-            'X-Company-ID': this.currentCompanyId
+            'Content-Type': 'application/json'
           }
         })
         
+        console.log('Reset response status:', response.status)
+        
         if (response.ok) {
+          const data = await response.json()
+          console.log('Reset response data:', data)
+          
+          // Actualizar con el prompt por defecto si viene en la respuesta
+          if (data.default_prompt && this.agents[agentName]) {
+            this.agents[agentName].current_prompt = data.default_prompt
+            this.agents[agentName].is_custom = false
+            this.agents[agentName].last_modified = null
+          }
+          
+          alert(`Prompt de ${agentName} restaurado exitosamente`)
+          
           // Recargar los prompts para obtener el valor por defecto
           await this.loadPrompts()
-          alert(`Prompt de ${agentName} restaurado exitosamente`)
         } else {
-          const data = await response.json()
-          throw new Error(data.error || 'Error reseteando prompt')
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.error || errorData.message || 'Error reseteando prompt')
         }
         
       } catch (err) {
@@ -585,45 +673,118 @@ export default {
       }
     },
     
-    previewPrompt(agentName) {
+    async previewPrompt(agentName) {
       const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
       
       if (!testMessage) return
       
-      // Por ahora, mostrar el prompt en un alert
-      const promptContent = this.agents[agentName]?.current_prompt || ''
-      const preview = `=== PREVIEW DE ${agentName} ===\n\nMensaje de prueba: ${testMessage}\n\nPrompt actual:\n${promptContent.substring(0, 500)}...`
+      const promptContent = this.agents[agentName]?.current_prompt
+      if (!promptContent) {
+        alert('No hay contenido de prompt para generar vista previa')
+        return
+      }
       
-      alert(preview)
+      try {
+        this.isProcessing = true
+        
+        console.log(`Generating preview for ${agentName}`)
+        
+        // Intentar con el endpoint de preview si existe
+        const response = await fetch('/api/admin/prompts/preview', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            agent_name: agentName,
+            company_id: this.currentCompanyId,
+            prompt_template: promptContent,
+            message: testMessage
+          })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          console.log('Preview response:', data)
+          
+          // Mostrar el preview en un alert o modal
+          const previewText = data.preview || data.response || 'Vista previa generada'
+          const fullPreview = `=== PREVIEW DE ${agentName.toUpperCase()} ===\n\n` +
+                             `📝 Mensaje de prueba:\n${testMessage}\n\n` +
+                             `🤖 Respuesta generada:\n${previewText}\n\n` +
+                             `📋 Prompt usado:\n${promptContent.substring(0, 200)}...`
+          
+          alert(fullPreview)
+        } else {
+          // Si el endpoint de preview no existe, mostrar el prompt actual
+          const preview = `=== PREVIEW DE ${agentName.toUpperCase()} ===\n\n` +
+                         `📝 Mensaje de prueba: ${testMessage}\n\n` +
+                         `📋 Prompt actual:\n${promptContent.substring(0, 500)}...\n\n` +
+                         `(Vista previa simple - endpoint de preview no disponible)`
+          
+          alert(preview)
+        }
+        
+      } catch (err) {
+        // Fallback: mostrar el prompt sin procesamiento
+        console.log('Preview endpoint not available, showing simple preview')
+        const preview = `=== PREVIEW DE ${agentName.toUpperCase()} ===\n\n` +
+                       `📝 Mensaje de prueba: ${testMessage}\n\n` +
+                       `📋 Prompt actual:\n${promptContent}`
+        
+        alert(preview)
+      } finally {
+        this.isProcessing = false
+      }
     },
     
     async repairAllPrompts() {
-      if (!confirm('¿Reparar todos los prompts desde el repositorio?')) {
+      if (!confirm('¿Reparar todos los prompts desde el repositorio? Esto restaurará los prompts corruptos o faltantes.')) {
         return
       }
 
       try {
         this.isProcessing = true
         
+        console.log('Repairing all prompts...')
+        
         const response = await fetch('/api/admin/prompts/repair', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'X-Company-ID': this.currentCompanyId
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             company_id: this.currentCompanyId,
-            agents: Object.keys(this.agents)
+            agents: Object.keys(this.agents) // Enviar los nombres de los agentes actuales
           })
         })
         
+        console.log('Repair response status:', response.status)
+        
         if (response.ok) {
-          alert('Prompts reparados exitosamente')
+          const data = await response.json()
+          console.log('Repair response:', data)
+          
+          let message = 'Prompts reparados exitosamente'
+          if (data.repaired_count !== undefined) {
+            message += ` (${data.repaired_count} prompts reparados)`
+          }
+          if (data.details) {
+            console.log('Repair details:', data.details)
+          }
+          
+          alert(message)
+          
+          // Recargar los prompts después de la reparación
           await this.loadPrompts()
+        } else {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.error || errorData.message || 'Error reparando prompts')
         }
         
       } catch (err) {
         alert(`Error reparando prompts: ${err.message}`)
+        console.error('Error repairing prompts:', err)
       } finally {
         this.isProcessing = false
       }
@@ -631,24 +792,42 @@ export default {
     
     exportPrompts() {
       try {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+        
         const exportData = {
           company_id: this.currentCompanyId,
           company_name: this.currentCompanyName,
-          timestamp: new Date().toISOString(),
-          agents: this.agents
+          exported_at: new Date().toISOString(),
+          agents: {}
         }
+        
+        // Incluir solo los datos relevantes de cada agente
+        Object.entries(this.agents).forEach(([key, agent]) => {
+          if (agent) {
+            exportData.agents[key] = {
+              current_prompt: agent.current_prompt,
+              is_custom: agent.is_custom,
+              last_modified: agent.last_modified,
+              version: agent.version || null
+            }
+          }
+        })
         
         const dataStr = JSON.stringify(exportData, null, 2)
         const dataBlob = new Blob([dataStr], { type: 'application/json' })
         
         const link = document.createElement('a')
         link.href = URL.createObjectURL(dataBlob)
-        link.download = `prompts_${this.currentCompanyId}_${Date.now()}.json`
+        link.download = `prompts_${this.currentCompanyId}_${timestamp}.json`
+        document.body.appendChild(link)
         link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(link.href)
         
         alert('Prompts exportados exitosamente')
       } catch (err) {
-        alert('Error exportando prompts')
+        alert('Error exportando prompts: ' + err.message)
+        console.error('Error exporting prompts:', err)
       }
     },
     
