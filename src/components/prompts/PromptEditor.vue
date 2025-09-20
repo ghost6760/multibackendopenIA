@@ -4,11 +4,11 @@
     <!-- Editor Header -->
     <div class="prompt-editor-header">
       <div class="prompt-info">
-        <h4 class="prompt-title">{{ promptData.name || promptData.id || 'Prompt' }}</h4>
+        <h4 class="prompt-title">{{ promptData.icon }} {{ promptData.displayName }}</h4>
         <div class="prompt-meta">
           <span class="prompt-status" :class="statusClass">{{ statusText }}</span>
-          <span v-if="promptData.last_modified" class="prompt-date">
-            Modificado: {{ formatDateTime(promptData.last_modified) }}
+          <span v-if="promptData.lastModified" class="prompt-date">
+            Modificado: {{ formatDateTime(promptData.lastModified) }}
           </span>
         </div>
       </div>
@@ -16,10 +16,10 @@
       <!-- Quick Actions -->
       <div class="prompt-quick-actions">
         <button 
-          v-if="promptData.is_custom" 
+          v-if="promptData.isCustom" 
           @click="resetToDefault"
           class="btn-reset-small"
-          :disabled="isProcessing"
+          :disabled="readonly || isProcessing"
           title="Restaurar al valor por defecto"
         >
           🔄
@@ -27,7 +27,7 @@
         <button 
           @click="showPreview"
           class="btn-preview-small"
-          :disabled="isProcessing || !promptContent.trim()"
+          :disabled="readonly || isProcessing || !internalContent.trim()"
           title="Vista previa"
         >
           👁️
@@ -38,11 +38,11 @@
     <!-- Editor Textarea -->
     <div class="prompt-editor-body">
       <textarea
-        :id="`prompt-${promptData.id || promptData.name}`"
-        v-model="promptContent"
+        :id="`prompt-${promptData.id}`"
+        v-model="internalContent"
         class="prompt-editor"
-        :placeholder="placeholder"
-        :disabled="isProcessing"
+        :placeholder="promptData.placeholder || 'Escribe aquí tu prompt personalizado...'"
+        :disabled="readonly || isProcessing"
         @input="onContentChange"
         @keydown="onKeyDown"
         rows="12"
@@ -51,7 +51,7 @@
       <!-- Character count and validation -->
       <div class="prompt-editor-footer">
         <div class="prompt-stats">
-          <span class="char-count">{{ promptContent.length }} caracteres</span>
+          <span class="char-count">{{ internalContent.length }} caracteres</span>
           <span v-if="hasUnsavedChanges" class="unsaved-indicator">• Cambios sin guardar</span>
         </div>
         
@@ -68,7 +68,7 @@
       <button 
         @click="updatePrompt"
         class="btn-primary"
-        :disabled="isProcessing || !hasUnsavedChanges || validationErrors.length > 0"
+        :disabled="readonly || isProcessing || !hasUnsavedChanges || validationErrors.length > 0"
       >
         <span v-if="isProcessing">⏳ Actualizando...</span>
         <span v-else>💾 Actualizar</span>
@@ -77,7 +77,7 @@
       <button 
         @click="resetToDefault"
         class="btn-secondary"
-        :disabled="isProcessing || !promptData.is_custom"
+        :disabled="readonly || isProcessing || !promptData.isCustom"
       >
         <span v-if="isProcessing">⏳ Restaurando...</span>
         <span v-else>🔄 Restaurar</span>
@@ -86,44 +86,33 @@
       <button 
         @click="showPreview"
         class="btn-info"
-        :disabled="isProcessing || !promptContent.trim()"
+        :disabled="readonly || isProcessing || !internalContent.trim()"
       >
         <span v-if="isProcessing">⏳ Generando...</span>
         <span v-else>👁️ Vista Previa</span>
-      </button>
-      
-      <button 
-        v-if="promptData.supports_repair"
-        @click="repairPrompt"
-        class="btn-repair"
-        :disabled="isProcessing"
-        title="Reparar prompt desde repositorio"
-      >
-        🔧 Reparar
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
-import { useNotifications } from '@/composables/useNotifications'
+import { ref, computed, watch, onMounted } from 'vue'
 
 // ============================================================================
-// PROPS Y EMITS
+// PROPS Y EMITS - COMPATIBLE CON PROMPTSTAB.VUE
 // ============================================================================
 
 const props = defineProps({
   promptData: {
     type: Object,
     required: true,
-    default: () => ({})
-  },
-  placeholder: {
-    type: String,
-    default: 'Escribe aquí tu prompt personalizado...'
+    validator(value) {
+      // Validar estructura requerida
+      return value && 
+             typeof value.id === 'string' && 
+             typeof value.displayName === 'string' &&
+             typeof value.content === 'string'
+    }
   },
   readonly: {
     type: Boolean,
@@ -134,18 +123,10 @@ const props = defineProps({
 const emit = defineEmits(['update', 'reset', 'preview', 'change'])
 
 // ============================================================================
-// COMPOSABLES
-// ============================================================================
-
-const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
-const { showNotification } = useNotifications()
-
-// ============================================================================
 // ESTADO REACTIVO
 // ============================================================================
 
-const promptContent = ref('')
+const internalContent = ref('')
 const originalContent = ref('')
 const isProcessing = ref(false)
 const validationErrors = ref([])
@@ -155,11 +136,11 @@ const validationErrors = ref([])
 // ============================================================================
 
 const hasUnsavedChanges = computed(() => {
-  return promptContent.value !== originalContent.value
+  return internalContent.value !== originalContent.value
 })
 
 const statusClass = computed(() => {
-  if (promptData.value?.is_custom) {
+  if (props.promptData?.isCustom) {
     return 'custom'
   }
   return 'default'
@@ -168,10 +149,10 @@ const statusClass = computed(() => {
 const statusText = computed(() => {
   const data = props.promptData
   
-  if (data?.is_custom) {
+  if (data?.isCustom) {
     let text = '✅ Personalizado'
-    if (data.last_modified) {
-      text += ` (${new Date(data.last_modified).toLocaleDateString()})`
+    if (data.lastModified) {
+      text += ` (${new Date(data.lastModified).toLocaleDateString()})`
     }
     return text
   }
@@ -185,95 +166,68 @@ const statusText = computed(() => {
 
 watch(() => props.promptData, (newData) => {
   if (newData) {
-    promptContent.value = newData.content || newData.current_prompt || ''
-    originalContent.value = promptContent.value
+    internalContent.value = newData.content || ''
+    originalContent.value = internalContent.value
     validateContent()
   }
 }, { immediate: true, deep: true })
 
-watch(promptContent, () => {
+watch(internalContent, () => {
   validateContent()
   emit('change', {
-    content: promptContent.value,
+    content: internalContent.value,
     hasChanges: hasUnsavedChanges.value,
-    isValid: validationErrors.value.length === 0
+    isValid: validationErrors.value.length === 0,
+    promptData: props.promptData
   })
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - MIGRADAS DEL SCRIPT.JS
+// FUNCIONES PRINCIPALES - EMITIR EVENTOS A PROMPTSTAB.VUE
 // ============================================================================
 
 /**
- * Actualiza el prompt - MIGRADO: updatePrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Actualiza el prompt - Emite evento al padre
  */
 const updatePrompt = async () => {
-  if (!appStore.currentCompanyId) {
-    showNotification('Por favor selecciona una empresa primero', 'warning')
+  const content = internalContent.value.trim()
+  if (!content) {
+    console.warn('El prompt no puede estar vacío')
     return
   }
   
-  const content = promptContent.value.trim()
-  if (!content) {
-    showNotification('El prompt no puede estar vacío', 'error')
+  if (validationErrors.value.length > 0) {
+    console.warn('El prompt tiene errores de validación')
     return
   }
   
   try {
     isProcessing.value = true
-    const agentName = props.promptData.id || props.promptData.name
     
-    appStore.addToLog(`Updating prompt for ${agentName} in company ${appStore.currentCompanyId}`, 'info')
-    
-    // PRESERVAR: Request exacto como en script.js
-    const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
-      method: 'PUT',
-      body: {
-        company_id: appStore.currentCompanyId,
-        prompt_template: content
-      }
-    })
-    
-    // Actualizar contenido original
+    // Actualizar contenido original para detectar cambios futuros
     originalContent.value = content
     
-    // PRESERVAR: Mensaje de éxito con versión si está disponible
-    let successMessage = `Prompt de ${agentName} actualizado exitosamente`
-    if (response.version) {
-      successMessage += ` (v${response.version})`
-    }
-    
-    showNotification(successMessage, 'success')
-    appStore.addToLog(`Prompt ${agentName} updated successfully`, 'info')
-    
-    // Emitir evento para actualizar padre
+    // Emitir evento al padre con los datos necesarios
     emit('update', {
       ...props.promptData,
-      content: content,
-      is_custom: true,
-      last_modified: new Date().toISOString()
+      content: content
     })
     
-  } catch (error) {
-    appStore.addToLog(`Error updating prompt: ${error.message}`, 'error')
-    showNotification('Error al actualizar prompt: ' + error.message, 'error')
   } finally {
     isProcessing.value = false
   }
 }
 
 /**
- * Resetea el prompt - MIGRADO: resetPrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Resetea el prompt - Emite evento al padre
  */
 const resetToDefault = async () => {
-  if (!appStore.currentCompanyId) {
-    showNotification('Por favor selecciona una empresa primero', 'warning')
+  if (!props.promptData.isCustom) {
+    console.warn('Este prompt ya está en su valor por defecto')
     return
   }
   
-  const agentName = props.promptData.id || props.promptData.name
+  const agentName = props.promptData.displayName
   
   if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
     return
@@ -282,121 +236,35 @@ const resetToDefault = async () => {
   try {
     isProcessing.value = true
     
-    appStore.addToLog(`Resetting prompt for ${agentName} in company ${appStore.currentCompanyId}`, 'info')
-    
-    // PRESERVAR: Request exacto como en script.js
-    const response = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${appStore.currentCompanyId}`, {
-      method: 'DELETE'
-    })
-    
-    // Actualizar contenido al valor por defecto
-    const defaultContent = response.default_prompt || ''
-    promptContent.value = defaultContent
-    originalContent.value = defaultContent
-    
-    showNotification(`Prompt de ${agentName} restaurado al valor por defecto`, 'success')
-    appStore.addToLog(`Prompt ${agentName} reset successfully`, 'info')
-    
-    // Emitir evento para actualizar padre
+    // Emitir evento al padre
     emit('reset', {
-      ...props.promptData,
-      content: defaultContent,
-      is_custom: false,
-      last_modified: null
+      ...props.promptData
     })
     
-  } catch (error) {
-    appStore.addToLog(`Error resetting prompt: ${error.message}`, 'error')
-    showNotification('Error al restaurar prompt: ' + error.message, 'error')
   } finally {
     isProcessing.value = false
   }
 }
 
 /**
- * Muestra vista previa - MIGRADO: previewPrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Muestra vista previa - Emite evento al padre
  */
 const showPreview = async () => {
-  if (!appStore.currentCompanyId) {
-    showNotification('Por favor selecciona una empresa primero', 'warning')
-    return
-  }
-  
-  const content = promptContent.value.trim()
+  const content = internalContent.value.trim()
   if (!content) {
-    showNotification('El prompt no puede estar vacío', 'error')
-    return
-  }
-  
-  // PRESERVAR: Usar prompt() como en script.js original
-  const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
-  
-  if (!testMessage) {
-    showNotification('Operación cancelada', 'info')
+    console.warn('El prompt no puede estar vacío')
     return
   }
   
   try {
     isProcessing.value = true
-    const agentName = props.promptData.id || props.promptData.name
     
-    appStore.addToLog(`Previewing prompt for ${agentName}`, 'info')
-    
-    // Emitir evento para mostrar preview en componente padre
+    // Emitir evento al padre con contenido actualizado
     emit('preview', {
-      agentName,
-      promptContent: content,
-      testMessage,
-      promptData: props.promptData
+      ...props.promptData,
+      content: content
     })
     
-  } catch (error) {
-    appStore.addToLog(`Error previewing prompt: ${error.message}`, 'error')
-    showNotification('Error generando vista previa: ' + error.message, 'error')
-  } finally {
-    isProcessing.value = false
-  }
-}
-
-/**
- * Reparar prompt - NUEVA FUNCIÓN del script.js
- */
-const repairPrompt = async () => {
-  if (!appStore.currentCompanyId) {
-    showNotification('Por favor selecciona una empresa primero', 'warning')
-    return
-  }
-  
-  const agentName = props.promptData.id || props.promptData.name
-  
-  if (!confirm(`¿Reparar el prompt ${agentName} desde el repositorio?`)) {
-    return
-  }
-  
-  try {
-    isProcessing.value = true
-    
-    // PRESERVAR: Endpoint de reparación como en script.js
-    const response = await apiRequest(`/api/admin/prompts/repair`, {
-      method: 'POST',
-      body: {
-        company_id: appStore.currentCompanyId,
-        agents: [agentName]
-      }
-    })
-    
-    showNotification(`Prompt ${agentName} reparado exitosamente`, 'success')
-    
-    // Recargar contenido si se reparó
-    if (response.repaired && response.repaired[agentName]) {
-      const repairedContent = response.repaired[agentName]
-      promptContent.value = repairedContent
-      originalContent.value = repairedContent
-    }
-    
-  } catch (error) {
-    showNotification('Error reparando prompt: ' + error.message, 'error')
   } finally {
     isProcessing.value = false
   }
@@ -408,7 +276,7 @@ const repairPrompt = async () => {
 
 const validateContent = () => {
   const errors = []
-  const content = promptContent.value
+  const content = internalContent.value
   
   if (content.length > 10000) {
     errors.push('El prompt es demasiado largo (máximo 10,000 caracteres)')
@@ -418,11 +286,23 @@ const validateContent = () => {
     errors.push('Solo se permite una instancia de {user_message}')
   }
   
+  // Validar variables de template básicas
+  const forbiddenPatterns = [
+    /\{\{[^}]+\}\}/g, // Dobles llaves {{ }}
+    /\$\{[^}]+\}/g,   // Variables de template ${ }
+  ]
+  
+  forbiddenPatterns.forEach(pattern => {
+    if (pattern.test(content)) {
+      errors.push('Formato de variable no válido. Usa {variable} en lugar de {{variable}} o ${variable}')
+    }
+  })
+  
   validationErrors.value = errors
 }
 
 const onContentChange = () => {
-  // Trigger validation on change
+  // Validación automática al cambiar contenido
   validateContent()
 }
 
@@ -438,8 +318,15 @@ const onKeyDown = (event) => {
   // Ctrl+Enter para vista previa
   if (event.ctrlKey && event.key === 'Enter') {
     event.preventDefault()
-    if (promptContent.value.trim()) {
+    if (internalContent.value.trim()) {
       showPreview()
+    }
+  }
+  
+  // Escape para deshacer cambios
+  if (event.key === 'Escape' && hasUnsavedChanges.value) {
+    if (confirm('¿Deshacer cambios no guardados?')) {
+      internalContent.value = originalContent.value
     }
   }
 }
@@ -458,6 +345,9 @@ const formatDateTime = (dateString) => {
 // ============================================================================
 
 onMounted(() => {
+  // Validación inicial
+  validateContent()
+  
   // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
   const agentName = props.promptData.id || props.promptData.name
   if (agentName && typeof window !== 'undefined') {
@@ -466,37 +356,32 @@ onMounted(() => {
     window[`previewPrompt_${agentName}`] = showPreview
   }
 })
-
-onUnmounted(() => {
-  // Limpiar funciones globales
-  const agentName = props.promptData.id || props.promptData.name
-  if (agentName && typeof window !== 'undefined') {
-    delete window[`updatePrompt_${agentName}`]
-    delete window[`resetPrompt_${agentName}`]
-    delete window[`previewPrompt_${agentName}`]
-  }
-})
 </script>
 
 <style scoped>
 /* ===== ESTILOS PARA PROMPT EDITOR ===== */
 
 .prompt-editor-container {
-  background: #f8f9fa;
+  background: white;
   border: 1px solid #dee2e6;
   border-radius: 8px;
-  padding: 20px;
+  overflow: hidden;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  margin-bottom: 20px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.prompt-editor-container:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
 }
 
 .prompt-editor-header {
+  background: #f8f9fa;
+  padding: 15px;
+  border-bottom: 1px solid #dee2e6;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 15px;
-  padding-bottom: 10px;
-  border-bottom: 2px solid #007bff;
 }
 
 .prompt-info {
@@ -572,7 +457,7 @@ onUnmounted(() => {
 }
 
 .prompt-editor-body {
-  margin-bottom: 15px;
+  padding: 15px;
 }
 
 .prompt-editor {
@@ -638,6 +523,9 @@ onUnmounted(() => {
 }
 
 .prompt-actions {
+  padding: 15px;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -686,16 +574,6 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 
-.btn-repair {
-  background-color: #fd7e14;
-  color: white;
-}
-
-.btn-repair:hover:not(:disabled) {
-  background-color: #e8690b;
-  transform: translateY(-1px);
-}
-
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -732,5 +610,18 @@ button:disabled {
   .validation-messages {
     text-align: left;
   }
+}
+
+/* Estados de animación */
+.prompt-editor-container.saving {
+  opacity: 0.7;
+}
+
+.prompt-editor-container.error {
+  border-color: #dc3545;
+}
+
+.prompt-editor-container.success {
+  border-color: #28a745;
 }
 </style>
