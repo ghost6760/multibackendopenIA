@@ -332,6 +332,101 @@
       <p>Cargando prompts del sistema...</p>
     </div>
 
+    <!-- Preview Modal -->
+    <div v-if="showPreview" class="preview-modal-overlay" @click="closePreview">
+      <div class="preview-modal" @click.stop>
+        <div class="preview-header">
+          <h3>🔍 Vista Previa - {{ previewAgent }}</h3>
+          <button @click="closePreview" class="close-btn">×</button>
+        </div>
+        
+        <div class="preview-body">
+          <!-- Loading state -->
+          <div v-if="previewLoading" class="preview-loading">
+            <div class="loading-spinner"></div>
+            <p>Generando preview...</p>
+          </div>
+          
+          <!-- Preview content -->
+          <div v-else-if="previewResponse">
+            <!-- Test info -->
+            <div class="preview-section">
+              <h4>📋 Información del Test</h4>
+              <div class="info-row">
+                <span class="label">Agente:</span>
+                <span class="value">{{ previewAgent }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Empresa:</span>
+                <span class="value">{{ currentCompanyName }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Mensaje de prueba:</span>
+                <div class="test-message">{{ previewTestMessage }}</div>
+              </div>
+            </div>
+            
+            <!-- Response section if success -->
+            <div v-if="previewResponse.success" class="preview-section">
+              <h4>🤖 Respuesta Generada</h4>
+              <div class="response-content">
+                {{ previewResponse.preview }}
+              </div>
+              
+              <!-- Debug info if available -->
+              <div v-if="previewResponse.debug_info" class="debug-info">
+                <div v-if="previewResponse.prompt_source" class="info-row">
+                  <span class="label">Fuente del prompt:</span>
+                  <span class="value">{{ previewResponse.prompt_source }}</span>
+                </div>
+                <div v-if="previewResponse.agent_used" class="info-row">
+                  <span class="label">Agente usado:</span>
+                  <span class="value">{{ previewResponse.agent_used }}</span>
+                </div>
+                <div v-if="previewResponse.debug_info.response_length" class="info-row">
+                  <span class="label">Longitud respuesta:</span>
+                  <span class="value">{{ previewResponse.debug_info.response_length }} caracteres</span>
+                </div>
+                <div v-if="previewResponse.debug_info.processing_time" class="info-row">
+                  <span class="label">Tiempo de procesamiento:</span>
+                  <span class="value">{{ previewResponse.debug_info.processing_time }}ms</span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Error section if failed -->
+            <div v-else-if="!previewResponse.success" class="preview-section error-section">
+              <h4>❌ Error en Preview</h4>
+              <p>{{ previewResponse.error }}</p>
+              
+              <!-- Fallback preview if available -->
+              <div v-if="previewResponse.fallback" class="fallback-preview">
+                <h4>📝 Prompt Actual (sin procesamiento)</h4>
+                <div class="prompt-preview">
+                  {{ previewResponse.prompt_content || previewContent }}
+                </div>
+              </div>
+            </div>
+            
+            <!-- Current prompt section -->
+            <div class="preview-section">
+              <h4>📝 Prompt Actual</h4>
+              <div class="prompt-preview">
+                {{ previewContent.substring(0, 500) }}{{ previewContent.length > 500 ? '...' : '' }}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="preview-footer">
+          <button @click="closePreview" class="btn-primary">Cerrar</button>
+          <button @click="copyPreviewResponse" class="btn-secondary" v-if="previewResponse?.preview">
+            📋 Copiar Respuesta
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -451,7 +546,14 @@ export default {
         sales_agent: null,
         schedule_agent: null,
         support_agent: null
-      }
+      },
+      // Preview properties
+      showPreview: false,
+      previewAgent: '',
+      previewContent: '',
+      previewTestMessage: '',
+      previewResponse: null,
+      previewLoading: false
     }
   },
   computed: {
@@ -684,12 +786,18 @@ export default {
         return
       }
       
+      // Preparar datos del preview
+      this.previewAgent = agentName
+      this.previewContent = promptContent
+      this.previewTestMessage = testMessage
+      this.previewResponse = null
+      this.previewLoading = true
+      this.showPreview = true
+      
       try {
-        this.isProcessing = true
-        
         console.log(`Generating preview for ${agentName}`)
         
-        // Intentar con el endpoint de preview si existe
+        // Llamar al endpoint de preview
         const response = await fetch('/api/admin/prompts/preview', {
           method: 'POST',
           headers: {
@@ -707,35 +815,76 @@ export default {
           const data = await response.json()
           console.log('Preview response:', data)
           
-          // Mostrar el preview en un alert o modal
-          const previewText = data.preview || data.response || 'Vista previa generada'
-          const fullPreview = `=== PREVIEW DE ${agentName.toUpperCase()} ===\n\n` +
-                             `📝 Mensaje de prueba:\n${testMessage}\n\n` +
-                             `🤖 Respuesta generada:\n${previewText}\n\n` +
-                             `📋 Prompt usado:\n${promptContent.substring(0, 200)}...`
-          
-          alert(fullPreview)
+          // Guardar toda la respuesta para mostrar en el modal
+          this.previewResponse = {
+            success: true,
+            preview: data.preview || data.response || '',
+            agent_used: data.agent_used || agentName,
+            prompt_source: data.prompt_source || 'custom',
+            debug_info: data.debug_info || {},
+            model_info: data.model_info || {},
+            metrics: data.metrics || {},
+            timestamp: new Date().toISOString()
+          }
         } else {
-          // Si el endpoint de preview no existe, mostrar el prompt actual
-          const preview = `=== PREVIEW DE ${agentName.toUpperCase()} ===\n\n` +
-                         `📝 Mensaje de prueba: ${testMessage}\n\n` +
-                         `📋 Prompt actual:\n${promptContent.substring(0, 500)}...\n\n` +
-                         `(Vista previa simple - endpoint de preview no disponible)`
-          
-          alert(preview)
+          // Error del servidor
+          const errorData = await response.json().catch(() => ({}))
+          this.previewResponse = {
+            success: false,
+            error: errorData.error || errorData.message || 'Error generando preview',
+            timestamp: new Date().toISOString()
+          }
         }
         
       } catch (err) {
-        // Fallback: mostrar el prompt sin procesamiento
-        console.log('Preview endpoint not available, showing simple preview')
-        const preview = `=== PREVIEW DE ${agentName.toUpperCase()} ===\n\n` +
-                       `📝 Mensaje de prueba: ${testMessage}\n\n` +
-                       `📋 Prompt actual:\n${promptContent}`
-        
-        alert(preview)
+        // Error de red o preview no disponible
+        console.log('Preview endpoint error:', err)
+        this.previewResponse = {
+          success: false,
+          error: 'Endpoint de preview no disponible',
+          fallback: true,
+          prompt_content: promptContent,
+          timestamp: new Date().toISOString()
+        }
       } finally {
-        this.isProcessing = false
+        this.previewLoading = false
       }
+    },
+    
+    closePreview() {
+      this.showPreview = false
+      this.previewAgent = ''
+      this.previewContent = ''
+      this.previewTestMessage = ''
+      this.previewResponse = null
+      this.previewLoading = false
+    },
+    
+    copyPreviewResponse() {
+      if (this.previewResponse?.preview) {
+        const textToCopy = this.previewResponse.preview
+        
+        // Intentar usar la API moderna
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(textToCopy).then(() => {
+            alert('Respuesta copiada al portapapeles')
+          }).catch(() => {
+            this.fallbackCopy(textToCopy)
+          })
+        } else {
+          this.fallbackCopy(textToCopy)
+        }
+      }
+    },
+    
+    fallbackCopy(text) {
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      alert('Respuesta copiada al portapapeles')
     },
     
     async repairAllPrompts() {
@@ -1138,6 +1287,248 @@ button:disabled {
   }
   
   .actions-bar button {
+    width: 100%;
+  }
+}
+
+/* Preview Modal Styles */
+.preview-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.preview-modal {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from { 
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.preview-header {
+  padding: 20px;
+  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+  color: white;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.preview-header h3 {
+  margin: 0;
+  font-size: 1.3em;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 28px;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.preview-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.preview-loading {
+  text-align: center;
+  padding: 40px;
+}
+
+.preview-section {
+  margin-bottom: 25px;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 15px;
+  background: #f8f9fa;
+}
+
+.preview-section h4 {
+  margin: 0 0 15px 0;
+  color: #495057;
+  font-size: 1.1em;
+  font-weight: 600;
+  border-bottom: 2px solid #007bff;
+  padding-bottom: 8px;
+}
+
+.info-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.info-row .label {
+  font-weight: 600;
+  color: #495057;
+  min-width: 150px;
+  margin-right: 15px;
+}
+
+.info-row .value {
+  flex: 1;
+  color: #212529;
+}
+
+.test-message {
+  background: white;
+  border: 1px solid #ced4da;
+  border-left: 4px solid #007bff;
+  border-radius: 4px;
+  padding: 10px;
+  margin-top: 5px;
+  font-family: monospace;
+}
+
+.response-content {
+  background: white;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  padding: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.debug-info {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #dee2e6;
+}
+
+.error-section {
+  background: #f8d7da;
+  border-color: #f5c6cb;
+}
+
+.error-section h4 {
+  color: #721c24;
+  border-bottom-color: #dc3545;
+}
+
+.fallback-preview {
+  margin-top: 20px;
+}
+
+.prompt-preview {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 15px;
+  font-family: monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.preview-footer {
+  padding: 20px;
+  border-top: 1px solid #e9ecef;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  background: #f8f9fa;
+  border-radius: 0 0 8px 8px;
+}
+
+.preview-footer button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.preview-footer .btn-primary {
+  background: #007bff;
+  color: white;
+}
+
+.preview-footer .btn-primary:hover {
+  background: #0056b3;
+}
+
+.preview-footer .btn-secondary {
+  background: #6c757d;
+  color: white;
+}
+
+.preview-footer .btn-secondary:hover {
+  background: #545b62;
+}
+
+/* Responsive modal */
+@media (max-width: 768px) {
+  .preview-modal {
+    width: 95%;
+    max-height: 90vh;
+    margin: 10px;
+  }
+  
+  .info-row {
+    flex-direction: column;
+  }
+  
+  .info-row .label {
+    margin-bottom: 5px;
+    min-width: auto;
+  }
+  
+  .preview-footer {
+    flex-direction: column;
+  }
+  
+  .preview-footer button {
     width: 100%;
   }
 }
