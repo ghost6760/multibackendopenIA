@@ -1,10 +1,9 @@
 /**
- * usePrompts.js - CORRECCIÓN CRÍTICA DE REACTIVIDAD
- * ✅ PROBLEMA IDENTIFICADO: agentsList computed no es reactivo
- * ✅ SOLUCIÓN: Forzar reactividad y logging detallado
+ * usePrompts.js - Composable para Gestión de Prompts
+ * ✅ CORREGIDO: agentsList incluido en return
  */
 
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
@@ -15,7 +14,7 @@ export const usePrompts = () => {
   const { showNotification } = useNotifications()
 
   // ============================================================================
-  // ESTADO REACTIVO
+  // ESTADO REACTIVO - MIGRADO DE PROMPTSTAB.VUE
   // ============================================================================
 
   const agents = ref({
@@ -38,34 +37,24 @@ export const usePrompts = () => {
   const previewResponse = ref(null)
   const previewLoading = ref(false)
 
-  // ✅ NUEVO: Trigger para forzar reactividad
-  const agentsUpdateTrigger = ref(0)
-
   // ============================================================================
-  // COMPUTED PROPERTIES CON REACTIVIDAD FORZADA
+  // COMPUTED PROPERTIES
   // ============================================================================
 
   const hasPrompts = computed(() => {
-    // ✅ Incluir trigger para reactividad
-    agentsUpdateTrigger.value
-    const result = Object.keys(agents.value).some(key => agents.value[key] !== null)
-    console.log('🔄 hasPrompts computed:', result, 'agents:', Object.keys(agents.value).filter(k => agents.value[k]))
-    return result
+    return Object.keys(agents.value).some(key => agents.value[key] !== null)
   })
 
   const currentCompanyId = computed(() => {
-    return window.currentCompanyId || localStorage.getItem('currentCompanyId') || 'benova'
+    return window.currentCompanyId || localStorage.getItem('currentCompanyId') || 'dental_clinic'
   })
 
   const currentCompanyName = computed(() => {
     return window.currentCompanyName || currentCompanyId.value
   })
 
-  // ✅ CRÍTICO: agentsList con reactividad forzada y logging detallado
+  // ✅ CRÍTICO: Este computed debe estar en el return
   const agentsList = computed(() => {
-    // ✅ Incluir trigger para forzar reactividad
-    agentsUpdateTrigger.value
-    
     const agentConfigs = [
       { name: 'emergency_agent', displayName: 'Emergency Agent', icon: '🚨' },
       { name: 'router_agent', displayName: 'Router Agent', icon: '🚦' },
@@ -74,58 +63,31 @@ export const usePrompts = () => {
       { name: 'support_agent', displayName: 'Support Agent', icon: '🎧' }
     ]
 
-    console.log('🔄 agentsList computed triggered, agents.value:', agents.value)
-
     const result = agentConfigs
-      .filter(config => {
-        const hasAgent = agents.value[config.name] !== null
-        console.log(`🔍 Filter ${config.name}:`, hasAgent, agents.value[config.name])
-        return hasAgent
-      })
-      .map(config => {
-        const agentData = agents.value[config.name]
-        const transformedAgent = {
-          id: config.name,
-          name: config.name,
-          displayName: config.displayName,
-          icon: config.icon,
-          content: agentData?.current_prompt || '', // ✅ CRÍTICO: current_prompt → content
-          isCustom: agentData?.is_custom || false,
-          lastModified: agentData?.last_modified || null,
-          version: agentData?.version || null,
-          placeholder: `Prompt para ${config.displayName}...`
-        }
-        
-        console.log(`🔄 Transform ${config.name}:`, {
-          hasContent: !!transformedAgent.content,
-          contentLength: transformedAgent.content.length,
-          isCustom: transformedAgent.isCustom,
-          contentPreview: transformedAgent.content.substring(0, 50)
-        })
-        
-        return transformedAgent
-      })
+      .filter(config => agents.value[config.name])
+      .map(config => ({
+        id: config.name,
+        name: config.name,
+        displayName: config.displayName,
+        icon: config.icon,
+        content: agents.value[config.name]?.current_prompt || '',
+        isCustom: agents.value[config.name]?.is_custom || false,
+        lastModified: agents.value[config.name]?.last_modified || null,
+        version: agents.value[config.name]?.version || null,
+        placeholder: `Prompt para ${config.displayName}...`
+      }))
 
-    console.log('✅ agentsList computed result:', {
-      totalAgents: result.length,
-      agentsWithContent: result.filter(a => a.content).length,
-      agentNames: result.map(a => a.name)
+    // ✅ DEBUG: Log para verificar transformación
+    console.log('agentsList computed:', result.length, 'agents')
+    result.forEach(agent => {
+      console.log(`- ${agent.displayName}: ${agent.content ? 'Has content' : 'Empty'}`)
     })
 
     return result
   })
 
   // ============================================================================
-  // FUNCIÓN PARA FORZAR REACTIVIDAD
-  // ============================================================================
-
-  const forceReactivity = () => {
-    agentsUpdateTrigger.value++
-    console.log('🔄 Force reactivity triggered:', agentsUpdateTrigger.value)
-  }
-
-  // ============================================================================
-  // FUNCIONES PRINCIPALES CON REACTIVIDAD FORZADA
+  // FUNCIONES PRINCIPALES (sin cambios)
   // ============================================================================
 
   const loadPrompts = async () => {
@@ -138,7 +100,7 @@ export const usePrompts = () => {
       isLoadingPrompts.value = true
       error.value = null
       
-      console.log(`🔄 Loading prompts for company: ${currentCompanyId.value}`)
+      console.log(`Loading prompts for company: ${currentCompanyId.value}`)
       
       const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`, {
         method: 'GET',
@@ -149,10 +111,9 @@ export const usePrompts = () => {
       })
       
       const data = await response.json()
-      console.log('📦 Prompts API response:', data)
+      console.log('Prompts response:', data)
       
       if (data && data.agents) {
-        // ✅ CRÍTICO: Actualizar agents y forzar reactividad
         agents.value = {
           emergency_agent: data.agents.emergency_agent || null,
           router_agent: data.agents.router_agent || null,
@@ -161,27 +122,9 @@ export const usePrompts = () => {
           support_agent: data.agents.support_agent || null
         }
         
-        // ✅ FORZAR REACTIVIDAD INMEDIATAMENTE
-        await nextTick()
-        forceReactivity()
-        
-        console.log('✅ Agents updated:', {
-          agentsCount: Object.keys(agents.value).filter(k => agents.value[k]).length,
-          hasPrompts: hasPrompts.value,
-          agentsListLength: agentsList.value.length
-        })
-        
-        // ✅ VERIFICAR CONTENIDO ESPECÍFICO
-        Object.entries(agents.value).forEach(([key, agent]) => {
-          if (agent) {
-            console.log(`📝 ${key}:`, {
-              hasCurrentPrompt: !!agent.current_prompt,
-              promptLength: agent.current_prompt?.length || 0,
-              isCustom: agent.is_custom,
-              source: agent.source
-            })
-          }
-        })
+        console.log('✅ Assigned agents:', agents.value)
+        console.log('✅ Has prompts?', hasPrompts.value)
+        console.log('✅ Agents list length:', agentsList.value.length)
         
       } else {
         error.value = 'No se recibieron prompts del servidor'
@@ -189,7 +132,7 @@ export const usePrompts = () => {
       
     } catch (err) {
       error.value = `Error cargando prompts: ${err.message}`
-      console.error('❌ Error loading prompts:', err)
+      console.error('Error loading prompts:', err)
     } finally {
       isLoadingPrompts.value = false
     }
@@ -210,7 +153,7 @@ export const usePrompts = () => {
     try {
       isProcessing.value = true
       
-      console.log(`🔄 Updating prompt for ${agentName}`)
+      console.log(`Updating prompt for ${agentName}`)
       
       const response = await fetch(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
@@ -224,7 +167,7 @@ export const usePrompts = () => {
       })
       
       const data = await response.json()
-      console.log('📦 Update response:', data)
+      console.log('Update response:', data)
       
       if (response.ok) {
         if (agents.value[agentName]) {
@@ -234,9 +177,6 @@ export const usePrompts = () => {
             agents.value[agentName].version = data.version
           }
         }
-        
-        // ✅ FORZAR REACTIVIDAD DESPUÉS DE ACTUALIZACIÓN
-        forceReactivity()
         
         let successMessage = `Prompt de ${agentName} actualizado exitosamente`
         if (data.version) {
@@ -251,7 +191,7 @@ export const usePrompts = () => {
       
     } catch (err) {
       showNotification(`Error actualizando prompt: ${err.message}`, 'error')
-      console.error('❌ Error updating prompt:', err)
+      console.error('Error updating prompt:', err)
     } finally {
       isProcessing.value = false
     }
@@ -270,7 +210,7 @@ export const usePrompts = () => {
     try {
       isProcessing.value = true
       
-      console.log(`🔄 Resetting prompt for ${agentName}`)
+      console.log(`Resetting prompt for ${agentName}`)
       
       const response = await fetch(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
         method: 'DELETE',
@@ -279,18 +219,17 @@ export const usePrompts = () => {
         }
       })
       
+      console.log('Reset response status:', response.status)
+      
       if (response.ok) {
         const data = await response.json()
-        console.log('📦 Reset response data:', data)
+        console.log('Reset response data:', data)
         
         if (data.default_prompt && agents.value[agentName]) {
           agents.value[agentName].current_prompt = data.default_prompt
           agents.value[agentName].is_custom = false
           agents.value[agentName].last_modified = null
         }
-        
-        // ✅ FORZAR REACTIVIDAD DESPUÉS DE RESET
-        forceReactivity()
         
         showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
         
@@ -302,7 +241,7 @@ export const usePrompts = () => {
       
     } catch (err) {
       showNotification(`Error reseteando prompt: ${err.message}`, 'error')
-      console.error('❌ Error resetting prompt:', err)
+      console.error('Error resetting prompt:', err)
     } finally {
       isProcessing.value = false
     }
@@ -327,7 +266,7 @@ export const usePrompts = () => {
     showPreview.value = true
     
     try {
-      console.log(`🔄 Generating preview for ${agentName}`)
+      console.log(`Generating preview for ${agentName}`)
       
       const response = await fetch('/api/admin/prompts/preview', {
         method: 'POST',
@@ -344,7 +283,7 @@ export const usePrompts = () => {
       
       if (response.ok) {
         const data = await response.json()
-        console.log('📦 Preview response:', data)
+        console.log('Preview response:', data)
         
         previewResponse.value = {
           success: true,
@@ -366,7 +305,7 @@ export const usePrompts = () => {
       }
       
     } catch (err) {
-      console.log('❌ Preview endpoint error:', err)
+      console.log('Preview endpoint error:', err)
       previewResponse.value = {
         success: false,
         error: 'Endpoint de preview no disponible',
@@ -396,7 +335,7 @@ export const usePrompts = () => {
     try {
       isProcessing.value = true
       
-      console.log('🔄 Repairing all prompts...')
+      console.log('Repairing all prompts...')
       
       const response = await fetch('/api/admin/prompts/repair', {
         method: 'POST',
@@ -409,13 +348,18 @@ export const usePrompts = () => {
         })
       })
       
+      console.log('Repair response status:', response.status)
+      
       if (response.ok) {
         const data = await response.json()
-        console.log('📦 Repair response:', data)
+        console.log('Repair response:', data)
         
         let message = 'Prompts reparados exitosamente'
         if (data.repaired_count !== undefined) {
           message += ` (${data.repaired_count} prompts reparados)`
+        }
+        if (data.details) {
+          console.log('Repair details:', data.details)
         }
         
         showNotification(message, 'success')
@@ -428,7 +372,7 @@ export const usePrompts = () => {
       
     } catch (err) {
       showNotification(`Error reparando prompts: ${err.message}`, 'error')
-      console.error('❌ Error repairing prompts:', err)
+      console.error('Error repairing prompts:', err)
     } finally {
       isProcessing.value = false
     }
@@ -470,7 +414,7 @@ export const usePrompts = () => {
       showNotification('Prompts exportados exitosamente', 'success')
     } catch (err) {
       showNotification('Error exportando prompts: ' + err.message, 'error')
-      console.error('❌ Error exporting prompts:', err)
+      console.error('Error exporting prompts:', err)
     }
   }
 
@@ -484,7 +428,7 @@ export const usePrompts = () => {
   }
 
   // ============================================================================
-  // WATCHERS CON REACTIVIDAD FORZADA
+  // WATCHERS
   // ============================================================================
 
   watch(() => appStore.currentCompanyId, async (newCompanyId) => {
@@ -493,18 +437,8 @@ export const usePrompts = () => {
     }
   })
 
-  // ✅ NUEVO: Watch para forzar reactividad cuando cambian los agents
-  watch(agents, () => {
-    console.log('🔄 Agents changed, forcing reactivity...')
-    forceReactivity()
-  }, { deep: true })
-
-  // ============================================================================
-  // FUNCIONES DEBUG MEJORADAS
-  // ============================================================================
-
   const debugPrompts = async () => {
-    console.log('=== 🔍 DEBUG PROMPTS DETALLADO ===')
+    console.log('=== DEBUG PROMPTS ===')
     console.log('1. Current Company ID:', currentCompanyId.value)
     console.log('2. Current Agents State:', JSON.stringify(agents.value, null, 2))
     console.log('3. Has Prompts?:', hasPrompts.value)
@@ -512,29 +446,15 @@ export const usePrompts = () => {
     console.log('5. AgentsList Content:', agentsList.value)
     console.log('6. Is Loading?:', isLoadingPrompts.value)
     console.log('7. Error?:', error.value)
-    console.log('8. Reactivity Trigger:', agentsUpdateTrigger.value)
-    
-    // ✅ DEBUG ESPECÍFICO DE CONTENIDO
-    console.log('9. 🔍 CONTENIDO DETALLADO:')
-    agentsList.value.forEach((agent, index) => {
-      console.log(`   ${index + 1}. ${agent.displayName}:`, {
-        id: agent.id,
-        hasContent: !!agent.content,
-        contentLength: agent.content.length,
-        contentPreview: agent.content.substring(0, 100) + '...',
-        isCustom: agent.isCustom,
-        lastModified: agent.lastModified
-      })
-    })
     
     try {
       const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       const data = await response.json()
-      console.log('10. 📦 RAW API Response:', data)
+      console.log('8. RAW API Response:', data)
       
       if (data.agents) {
-        console.log('11. 🔍 Agent Keys in Response:', Object.keys(data.agents))
-        console.log('12. 🔍 Agent Values:')
+        console.log('9. Agent Keys in Response:', Object.keys(data.agents))
+        console.log('10. Agent Values:')
         Object.entries(data.agents).forEach(([key, value]) => {
           console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
                      value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
@@ -543,13 +463,13 @@ export const usePrompts = () => {
       
       return data
     } catch (err) {
-      console.error('❌ Debug Error:', err)
+      console.error('Debug Error:', err)
       return null
     }
   }
   
   const testEndpoints = async () => {
-    console.log('=== 🧪 TESTING ENDPOINTS ===')
+    console.log('=== TESTING ENDPOINTS ===')
     const testAgent = 'emergency_agent'
     
     console.log('\n1. Testing GET /api/admin/prompts')
@@ -596,10 +516,17 @@ export const usePrompts = () => {
     } catch (err) {
       console.error('Preview Error:', err)
     }
+    
+    console.log('\n5. Testing REPAIR endpoint')
+    console.log('Endpoint: /api/admin/prompts/repair')
+    console.log('Would send:', {
+      company_id: currentCompanyId.value,
+      agents: Object.keys(agents.value)
+    })
   }
 
   // ============================================================================
-  // ✅ RETORNO CON FUNCIÓN DE FORZAR REACTIVIDAD
+  // ✅ RETORNO CORREGIDO - INCLUIR agentsList
   // ============================================================================
 
   return {
@@ -621,7 +548,7 @@ export const usePrompts = () => {
     hasPrompts,
     currentCompanyId,
     currentCompanyName,
-    agentsList, // ✅ CON REACTIVIDAD FORZADA
+    agentsList, // ✅ CRÍTICO: Este faltaba!
     
     // Funciones principales
     loadPrompts,
@@ -632,12 +559,7 @@ export const usePrompts = () => {
     repairAllPrompts,
     exportPrompts,
     formatDate,
-    
-    // Funciones debug
     debugPrompts,
-    testEndpoints,
-    
-    // ✅ NUEVA: Función para forzar reactividad manualmente
-    forceReactivity
+    testEndpoints
   }
 }
