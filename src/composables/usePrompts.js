@@ -40,27 +40,26 @@ export const usePrompts = () => {
   const previewLoading = ref(false)
 
   // ============================================================================
-  // COMPUTED PROPERTIES CON DEBUGGING TEMPORAL
+  // COMPUTED PROPERTIES
   // ============================================================================
 
   const hasPrompts = computed(() => {
+    // ✅ EXACTO al monolito: misma lógica de detección
     return Object.keys(agents.value).some(key => agents.value[key] !== null)
   })
 
   const currentCompanyId = computed(() => {
-    return appStore.currentCompanyId
+    // ✅ EXACTO al monolito: misma lógica de fallback
+    return window.currentCompanyId || localStorage.getItem('currentCompanyId') || 'dental_clinic'
   })
 
   const currentCompanyName = computed(() => {
-    return appStore.currentCompanyName || currentCompanyId.value
+    // ✅ EXACTO al monolito: mismo fallback
+    return window.currentCompanyName || currentCompanyId.value
   })
 
-  // Lista de agentes para iterar en componentes - CON DEBUGGING TEMPORAL
+  // Lista de agentes para iterar en componentes
   const agentsList = computed(() => {
-    // 🔍 DEBUG: Ver qué está pasando
-    console.log('🔍 agentsList computed - agents.value:', agents.value)
-    console.log('🔍 agentsList computed - Object.keys(agents.value):', Object.keys(agents.value))
-    
     const agentConfigs = [
       { name: 'emergency_agent', displayName: 'Emergency Agent', icon: '🚨' },
       { name: 'router_agent', displayName: 'Router Agent', icon: '🚦' },
@@ -69,33 +68,19 @@ export const usePrompts = () => {
       { name: 'support_agent', displayName: 'Support Agent', icon: '🎧' }
     ]
 
-    const result = agentConfigs
-      .filter(config => {
-        const exists = agents.value[config.name]
-        console.log(`🔍 Agent ${config.name} exists:`, !!exists)
-        return exists
-      })
-      .map(config => {
-        const agent = agents.value[config.name]
-        const mapped = {
-          id: config.name,
-          name: config.name,
-          displayName: config.displayName,
-          icon: config.icon,
-          content: agent?.current_prompt || '',
-          isCustom: agent?.is_custom || false,
-          lastModified: agent?.last_modified || null,
-          version: agent?.version || null,
-          placeholder: `Prompt para ${config.displayName}...`
-        }
-        console.log(`🔍 Mapped agent ${config.name}:`, mapped)
-        return mapped
-      })
-    
-    console.log('🔍 agentsList final result:', result)
-    console.log('🔍 agentsList length:', result.length)
-    
-    return result
+    return agentConfigs
+      .filter(config => agents.value[config.name])
+      .map(config => ({
+        id: config.name,
+        name: config.name,
+        displayName: config.displayName,
+        icon: config.icon,
+        content: agents.value[config.name]?.current_prompt || '',
+        isCustom: agents.value[config.name]?.is_custom || false,
+        lastModified: agents.value[config.name]?.last_modified || null,
+        version: agents.value[config.name]?.version || null,
+        placeholder: `Prompt para ${config.displayName}...`
+      }))
   })
 
   // ============================================================================
@@ -587,7 +572,6 @@ export const usePrompts = () => {
       agents: Object.keys(agents.value)
     })
   }
-
   // ============================================================================
   // RETORNO DEL COMPOSABLE
   // ============================================================================
@@ -611,7 +595,6 @@ export const usePrompts = () => {
     hasPrompts,
     currentCompanyId,
     currentCompanyName,
-    agentsList, // ⚠️ IMPORTANTE: Agregar esta línea si no estaba
     
     // Funciones principales (nombres exactos de PromptsTab.vue)
     loadPrompts,
@@ -622,8 +605,9 @@ export const usePrompts = () => {
     repairAllPrompts,
     exportPrompts,
     formatDate,
-    
+      
     // ✅ AGREGAR: Funciones debug faltantes
     debugPrompts,
     testEndpoints
   }
+}
