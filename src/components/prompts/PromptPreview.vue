@@ -3,7 +3,7 @@
   <!-- Modal Overlay -->
   <Teleport to="body">
     <div 
-      v-if="isVisible" 
+      v-if="visible" 
       class="modal-overlay"
       @click="handleOverlayClick"
     >
@@ -16,19 +16,27 @@
         <div class="modal-header" :class="{ 'error-header': previewData?.error }">
           <h3>
             <span v-if="previewData?.error">❌ Error en Vista Previa</span>
-            <span v-else>🔍 Vista Previa - {{ escapeHTML(previewData?.agent_name || agentName) }}</span>
+            <span v-else>🔍 Vista Previa - {{ escapeHTML(displayAgentName) }}</span>
           </h3>
           <button @click="closeModal" class="modal-close">&times;</button>
         </div>
 
+        <!-- Loading Content -->
+        <div v-if="isLoading" class="preview-content">
+          <div class="preview-loading">
+            <div class="loading-spinner"></div>
+            <p>Generando vista previa...</p>
+          </div>
+        </div>
+
         <!-- Error Content -->
-        <div v-if="previewData?.error" class="preview-content">
+        <div v-else-if="previewData?.error" class="preview-content">
           <div class="preview-section">
             <h4>📋 Información del Error</h4>
-            <p><strong>Agente:</strong> {{ escapeHTML(agentName) }}</p>
+            <p><strong>Agente:</strong> {{ escapeHTML(displayAgentName) }}</p>
             <p><strong>Empresa:</strong> {{ escapeHTML(currentCompanyId) }}</p>
             <p><strong>Mensaje de prueba:</strong></p>
-            <div class="test-message-box">{{ escapeHTML(testMessage) }}</div>
+            <div class="test-message-box">{{ escapeHTML(currentTestMessage) }}</div>
           </div>
           
           <div class="preview-section">
@@ -38,17 +46,25 @@
               <p><strong>Tiempo:</strong> {{ formatDateTime(new Date()) }}</p>
             </div>
           </div>
+
+          <!-- Fallback preview if available -->
+          <div v-if="previewData.fallback" class="preview-section">
+            <h4>📝 Prompt Actual (sin procesamiento)</h4>
+            <div class="prompt-preview-content">
+              {{ escapeHTML(previewData.prompt_content || currentPromptContent) }}
+            </div>
+          </div>
         </div>
 
         <!-- Success Content -->
-        <div v-else-if="previewData" class="preview-content">
+        <div v-else-if="previewData && !previewData.error" class="preview-content">
           <!-- Información del test -->
           <div class="preview-section">
             <h4>📋 Información del Test</h4>
             <div class="info-grid">
               <div class="info-item">
                 <strong>Agente:</strong> 
-                {{ escapeHTML(previewData.agent_name || agentName) }}
+                {{ escapeHTML(previewData.agent_name || displayAgentName) }}
               </div>
               <div class="info-item" v-if="previewData.agent_used">
                 <strong>Agente usado:</strong> 
@@ -60,7 +76,17 @@
               </div>
               <div class="info-item full-width">
                 <strong>Mensaje de prueba:</strong>
-                <div class="test-message-box">{{ escapeHTML(previewData.test_message || testMessage) }}</div>
+                <div class="test-message-box">{{ escapeHTML(previewData.test_message || currentTestMessage) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Respuesta del asistente -->
+          <div v-if="previewData.preview" class="preview-section">
+            <h4>🤖 Respuesta del Asistente</h4>
+            <div class="assistant-response">
+              <div class="response-content">
+                {{ previewData.preview }}
               </div>
             </div>
           </div>
@@ -75,8 +101,8 @@
               <div v-if="previewData.debug_info.agent_key" class="debug-item">
                 <strong>Agent Key:</strong> {{ previewData.debug_info.agent_key }}
               </div>
-              <div v-if="previewData.debug_info.prompt_source" class="debug-item">
-                <strong>Fuente:</strong> {{ previewData.debug_info.prompt_source }}
+              <div v-if="previewData.debug_info.prompt_source || previewData.prompt_source" class="debug-item">
+                <strong>Fuente:</strong> {{ previewData.debug_info.prompt_source || previewData.prompt_source }}
               </div>
               <div v-if="previewData.debug_info.processing_time" class="debug-item">
                 <strong>Tiempo:</strong> {{ previewData.debug_info.processing_time }}ms
@@ -89,16 +115,6 @@
             <h4>📝 Preview del Prompt</h4>
             <div class="prompt-preview-content">
               {{ previewData.prompt_preview }}
-            </div>
-          </div>
-
-          <!-- Respuesta del asistente -->
-          <div v-if="previewData.preview" class="preview-section">
-            <h4>🤖 Respuesta del Asistente</h4>
-            <div class="assistant-response">
-              <div class="response-content">
-                {{ previewData.preview }}
-              </div>
             </div>
           </div>
 
@@ -133,19 +149,21 @@
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Loading state -->
-        <div v-else-if="isLoading" class="preview-content loading-content">
-          <div class="loading-spinner"></div>
-          <p>Generando vista previa...</p>
+          <!-- Current prompt section -->
+          <div class="preview-section">
+            <h4>📝 Prompt Actual</h4>
+            <div class="prompt-preview-content">
+              {{ currentPromptContent.substring(0, 500) }}{{ currentPromptContent.length > 500 ? '...' : '' }}
+            </div>
+          </div>
         </div>
 
         <!-- Modal Footer -->
         <div class="modal-footer">
           <button @click="closeModal" class="btn-primary">Cerrar</button>
           <button 
-            v-if="!previewData?.error && !isLoading"
+            v-if="!previewData?.error && !isLoading && previewData?.preview"
             @click="copyResponse"
             class="btn-secondary"
             title="Copiar respuesta al portapapeles"
@@ -167,13 +185,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
-import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
-import { useNotifications } from '@/composables/useNotifications'
+import { ref, computed, watch } from 'vue'
 
 // ============================================================================
-// PROPS Y EMITS
+// PROPS Y EMITS - COMPATIBLE CON USEPROMPTS.JS
 // ============================================================================
 
 const props = defineProps({
@@ -193,148 +208,75 @@ const props = defineProps({
     type: String,
     default: ''
   },
-  promptData: {
+  previewResponse: {
     type: Object,
-    default: () => ({})
+    default: null
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  companyId: {
+    type: String,
+    default: ''
   }
 })
 
 const emit = defineEmits(['close', 'preview-complete'])
 
 // ============================================================================
-// COMPOSABLES
+// ESTADO REACTIVO LOCAL
 // ============================================================================
 
-const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
-const { showNotification } = useNotifications()
-
-// ============================================================================
-// ESTADO REACTIVO
-// ============================================================================
-
-const isVisible = ref(false)
-const isLoading = ref(false)
 const previewData = ref(null)
 
 // ============================================================================
 // COMPUTED PROPERTIES
 // ============================================================================
 
-const currentCompanyId = computed(() => appStore.currentCompanyId)
+const displayAgentName = computed(() => {
+  // Convertir nombres de agente a formato legible
+  const agentDisplayNames = {
+    'emergency_agent': 'Emergency Agent',
+    'router_agent': 'Router Agent', 
+    'sales_agent': 'Sales Agent',
+    'schedule_agent': 'Schedule Agent',
+    'support_agent': 'Support Agent'
+  }
+  
+  return agentDisplayNames[props.agentName] || props.agentName
+})
+
+const currentCompanyId = computed(() => props.companyId)
+const currentTestMessage = computed(() => props.testMessage)
+const currentPromptContent = computed(() => props.promptContent)
+const isLoading = computed(() => props.loading)
 
 // ============================================================================
 // WATCHERS
 // ============================================================================
 
-watch(() => props.visible, async (newVisible) => {
-  isVisible.value = newVisible
-  
-  if (newVisible) {
-    await generatePreview()
-  } else {
-    resetPreviewData()
+watch(() => props.previewResponse, (newResponse) => {
+  if (newResponse) {
+    previewData.value = newResponse
+  }
+}, { immediate: true, deep: true })
+
+watch(() => props.visible, (newVisible) => {
+  if (!newVisible) {
+    // Limpiar datos cuando se cierra
+    previewData.value = null
   }
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - MIGRADAS DEL SCRIPT.JS
+// FUNCIONES PRINCIPALES
 // ============================================================================
 
 /**
- * Genera vista previa - MIGRADO: previewPrompt() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const generatePreview = async () => {
-  if (!props.agentName || !props.promptContent) {
-    previewData.value = {
-      error: 'Faltan datos para generar la vista previa'
-    }
-    return
-  }
-  
-  if (!currentCompanyId.value) {
-    previewData.value = {
-      error: 'Por favor selecciona una empresa primero'
-    }
-    return
-  }
-  
-  isLoading.value = true
-  previewData.value = null
-  
-  try {
-    appStore.addToLog(`Previewing prompt for ${props.agentName}`, 'info')
-    
-    // PRESERVAR: Request exacto como en script.js
-    // Usar fetch directo porque el formato de respuesta es directo
-    const response = await fetch(`${window.location.origin}/api/admin/prompts/preview`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Company-ID': currentCompanyId.value
-      },
-      body: JSON.stringify({
-        agent_name: props.agentName,
-        company_id: currentCompanyId.value,
-        prompt_template: props.promptContent,
-        message: props.testMessage || '¿Cuánto cuesta un tratamiento?'
-      })
-    })
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`HTTP ${response.status}: ${errorText}`)
-    }
-    
-    const data = await response.json()
-    
-    // PRESERVAR: Validación del formato como en script.js
-    if (data.status !== 'success') {
-      throw new Error(data.error || 'Preview failed')
-    }
-    
-    if (!data.preview) {
-      throw new Error('No preview content received')
-    }
-    
-    // Almacenar datos de preview
-    previewData.value = {
-      ...data,
-      agent_name: props.agentName,
-      company_id: currentCompanyId.value,
-      test_message: props.testMessage,
-      timestamp: new Date().toISOString()
-    }
-    
-    appStore.addToLog(`Prompt ${props.agentName} preview generated`, 'info')
-    
-    emit('preview-complete', previewData.value)
-    
-  } catch (error) {
-    appStore.addToLog(`Error previewing prompt ${props.agentName}: ${error.message}`, 'error')
-    
-    previewData.value = {
-      error: error.message,
-      agent_name: props.agentName,
-      company_id: currentCompanyId.value,
-      test_message: props.testMessage,
-      timestamp: new Date().toISOString()
-    }
-    
-    showNotification('Error en vista previa: ' + error.message, 'error')
-    
-  } finally {
-    isLoading.value = false
-  }
-}
-
-/**
- * Cerrar modal - MIGRADO: closeModal() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Cerrar modal
  */
 const closeModal = () => {
-  isVisible.value = false
   emit('close')
 }
 
@@ -342,11 +284,6 @@ const handleOverlayClick = (event) => {
   if (event.target === event.currentTarget) {
     closeModal()
   }
-}
-
-const resetPreviewData = () => {
-  previewData.value = null
-  isLoading.value = false
 }
 
 // ============================================================================
@@ -374,7 +311,13 @@ const copyResponse = async () => {
   
   try {
     await navigator.clipboard.writeText(previewData.value.preview)
-    showNotification('Respuesta copiada al portapapeles', 'success')
+    // Mostrar feedback visual temporal
+    const button = event.target
+    const originalText = button.textContent
+    button.textContent = '✅ Copiado'
+    setTimeout(() => {
+      button.textContent = originalText
+    }, 2000)
   } catch (error) {
     // Fallback para navegadores que no soportan clipboard API
     const textArea = document.createElement('textarea')
@@ -384,7 +327,13 @@ const copyResponse = async () => {
     document.execCommand('copy')
     document.body.removeChild(textArea)
     
-    showNotification('Respuesta copiada al portapapeles', 'success')
+    // Feedback visual
+    const button = event.target
+    const originalText = button.textContent
+    button.textContent = '✅ Copiado'
+    setTimeout(() => {
+      button.textContent = originalText
+    }, 2000)
   }
 }
 
@@ -395,13 +344,15 @@ const exportPreview = () => {
     const exportData = {
       timestamp: new Date().toISOString(),
       agent: props.agentName,
+      agent_display_name: displayAgentName.value,
       company: currentCompanyId.value,
-      test_message: props.testMessage,
-      prompt_content: props.promptContent,
+      test_message: currentTestMessage.value,
+      prompt_content: currentPromptContent.value,
       response: previewData.value.preview,
       debug_info: previewData.value.debug_info,
       model_info: previewData.value.model_info,
-      metrics: previewData.value.metrics
+      metrics: previewData.value.metrics,
+      full_response: previewData.value
     }
     
     const dataStr = JSON.stringify(exportData, null, 2)
@@ -415,10 +366,17 @@ const exportPreview = () => {
     document.body.removeChild(a)
     
     URL.revokeObjectURL(a.href)
-    showNotification('Preview exportado exitosamente', 'success')
+    
+    // Feedback visual
+    const button = event.target
+    const originalText = button.textContent
+    button.textContent = '✅ Exportado'
+    setTimeout(() => {
+      button.textContent = originalText
+    }, 2000)
     
   } catch (error) {
-    showNotification('Error exportando preview', 'error')
+    console.error('Error exporting preview:', error)
   }
 }
 </script>
@@ -515,7 +473,7 @@ const exportPreview = () => {
   padding: 20px;
 }
 
-.loading-content {
+.preview-loading {
   text-align: center;
   padding: 40px;
 }
