@@ -1,8 +1,6 @@
 /**
  * usePrompts.js - Composable para Gestión de Prompts
- * MIGRADO DE: PromptsTab.vue - todas las llamadas API
- * PRESERVAR: Comportamiento exacto de las funciones originales
- * COMPATIBILIDAD: 100% con el backend Flask
+ * ✅ CORREGIDO: agentsList incluido en return
  */
 
 import { ref, computed, watch } from 'vue'
@@ -44,21 +42,18 @@ export const usePrompts = () => {
   // ============================================================================
 
   const hasPrompts = computed(() => {
-    // ✅ EXACTO al monolito: misma lógica de detección
     return Object.keys(agents.value).some(key => agents.value[key] !== null)
   })
 
   const currentCompanyId = computed(() => {
-    // ✅ EXACTO al monolito: misma lógica de fallback
     return window.currentCompanyId || localStorage.getItem('currentCompanyId') || 'dental_clinic'
   })
 
   const currentCompanyName = computed(() => {
-    // ✅ EXACTO al monolito: mismo fallback
     return window.currentCompanyName || currentCompanyId.value
   })
 
-  // Lista de agentes para iterar en componentes
+  // ✅ CRÍTICO: Este computed debe estar en el return
   const agentsList = computed(() => {
     const agentConfigs = [
       { name: 'emergency_agent', displayName: 'Emergency Agent', icon: '🚨' },
@@ -68,7 +63,7 @@ export const usePrompts = () => {
       { name: 'support_agent', displayName: 'Support Agent', icon: '🎧' }
     ]
 
-    return agentConfigs
+    const result = agentConfigs
       .filter(config => agents.value[config.name])
       .map(config => ({
         id: config.name,
@@ -81,15 +76,20 @@ export const usePrompts = () => {
         version: agents.value[config.name]?.version || null,
         placeholder: `Prompt para ${config.displayName}...`
       }))
+
+    // ✅ DEBUG: Log para verificar transformación
+    console.log('agentsList computed:', result.length, 'agents')
+    result.forEach(agent => {
+      console.log(`- ${agent.displayName}: ${agent.content ? 'Has content' : 'Empty'}`)
+    })
+
+    return result
   })
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES - MIGRADAS EXACTAS DE PROMPTSTAB.VUE
+  // FUNCIONES PRINCIPALES (sin cambios)
   // ============================================================================
 
-  /**
-   * Carga prompts - MIGRADA EXACTA de PromptsTab.vue loadPrompts()
-   */
   const loadPrompts = async () => {
     if (!currentCompanyId.value) {
       error.value = 'Por favor selecciona una empresa primero'
@@ -102,7 +102,6 @@ export const usePrompts = () => {
       
       console.log(`Loading prompts for company: ${currentCompanyId.value}`)
       
-      // PRESERVAR: Request exacto como PromptsTab.vue
       const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`, {
         method: 'GET',
         headers: {
@@ -113,10 +112,8 @@ export const usePrompts = () => {
       
       const data = await response.json()
       console.log('Prompts response:', data)
-      console.log('Agents detail:', JSON.stringify(data.agents, null, 2))
       
       if (data && data.agents) {
-        // PRESERVAR: Estructura exacta como PromptsTab.vue
         agents.value = {
           emergency_agent: data.agents.emergency_agent || null,
           router_agent: data.agents.router_agent || null,
@@ -125,9 +122,9 @@ export const usePrompts = () => {
           support_agent: data.agents.support_agent || null
         }
         
-        console.log('Assigned agents:', agents.value)
-        console.log('Has prompts?', hasPrompts.value)
-        console.log(`Loaded ${Object.keys(data.agents).length} prompts`)
+        console.log('✅ Assigned agents:', agents.value)
+        console.log('✅ Has prompts?', hasPrompts.value)
+        console.log('✅ Agents list length:', agentsList.value.length)
         
       } else {
         error.value = 'No se recibieron prompts del servidor'
@@ -141,9 +138,6 @@ export const usePrompts = () => {
     }
   }
 
-  /**
-   * Actualiza prompt - MIGRADA EXACTA de PromptsTab.vue updatePrompt()
-   */
   const updatePrompt = async (agentName) => {
     if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
@@ -161,7 +155,6 @@ export const usePrompts = () => {
       
       console.log(`Updating prompt for ${agentName}`)
       
-      // PRESERVAR: Request exacto como PromptsTab.vue
       const response = await fetch(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
         headers: {
@@ -177,7 +170,6 @@ export const usePrompts = () => {
       console.log('Update response:', data)
       
       if (response.ok) {
-        // PRESERVAR: Actualización de estado local
         if (agents.value[agentName]) {
           agents.value[agentName].is_custom = true
           agents.value[agentName].last_modified = new Date().toISOString()
@@ -192,7 +184,6 @@ export const usePrompts = () => {
         }
         showNotification(successMessage, 'success')
         
-        // Recargar los prompts para sincronizar
         await loadPrompts()
       } else {
         throw new Error(data.error || data.message || 'Error actualizando prompt')
@@ -206,9 +197,6 @@ export const usePrompts = () => {
     }
   }
 
-  /**
-   * Resetea prompt - MIGRADA EXACTA de PromptsTab.vue resetPrompt()
-   */
   const resetPrompt = async (agentName) => {
     if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
@@ -224,7 +212,6 @@ export const usePrompts = () => {
       
       console.log(`Resetting prompt for ${agentName}`)
       
-      // PRESERVAR: Request exacto como PromptsTab.vue
       const response = await fetch(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
         method: 'DELETE',
         headers: {
@@ -238,7 +225,6 @@ export const usePrompts = () => {
         const data = await response.json()
         console.log('Reset response data:', data)
         
-        // PRESERVAR: Actualización con prompt por defecto
         if (data.default_prompt && agents.value[agentName]) {
           agents.value[agentName].current_prompt = data.default_prompt
           agents.value[agentName].is_custom = false
@@ -247,7 +233,6 @@ export const usePrompts = () => {
         
         showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
         
-        // Recargar los prompts
         await loadPrompts()
       } else {
         const errorData = await response.json().catch(() => ({}))
@@ -262,9 +247,6 @@ export const usePrompts = () => {
     }
   }
 
-  /**
-   * Vista previa de prompt - MIGRADA EXACTA de PromptsTab.vue previewPrompt()
-   */
   const previewPrompt = async (agentName) => {
     const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
     
@@ -276,7 +258,6 @@ export const usePrompts = () => {
       return
     }
     
-    // Preparar datos del preview
     previewAgent.value = agentName
     previewContent.value = promptContent
     previewTestMessage.value = testMessage
@@ -287,7 +268,6 @@ export const usePrompts = () => {
     try {
       console.log(`Generating preview for ${agentName}`)
       
-      // PRESERVAR: Request exacto como PromptsTab.vue
       const response = await fetch('/api/admin/prompts/preview', {
         method: 'POST',
         headers: {
@@ -305,7 +285,6 @@ export const usePrompts = () => {
         const data = await response.json()
         console.log('Preview response:', data)
         
-        // PRESERVAR: Estructura de respuesta
         previewResponse.value = {
           success: true,
           preview: data.preview || data.response || '',
@@ -339,9 +318,6 @@ export const usePrompts = () => {
     }
   }
 
-  /**
-   * Cierra preview
-   */
   const closePreview = () => {
     showPreview.value = false
     previewAgent.value = ''
@@ -351,9 +327,6 @@ export const usePrompts = () => {
     previewLoading.value = false
   }
 
-  /**
-   * Repara todos los prompts - MIGRADA EXACTA de PromptsTab.vue repairAllPrompts()
-   */
   const repairAllPrompts = async () => {
     if (!confirm('¿Reparar todos los prompts desde el repositorio? Esto restaurará los prompts corruptos o faltantes.')) {
       return
@@ -364,7 +337,6 @@ export const usePrompts = () => {
       
       console.log('Repairing all prompts...')
       
-      // PRESERVAR: Request exacto como PromptsTab.vue
       const response = await fetch('/api/admin/prompts/repair', {
         method: 'POST',
         headers: {
@@ -392,7 +364,6 @@ export const usePrompts = () => {
         
         showNotification(message, 'success')
         
-        // Recargar los prompts después de la reparación
         await loadPrompts()
       } else {
         const errorData = await response.json().catch(() => ({}))
@@ -407,9 +378,6 @@ export const usePrompts = () => {
     }
   }
 
-  /**
-   * Exporta prompts
-   */
   const exportPrompts = () => {
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
@@ -421,7 +389,6 @@ export const usePrompts = () => {
         agents: {}
       }
       
-      // Incluir solo los datos relevantes de cada agente
       Object.entries(agents.value).forEach(([key, agent]) => {
         if (agent) {
           exportData.agents[key] = {
@@ -451,9 +418,6 @@ export const usePrompts = () => {
     }
   }
 
-  /**
-   * Formatea fecha
-   */
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
     try {
@@ -467,34 +431,30 @@ export const usePrompts = () => {
   // WATCHERS
   // ============================================================================
 
-  // Recargar cuando cambie la empresa
   watch(() => appStore.currentCompanyId, async (newCompanyId) => {
     if (newCompanyId) {
       await loadPrompts()
     }
   })
 
-  /**
-   * Función debug - MIGRADA EXACTA del monolito
-   */
   const debugPrompts = async () => {
     console.log('=== DEBUG PROMPTS ===')
     console.log('1. Current Company ID:', currentCompanyId.value)
     console.log('2. Current Agents State:', JSON.stringify(agents.value, null, 2))
     console.log('3. Has Prompts?:', hasPrompts.value)
-    console.log('4. Is Loading?:', isLoadingPrompts.value)
-    console.log('5. Error?:', error.value)
+    console.log('4. AgentsList Length:', agentsList.value.length)
+    console.log('5. AgentsList Content:', agentsList.value)
+    console.log('6. Is Loading?:', isLoadingPrompts.value)
+    console.log('7. Error?:', error.value)
     
-    // Hacer petición manual para ver respuesta raw
     try {
       const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       const data = await response.json()
-      console.log('6. RAW API Response:', data)
+      console.log('8. RAW API Response:', data)
       
-      // Analizar estructura
       if (data.agents) {
-        console.log('7. Agent Keys in Response:', Object.keys(data.agents))
-        console.log('8. Agent Values:')
+        console.log('9. Agent Keys in Response:', Object.keys(data.agents))
+        console.log('10. Agent Values:')
         Object.entries(data.agents).forEach(([key, value]) => {
           console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
                      value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
@@ -508,14 +468,10 @@ export const usePrompts = () => {
     }
   }
   
-  /**
-   * Test endpoints - MIGRADA EXACTA del monolito
-   */
   const testEndpoints = async () => {
     console.log('=== TESTING ENDPOINTS ===')
     const testAgent = 'emergency_agent'
     
-    // Test GET
     console.log('\n1. Testing GET /api/admin/prompts')
     try {
       const getResponse = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
@@ -526,7 +482,6 @@ export const usePrompts = () => {
       console.error('GET Error:', err)
     }
     
-    // Test UPDATE (sin realmente actualizar)
     console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
     console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
     console.log('Body:', {
@@ -534,11 +489,9 @@ export const usePrompts = () => {
       prompt_template: 'test'
     })
     
-    // Test DELETE
     console.log('\n3. Testing DELETE endpoint')
     console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${currentCompanyId.value}`)
     
-    // Test PREVIEW
     console.log('\n4. Testing PREVIEW endpoint')
     try {
       const previewResponse = await fetch('/api/admin/prompts/preview', {
@@ -564,7 +517,6 @@ export const usePrompts = () => {
       console.error('Preview Error:', err)
     }
     
-    // Test REPAIR
     console.log('\n5. Testing REPAIR endpoint')
     console.log('Endpoint: /api/admin/prompts/repair')
     console.log('Would send:', {
@@ -572,8 +524,9 @@ export const usePrompts = () => {
       agents: Object.keys(agents.value)
     })
   }
+
   // ============================================================================
-  // RETORNO DEL COMPOSABLE
+  // ✅ RETORNO CORREGIDO - INCLUIR agentsList
   // ============================================================================
 
   return {
@@ -595,8 +548,9 @@ export const usePrompts = () => {
     hasPrompts,
     currentCompanyId,
     currentCompanyName,
+    agentsList, // ✅ CRÍTICO: Este faltaba!
     
-    // Funciones principales (nombres exactos de PromptsTab.vue)
+    // Funciones principales
     loadPrompts,
     updatePrompt,
     resetPrompt,
@@ -605,8 +559,6 @@ export const usePrompts = () => {
     repairAllPrompts,
     exportPrompts,
     formatDate,
-      
-    // ✅ AGREGAR: Funciones debug faltantes
     debugPrompts,
     testEndpoints
   }
