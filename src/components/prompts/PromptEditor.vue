@@ -80,7 +80,7 @@
         :disabled="readonly || isProcessing || !promptData.isCustom"
       >
         <span v-if="isProcessing">⏳ Restaurando...</span>
-        <span v-else">🔄 Restaurar</span>
+        <span v-else>🔄 Restaurar</span>
       </button>
       
       <button 
