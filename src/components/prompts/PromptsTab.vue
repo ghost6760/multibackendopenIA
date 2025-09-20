@@ -28,7 +28,7 @@
         <div class="actions-bar">
           <button @click="loadPrompts" class="btn-refresh" :disabled="isLoadingPrompts">
             <span v-if="isLoadingPrompts">⏳ Cargando...</span>
-            <span v-else">🔄 Recargar Todos</span>
+            <span v-else>🔄 Recargar Todos</span>
           </button>
           <button @click="repairAllPrompts" class="btn-repair-all" :disabled="isProcessing">
             🔧 Reparar Todos
