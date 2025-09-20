@@ -1,4 +1,5 @@
-# PromptsTab.vue - FUNCIONES GLOBALES CORREGIDAS
+# PromptsTab.vue
+# PromptsTab.vue
 <template>
   <div class="prompts-tab" v-if="isActive">
     <!-- Header del Tab -->
@@ -137,7 +138,7 @@ const {
   exportPrompts,
   formatDate,
   
-  // Funciones debug del composable
+  // ✅ CORRECCIÓN: Agregar funciones debug del composable
   debugPrompts,
   testEndpoints
 } = usePrompts()
@@ -148,22 +149,28 @@ const {
 
 /**
  * Handler para evento update de PromptEditor
+ * ✅ CORREGIDO: Recibe solo agentName, no objeto completo
  */
 const handlePromptUpdate = (agentName) => {
+  // Pasar directamente el nombre del agente (igual que el monolito)
   updatePrompt(agentName)
 }
 
 /**
  * Handler para evento reset de PromptEditor  
+ * ✅ CORREGIDO: Recibe solo agentName
  */
 const handlePromptReset = (agentName) => {
+  // Pasar directamente el nombre del agente (igual que el monolito)
   resetPrompt(agentName)
 }
 
 /**
  * Handler para evento preview de PromptEditor
+ * ✅ CORREGIDO: Recibe solo agentName
  */
 const handlePromptPreview = (agentName) => {
+  // Pasar directamente el nombre del agente (igual que el monolito)
   previewPrompt(agentName)
 }
 
@@ -204,90 +211,28 @@ onMounted(() => {
     loadPrompts()
   }
   
-  // ✅ CORRECCIÓN CRÍTICA: EXPONER FUNCIONES Y DATOS CORRECTAMENTE
+  // ✅ CORRECCIÓN: EXPONER FUNCIONES GLOBALES EXACTAS DEL MONOLITO
   if (typeof window !== 'undefined') {
-    // ✅ EXPONER DATOS DEL COMPOSABLE DIRECTAMENTE
-    window.PromptsTabData = {
-      // Estado reactivo
-      agents,
-      isLoadingPrompts,
-      isProcessing,
-      error,
-      showPreview,
-      previewAgent,
-      previewContent,
-      previewTestMessage,
-      previewResponse,
-      previewLoading,
-      
-      // Computed properties
-      hasPrompts,
-      currentCompanyId,
-      currentCompanyName,
-      agentsList, // ✅ CRÍTICO: Esto ahora estará disponible
-      
-      // Funciones
-      loadPrompts,
-      updatePrompt,
-      resetPrompt,
-      previewPrompt,
-      closePreview,
-      repairAllPrompts,
-      exportPrompts,
-      formatDate,
-      debugPrompts,
-      testEndpoints
-    }
-    
-    // ✅ FUNCIONES GLOBALES INDIVIDUALES (igual que el monolito)
+    // Funciones principales (igual que el monolito)
     window.loadCurrentPrompts = () => loadPrompts()
     window.updatePrompt = (agentName) => updatePrompt(agentName)
     window.resetPrompt = (agentName) => resetPrompt(agentName)
     window.previewPrompt = (agentName) => previewPrompt(agentName)
     window.repairAllPrompts = () => repairAllPrompts()
     window.exportPrompts = () => exportPrompts()
+    
+    // ✅ CORRECCIÓN: Funciones debug faltantes (igual que el monolito)
     window.debugPrompts = () => debugPrompts()
     window.testPromptEndpoints = () => testEndpoints()
     
-    // ✅ INSTANCIA PARA COMPATIBILIDAD (pero con datos correctos)
-    const instance = getCurrentInstance()
-    window.PromptsTabInstance = {
-      // Datos reactivos del composable
-      agents,
-      agentsList, // ✅ AHORA ESTARÁ DISPONIBLE
-      hasPrompts,
-      currentCompanyId,
-      currentCompanyName,
-      isLoadingPrompts,
-      isProcessing,
-      error,
-      
-      // Funciones
-      debugPrompts,
-      testEndpoints,
-      loadPrompts,
-      updatePrompt,
-      resetPrompt,
-      previewPrompt,
-      
-      // Instancia Vue para casos avanzados
-      vueInstance: instance
-    }
-    
-    console.log('✅ Global functions exposed:', {
-      PromptsTabData: !!window.PromptsTabData,
-      PromptsTabInstance: !!window.PromptsTabInstance,
-      agentsList: !!window.PromptsTabInstance.agentsList,
-      debugPrompts: typeof window.debugPrompts
-    })
+    // ✅ CORRECCIÓN: Instancia para debug (igual que el monolito)
+    window.PromptsTabInstance = getCurrentInstance()
   }
 })
 
 onUnmounted(() => {
-  // ✅ LIMPIAR TODAS las funciones globales
+  // ✅ CORRECCIÓN: Limpiar TODAS las funciones globales
   if (typeof window !== 'undefined') {
-    delete window.PromptsTabData
-    delete window.PromptsTabInstance
     delete window.loadCurrentPrompts
     delete window.updatePrompt
     delete window.resetPrompt
@@ -296,6 +241,7 @@ onUnmounted(() => {
     delete window.exportPrompts
     delete window.debugPrompts
     delete window.testPromptEndpoints
+    delete window.PromptsTabInstance
   }
 })
 </script>
@@ -410,6 +356,133 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
   gap: 20px;
+}
+
+.agent-card {
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: transform 0.2s;
+}
+
+.agent-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.agent-header {
+  background: #f8f9fa;
+  padding: 15px;
+  border-bottom: 1px solid #dee2e6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.agent-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+  color: #495057;
+}
+
+.status-badge {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.status-badge.custom {
+  background: rgba(40, 167, 69, 0.1);
+  color: #28a745;
+}
+
+.status-badge.default {
+  background: rgba(108, 117, 125, 0.1);
+  color: #6c757d;
+}
+
+.agent-body {
+  padding: 15px;
+}
+
+.prompt-textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+}
+
+.prompt-info {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 0.85em;
+  color: #6c757d;
+}
+
+.agent-actions {
+  padding: 15px;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+  display: flex;
+  gap: 10px;
+}
+
+.agent-actions button {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9em;
+  transition: all 0.2s;
+}
+
+.btn-update {
+  background: #007bff;
+  color: white;
+}
+
+.btn-update:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.btn-reset {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-reset:hover:not(:disabled) {
+  background: #545b62;
+}
+
+.btn-preview {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-preview:hover:not(:disabled) {
+  background: #117a8b;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .no-prompts-section {
