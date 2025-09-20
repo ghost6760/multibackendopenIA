@@ -80,7 +80,7 @@
         :disabled="readonly || isProcessing || !promptData.isCustom"
       >
         <span v-if="isProcessing">⏳ Restaurando...</span>
-        <span v-else>🔄 Restaurar</span>
+        <span v-else">🔄 Restaurar</span>
       </button>
       
       <button 
@@ -183,11 +183,11 @@ watch(internalContent, () => {
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - EMITIR EVENTOS A PROMPTSTAB.VUE
+// FUNCIONES PRINCIPALES CORREGIDAS - EMITIR SOLO agentName
 // ============================================================================
 
 /**
- * Actualiza el prompt - Emite evento al padre
+ * Actualiza el prompt - ✅ CORREGIDO: Emitir solo agentName, no objeto completo
  */
 const updatePrompt = async () => {
   const content = internalContent.value.trim()
@@ -207,11 +207,8 @@ const updatePrompt = async () => {
     // Actualizar contenido original para detectar cambios futuros
     originalContent.value = content
     
-    // Emitir evento al padre con los datos necesarios
-    emit('update', {
-      ...props.promptData,
-      content: content
-    })
+    // ✅ CORREGIDO: Emitir solo el nombre del agente, igual que el monolito
+    emit('update', props.promptData.id || props.promptData.name)
     
   } finally {
     isProcessing.value = false
@@ -219,7 +216,7 @@ const updatePrompt = async () => {
 }
 
 /**
- * Resetea el prompt - Emite evento al padre
+ * Resetea el prompt - ✅ CORREGIDO: Emitir solo agentName
  */
 const resetToDefault = async () => {
   if (!props.promptData.isCustom) {
@@ -236,10 +233,8 @@ const resetToDefault = async () => {
   try {
     isProcessing.value = true
     
-    // Emitir evento al padre
-    emit('reset', {
-      ...props.promptData
-    })
+    // ✅ CORREGIDO: Emitir solo el nombre del agente
+    emit('reset', props.promptData.id || props.promptData.name)
     
   } finally {
     isProcessing.value = false
@@ -247,7 +242,7 @@ const resetToDefault = async () => {
 }
 
 /**
- * Muestra vista previa - Emite evento al padre
+ * Muestra vista previa - ✅ CORREGIDO: Emitir solo agentName
  */
 const showPreview = async () => {
   const content = internalContent.value.trim()
@@ -259,11 +254,8 @@ const showPreview = async () => {
   try {
     isProcessing.value = true
     
-    // Emitir evento al padre con contenido actualizado
-    emit('preview', {
-      ...props.promptData,
-      content: content
-    })
+    // ✅ CORREGIDO: Emitir solo el nombre del agente
+    emit('preview', props.promptData.id || props.promptData.name)
     
   } finally {
     isProcessing.value = false
@@ -271,7 +263,7 @@ const showPreview = async () => {
 }
 
 // ============================================================================
-// FUNCIONES DE VALIDACIÓN Y UTILIDADES
+// FUNCIONES DE VALIDACIÓN Y UTILIDADES (SIN CAMBIOS)
 // ============================================================================
 
 const validateContent = () => {
