@@ -46,270 +46,270 @@
       <!-- Prompts Grid - Los 5 Agentes -->
       <div v-if="hasPrompts" class="prompts-grid">
         
-        <!-- Lead Capture Agent -->
-        <div class="agent-card" v-if="agents.leadCaptureAgent">
+        <!-- Emergency Agent -->
+        <div class="agent-card" v-if="agents.emergency_agent">
           <div class="agent-header">
-            <h3>📥 Lead Capture Agent</h3>
-            <span :class="['status-badge', agents.leadCaptureAgent.is_custom ? 'custom' : 'default']">
-              {{ agents.leadCaptureAgent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
+            <h3>🚨 Emergency Agent</h3>
+            <span :class="['status-badge', agents.emergency_agent.is_custom ? 'custom' : 'default']">
+              {{ agents.emergency_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
             </span>
           </div>
           
           <div class="agent-body">
             <textarea
-              :id="`prompt-leadCaptureAgent`"
-              v-model="agents.leadCaptureAgent.current_prompt"
+              :id="`prompt-emergency_agent`"
+              v-model="agents.emergency_agent.current_prompt"
               class="prompt-textarea"
               rows="8"
-              placeholder="Prompt para Lead Capture Agent..."
+              placeholder="Prompt para Emergency Agent..."
               :disabled="isProcessing"
             ></textarea>
             
             <div class="prompt-info">
-              <span v-if="agents.leadCaptureAgent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.leadCaptureAgent.last_modified) }}
+              <span v-if="agents.emergency_agent.last_modified" class="last-modified">
+                📅 Modificado: {{ formatDate(agents.emergency_agent.last_modified) }}
               </span>
               <span class="char-count">
-                {{ (agents.leadCaptureAgent.current_prompt || '').length }} caracteres
+                {{ (agents.emergency_agent.current_prompt || '').length }} caracteres
               </span>
             </div>
           </div>
           
           <div class="agent-actions">
             <button 
-              @click="updatePrompt('leadCaptureAgent')"
+              @click="updatePrompt('emergency_agent')"
               class="btn-update"
-              :disabled="isProcessing || !agents.leadCaptureAgent.current_prompt"
+              :disabled="isProcessing || !agents.emergency_agent.current_prompt"
             >
               💾 Actualizar
             </button>
             <button 
-              @click="resetPrompt('leadCaptureAgent')"
+              @click="resetPrompt('emergency_agent')"
               class="btn-reset"
-              :disabled="isProcessing || !agents.leadCaptureAgent.is_custom"
+              :disabled="isProcessing || !agents.emergency_agent.is_custom"
             >
               🔄 Resetear
             </button>
             <button 
-              @click="previewPrompt('leadCaptureAgent')"
+              @click="previewPrompt('emergency_agent')"
               class="btn-preview"
-              :disabled="isProcessing || !agents.leadCaptureAgent.current_prompt"
+              :disabled="isProcessing || !agents.emergency_agent.current_prompt"
             >
               👁️ Preview
             </button>
           </div>
         </div>
 
-        <!-- Information Agent -->
-        <div class="agent-card" v-if="agents.informationAgent">
+        <!-- Router Agent -->
+        <div class="agent-card" v-if="agents.router_agent">
           <div class="agent-header">
-            <h3>ℹ️ Information Agent</h3>
-            <span :class="['status-badge', agents.informationAgent.is_custom ? 'custom' : 'default']">
-              {{ agents.informationAgent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
+            <h3>🚦 Router Agent</h3>
+            <span :class="['status-badge', agents.router_agent.is_custom ? 'custom' : 'default']">
+              {{ agents.router_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
             </span>
           </div>
           
           <div class="agent-body">
             <textarea
-              :id="`prompt-informationAgent`"
-              v-model="agents.informationAgent.current_prompt"
+              :id="`prompt-router_agent`"
+              v-model="agents.router_agent.current_prompt"
               class="prompt-textarea"
               rows="8"
-              placeholder="Prompt para Information Agent..."
+              placeholder="Prompt para Router Agent..."
               :disabled="isProcessing"
             ></textarea>
             
             <div class="prompt-info">
-              <span v-if="agents.informationAgent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.informationAgent.last_modified) }}
+              <span v-if="agents.router_agent.last_modified" class="last-modified">
+                📅 Modificado: {{ formatDate(agents.router_agent.last_modified) }}
               </span>
               <span class="char-count">
-                {{ (agents.informationAgent.current_prompt || '').length }} caracteres
+                {{ (agents.router_agent.current_prompt || '').length }} caracteres
               </span>
             </div>
           </div>
           
           <div class="agent-actions">
             <button 
-              @click="updatePrompt('informationAgent')"
+              @click="updatePrompt('router_agent')"
               class="btn-update"
-              :disabled="isProcessing || !agents.informationAgent.current_prompt"
+              :disabled="isProcessing || !agents.router_agent.current_prompt"
             >
               💾 Actualizar
             </button>
             <button 
-              @click="resetPrompt('informationAgent')"
+              @click="resetPrompt('router_agent')"
               class="btn-reset"
-              :disabled="isProcessing || !agents.informationAgent.is_custom"
+              :disabled="isProcessing || !agents.router_agent.is_custom"
             >
               🔄 Resetear
             </button>
             <button 
-              @click="previewPrompt('informationAgent')"
+              @click="previewPrompt('router_agent')"
               class="btn-preview"
-              :disabled="isProcessing || !agents.informationAgent.current_prompt"
+              :disabled="isProcessing || !agents.router_agent.current_prompt"
             >
               👁️ Preview
             </button>
           </div>
         </div>
 
-        <!-- Appointment Agent -->
-        <div class="agent-card" v-if="agents.appointmentAgent">
+        <!-- Sales Agent -->
+        <div class="agent-card" v-if="agents.sales_agent">
           <div class="agent-header">
-            <h3>📅 Appointment Agent</h3>
-            <span :class="['status-badge', agents.appointmentAgent.is_custom ? 'custom' : 'default']">
-              {{ agents.appointmentAgent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
+            <h3>💼 Sales Agent</h3>
+            <span :class="['status-badge', agents.sales_agent.is_custom ? 'custom' : 'default']">
+              {{ agents.sales_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
             </span>
           </div>
           
           <div class="agent-body">
             <textarea
-              :id="`prompt-appointmentAgent`"
-              v-model="agents.appointmentAgent.current_prompt"
+              :id="`prompt-sales_agent`"
+              v-model="agents.sales_agent.current_prompt"
               class="prompt-textarea"
               rows="8"
-              placeholder="Prompt para Appointment Agent..."
+              placeholder="Prompt para Sales Agent..."
               :disabled="isProcessing"
             ></textarea>
             
             <div class="prompt-info">
-              <span v-if="agents.appointmentAgent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.appointmentAgent.last_modified) }}
+              <span v-if="agents.sales_agent.last_modified" class="last-modified">
+                📅 Modificado: {{ formatDate(agents.sales_agent.last_modified) }}
               </span>
               <span class="char-count">
-                {{ (agents.appointmentAgent.current_prompt || '').length }} caracteres
+                {{ (agents.sales_agent.current_prompt || '').length }} caracteres
               </span>
             </div>
           </div>
           
           <div class="agent-actions">
             <button 
-              @click="updatePrompt('appointmentAgent')"
+              @click="updatePrompt('sales_agent')"
               class="btn-update"
-              :disabled="isProcessing || !agents.appointmentAgent.current_prompt"
+              :disabled="isProcessing || !agents.sales_agent.current_prompt"
             >
               💾 Actualizar
             </button>
             <button 
-              @click="resetPrompt('appointmentAgent')"
+              @click="resetPrompt('sales_agent')"
               class="btn-reset"
-              :disabled="isProcessing || !agents.appointmentAgent.is_custom"
+              :disabled="isProcessing || !agents.sales_agent.is_custom"
             >
               🔄 Resetear
             </button>
             <button 
-              @click="previewPrompt('appointmentAgent')"
+              @click="previewPrompt('sales_agent')"
               class="btn-preview"
-              :disabled="isProcessing || !agents.appointmentAgent.current_prompt"
+              :disabled="isProcessing || !agents.sales_agent.current_prompt"
             >
               👁️ Preview
             </button>
           </div>
         </div>
 
-        <!-- Reschedule Agent -->
-        <div class="agent-card" v-if="agents.rescheduleAgent">
+        <!-- Schedule Agent -->
+        <div class="agent-card" v-if="agents.schedule_agent">
           <div class="agent-header">
-            <h3>🔄 Reschedule Agent</h3>
-            <span :class="['status-badge', agents.rescheduleAgent.is_custom ? 'custom' : 'default']">
-              {{ agents.rescheduleAgent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
+            <h3>📅 Schedule Agent</h3>
+            <span :class="['status-badge', agents.schedule_agent.is_custom ? 'custom' : 'default']">
+              {{ agents.schedule_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
             </span>
           </div>
           
           <div class="agent-body">
             <textarea
-              :id="`prompt-rescheduleAgent`"
-              v-model="agents.rescheduleAgent.current_prompt"
+              :id="`prompt-schedule_agent`"
+              v-model="agents.schedule_agent.current_prompt"
               class="prompt-textarea"
               rows="8"
-              placeholder="Prompt para Reschedule Agent..."
+              placeholder="Prompt para Schedule Agent..."
               :disabled="isProcessing"
             ></textarea>
             
             <div class="prompt-info">
-              <span v-if="agents.rescheduleAgent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.rescheduleAgent.last_modified) }}
+              <span v-if="agents.schedule_agent.last_modified" class="last-modified">
+                📅 Modificado: {{ formatDate(agents.schedule_agent.last_modified) }}
               </span>
               <span class="char-count">
-                {{ (agents.rescheduleAgent.current_prompt || '').length }} caracteres
+                {{ (agents.schedule_agent.current_prompt || '').length }} caracteres
               </span>
             </div>
           </div>
           
           <div class="agent-actions">
             <button 
-              @click="updatePrompt('rescheduleAgent')"
+              @click="updatePrompt('schedule_agent')"
               class="btn-update"
-              :disabled="isProcessing || !agents.rescheduleAgent.current_prompt"
+              :disabled="isProcessing || !agents.schedule_agent.current_prompt"
             >
               💾 Actualizar
             </button>
             <button 
-              @click="resetPrompt('rescheduleAgent')"
+              @click="resetPrompt('schedule_agent')"
               class="btn-reset"
-              :disabled="isProcessing || !agents.rescheduleAgent.is_custom"
+              :disabled="isProcessing || !agents.schedule_agent.is_custom"
             >
               🔄 Resetear
             </button>
             <button 
-              @click="previewPrompt('rescheduleAgent')"
+              @click="previewPrompt('schedule_agent')"
               class="btn-preview"
-              :disabled="isProcessing || !agents.rescheduleAgent.current_prompt"
+              :disabled="isProcessing || !agents.schedule_agent.current_prompt"
             >
               👁️ Preview
             </button>
           </div>
         </div>
 
-        <!-- Routing Agent -->
-        <div class="agent-card" v-if="agents.routingAgent">
+        <!-- Support Agent -->
+        <div class="agent-card" v-if="agents.support_agent">
           <div class="agent-header">
-            <h3>🚦 Routing Agent</h3>
-            <span :class="['status-badge', agents.routingAgent.is_custom ? 'custom' : 'default']">
-              {{ agents.routingAgent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
+            <h3>🎧 Support Agent</h3>
+            <span :class="['status-badge', agents.support_agent.is_custom ? 'custom' : 'default']">
+              {{ agents.support_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
             </span>
           </div>
           
           <div class="agent-body">
             <textarea
-              :id="`prompt-routingAgent`"
-              v-model="agents.routingAgent.current_prompt"
+              :id="`prompt-support_agent`"
+              v-model="agents.support_agent.current_prompt"
               class="prompt-textarea"
               rows="8"
-              placeholder="Prompt para Routing Agent..."
+              placeholder="Prompt para Support Agent..."
               :disabled="isProcessing"
             ></textarea>
             
             <div class="prompt-info">
-              <span v-if="agents.routingAgent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.routingAgent.last_modified) }}
+              <span v-if="agents.support_agent.last_modified" class="last-modified">
+                📅 Modificado: {{ formatDate(agents.support_agent.last_modified) }}
               </span>
               <span class="char-count">
-                {{ (agents.routingAgent.current_prompt || '').length }} caracteres
+                {{ (agents.support_agent.current_prompt || '').length }} caracteres
               </span>
             </div>
           </div>
           
           <div class="agent-actions">
             <button 
-              @click="updatePrompt('routingAgent')"
+              @click="updatePrompt('support_agent')"
               class="btn-update"
-              :disabled="isProcessing || !agents.routingAgent.current_prompt"
+              :disabled="isProcessing || !agents.support_agent.current_prompt"
             >
               💾 Actualizar
             </button>
             <button 
-              @click="resetPrompt('routingAgent')"
+              @click="resetPrompt('support_agent')"
               class="btn-reset"
-              :disabled="isProcessing || !agents.routingAgent.is_custom"
+              :disabled="isProcessing || !agents.support_agent.is_custom"
             >
               🔄 Resetear
             </button>
             <button 
-              @click="previewPrompt('routingAgent')"
+              @click="previewPrompt('support_agent')"
               class="btn-preview"
-              :disabled="isProcessing || !agents.routingAgent.current_prompt"
+              :disabled="isProcessing || !agents.support_agent.current_prompt"
             >
               👁️ Preview
             </button>
@@ -383,11 +383,11 @@ export default {
       isProcessing: false,
       error: null,
       agents: {
-        leadCaptureAgent: null,
-        informationAgent: null,
-        appointmentAgent: null,
-        rescheduleAgent: null,
-        routingAgent: null
+        emergency_agent: null,
+        router_agent: null,
+        sales_agent: null,
+        schedule_agent: null,
+        support_agent: null
       }
     }
   },
@@ -405,14 +405,18 @@ export default {
   },
   watch: {
     isActive(newVal) {
-      if (newVal && !this.hasPrompts) {
+      if (newVal) {
+        console.log('PromptsTab is now active, loading prompts...')
         this.loadPrompts()
       }
     }
   },
   mounted() {
-    console.log('PromptsTab mounted')
+    console.log('PromptsTab mounted, isActive:', this.isActive)
+    
+    // Siempre cargar prompts cuando se monta el componente si está activo
     if (this.isActive) {
+      console.log('Tab is active on mount, loading prompts...')
       this.loadPrompts()
     }
     
@@ -458,13 +462,13 @@ export default {
             console.log(`- ${key}:`, data.agents[key] ? 'Has data' : 'Empty')
           })
           
-          // Asignar los agentes recibidos
+          // Asignar los agentes recibidos con los nombres correctos del backend
           this.agents = {
-            leadCaptureAgent: data.agents.leadCaptureAgent || null,
-            informationAgent: data.agents.informationAgent || null,
-            appointmentAgent: data.agents.appointmentAgent || null,
-            rescheduleAgent: data.agents.rescheduleAgent || null,
-            routingAgent: data.agents.routingAgent || null
+            emergency_agent: data.agents.emergency_agent || null,
+            router_agent: data.agents.router_agent || null,
+            sales_agent: data.agents.sales_agent || null,
+            schedule_agent: data.agents.schedule_agent || null,
+            support_agent: data.agents.support_agent || null
           }
           
           // DEBUG: Ver estado después de asignar
