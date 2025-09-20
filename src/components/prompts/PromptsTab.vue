@@ -43,279 +43,17 @@
         <p>⚠️ {{ error }}</p>
       </div>
 
-      <!-- Prompts Grid - Los 5 Agentes -->
+      <!-- Prompts Grid - PASO 3: USAR PROMPT EDITOR MODULAR -->
       <div v-if="hasPrompts" class="prompts-grid">
-        
-        <!-- Emergency Agent -->
-        <div class="agent-card" v-if="agents.emergency_agent">
-          <div class="agent-header">
-            <h3>🚨 Emergency Agent</h3>
-            <span :class="['status-badge', agents.emergency_agent.is_custom ? 'custom' : 'default']">
-              {{ agents.emergency_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
-            </span>
-          </div>
-          
-          <div class="agent-body">
-            <textarea
-              :id="`prompt-emergency_agent`"
-              v-model="agents.emergency_agent.current_prompt"
-              class="prompt-textarea"
-              rows="8"
-              placeholder="Prompt para Emergency Agent..."
-              :disabled="isProcessing"
-            ></textarea>
-            
-            <div class="prompt-info">
-              <span v-if="agents.emergency_agent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.emergency_agent.last_modified) }}
-              </span>
-              <span class="char-count">
-                {{ (agents.emergency_agent.current_prompt || '').length }} caracteres
-              </span>
-            </div>
-          </div>
-          
-          <div class="agent-actions">
-            <button 
-              @click="updatePrompt('emergency_agent')"
-              class="btn-update"
-              :disabled="isProcessing || !agents.emergency_agent.current_prompt"
-            >
-              💾 Actualizar
-            </button>
-            <button 
-              @click="resetPrompt('emergency_agent')"
-              class="btn-reset"
-              :disabled="isProcessing || !agents.emergency_agent.is_custom"
-            >
-              🔄 Resetear
-            </button>
-            <button 
-              @click="previewPrompt('emergency_agent')"
-              class="btn-preview"
-              :disabled="isProcessing || !agents.emergency_agent.current_prompt"
-            >
-              👁️ Preview
-            </button>
-          </div>
-        </div>
-
-        <!-- Router Agent -->
-        <div class="agent-card" v-if="agents.router_agent">
-          <div class="agent-header">
-            <h3>🚦 Router Agent</h3>
-            <span :class="['status-badge', agents.router_agent.is_custom ? 'custom' : 'default']">
-              {{ agents.router_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
-            </span>
-          </div>
-          
-          <div class="agent-body">
-            <textarea
-              :id="`prompt-router_agent`"
-              v-model="agents.router_agent.current_prompt"
-              class="prompt-textarea"
-              rows="8"
-              placeholder="Prompt para Router Agent..."
-              :disabled="isProcessing"
-            ></textarea>
-            
-            <div class="prompt-info">
-              <span v-if="agents.router_agent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.router_agent.last_modified) }}
-              </span>
-              <span class="char-count">
-                {{ (agents.router_agent.current_prompt || '').length }} caracteres
-              </span>
-            </div>
-          </div>
-          
-          <div class="agent-actions">
-            <button 
-              @click="updatePrompt('router_agent')"
-              class="btn-update"
-              :disabled="isProcessing || !agents.router_agent.current_prompt"
-            >
-              💾 Actualizar
-            </button>
-            <button 
-              @click="resetPrompt('router_agent')"
-              class="btn-reset"
-              :disabled="isProcessing || !agents.router_agent.is_custom"
-            >
-              🔄 Resetear
-            </button>
-            <button 
-              @click="previewPrompt('router_agent')"
-              class="btn-preview"
-              :disabled="isProcessing || !agents.router_agent.current_prompt"
-            >
-              👁️ Preview
-            </button>
-          </div>
-        </div>
-
-        <!-- Sales Agent -->
-        <div class="agent-card" v-if="agents.sales_agent">
-          <div class="agent-header">
-            <h3>💼 Sales Agent</h3>
-            <span :class="['status-badge', agents.sales_agent.is_custom ? 'custom' : 'default']">
-              {{ agents.sales_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
-            </span>
-          </div>
-          
-          <div class="agent-body">
-            <textarea
-              :id="`prompt-sales_agent`"
-              v-model="agents.sales_agent.current_prompt"
-              class="prompt-textarea"
-              rows="8"
-              placeholder="Prompt para Sales Agent..."
-              :disabled="isProcessing"
-            ></textarea>
-            
-            <div class="prompt-info">
-              <span v-if="agents.sales_agent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.sales_agent.last_modified) }}
-              </span>
-              <span class="char-count">
-                {{ (agents.sales_agent.current_prompt || '').length }} caracteres
-              </span>
-            </div>
-          </div>
-          
-          <div class="agent-actions">
-            <button 
-              @click="updatePrompt('sales_agent')"
-              class="btn-update"
-              :disabled="isProcessing || !agents.sales_agent.current_prompt"
-            >
-              💾 Actualizar
-            </button>
-            <button 
-              @click="resetPrompt('sales_agent')"
-              class="btn-reset"
-              :disabled="isProcessing || !agents.sales_agent.is_custom"
-            >
-              🔄 Resetear
-            </button>
-            <button 
-              @click="previewPrompt('sales_agent')"
-              class="btn-preview"
-              :disabled="isProcessing || !agents.sales_agent.current_prompt"
-            >
-              👁️ Preview
-            </button>
-          </div>
-        </div>
-
-        <!-- Schedule Agent -->
-        <div class="agent-card" v-if="agents.schedule_agent">
-          <div class="agent-header">
-            <h3>📅 Schedule Agent</h3>
-            <span :class="['status-badge', agents.schedule_agent.is_custom ? 'custom' : 'default']">
-              {{ agents.schedule_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
-            </span>
-          </div>
-          
-          <div class="agent-body">
-            <textarea
-              :id="`prompt-schedule_agent`"
-              v-model="agents.schedule_agent.current_prompt"
-              class="prompt-textarea"
-              rows="8"
-              placeholder="Prompt para Schedule Agent..."
-              :disabled="isProcessing"
-            ></textarea>
-            
-            <div class="prompt-info">
-              <span v-if="agents.schedule_agent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.schedule_agent.last_modified) }}
-              </span>
-              <span class="char-count">
-                {{ (agents.schedule_agent.current_prompt || '').length }} caracteres
-              </span>
-            </div>
-          </div>
-          
-          <div class="agent-actions">
-            <button 
-              @click="updatePrompt('schedule_agent')"
-              class="btn-update"
-              :disabled="isProcessing || !agents.schedule_agent.current_prompt"
-            >
-              💾 Actualizar
-            </button>
-            <button 
-              @click="resetPrompt('schedule_agent')"
-              class="btn-reset"
-              :disabled="isProcessing || !agents.schedule_agent.is_custom"
-            >
-              🔄 Resetear
-            </button>
-            <button 
-              @click="previewPrompt('schedule_agent')"
-              class="btn-preview"
-              :disabled="isProcessing || !agents.schedule_agent.current_prompt"
-            >
-              👁️ Preview
-            </button>
-          </div>
-        </div>
-
-        <!-- Support Agent -->
-        <div class="agent-card" v-if="agents.support_agent">
-          <div class="agent-header">
-            <h3>🎧 Support Agent</h3>
-            <span :class="['status-badge', agents.support_agent.is_custom ? 'custom' : 'default']">
-              {{ agents.support_agent.is_custom ? '✅ Personalizado' : '🔵 Por defecto' }}
-            </span>
-          </div>
-          
-          <div class="agent-body">
-            <textarea
-              :id="`prompt-support_agent`"
-              v-model="agents.support_agent.current_prompt"
-              class="prompt-textarea"
-              rows="8"
-              placeholder="Prompt para Support Agent..."
-              :disabled="isProcessing"
-            ></textarea>
-            
-            <div class="prompt-info">
-              <span v-if="agents.support_agent.last_modified" class="last-modified">
-                📅 Modificado: {{ formatDate(agents.support_agent.last_modified) }}
-              </span>
-              <span class="char-count">
-                {{ (agents.support_agent.current_prompt || '').length }} caracteres
-              </span>
-            </div>
-          </div>
-          
-          <div class="agent-actions">
-            <button 
-              @click="updatePrompt('support_agent')"
-              class="btn-update"
-              :disabled="isProcessing || !agents.support_agent.current_prompt"
-            >
-              💾 Actualizar
-            </button>
-            <button 
-              @click="resetPrompt('support_agent')"
-              class="btn-reset"
-              :disabled="isProcessing || !agents.support_agent.is_custom"
-            >
-              🔄 Resetear
-            </button>
-            <button 
-              @click="previewPrompt('support_agent')"
-              class="btn-preview"
-              :disabled="isProcessing || !agents.support_agent.current_prompt"
-            >
-              👁️ Preview
-            </button>
-          </div>
-        </div>
-
+        <PromptEditor
+          v-for="agent in agentsList"
+          :key="agent.id"
+          :prompt-data="agent"
+          :readonly="isProcessing"
+          @update="handlePromptUpdate"
+          @reset="handlePromptReset"
+          @preview="handlePromptPreview"
+        />
       </div>
 
       <!-- No Prompts State -->
@@ -432,15 +170,17 @@
 
 <script>
 // ===============================================================================
-// PASO 2: COMPOSABLE CENTRALIZADO - ELIMINADA TODA LÓGICA API DUPLICADA  
+// PASO 3: IMPORT PROMPT EDITOR MODULAR
 // ===============================================================================
 import { usePrompts } from '@/composables/usePrompts'
 import PromptsStatus from './PromptsStatus.vue'
+import PromptEditor from './PromptEditor.vue'
 
 export default {
   name: 'PromptsTab',
   components: {
-    PromptsStatus
+    PromptsStatus,
+    PromptEditor
   },
   props: {
     isActive: {
@@ -450,7 +190,7 @@ export default {
   },
   setup() {
     // ===============================================================================
-    // PASO 2: USAR ÚNICAMENTE EL COMPOSABLE - ELIMINAR data(), methods(), etc.
+    // PASO 3: USAR COMPOSABLE + AGENTES MODULARES
     // ===============================================================================
     const {
       // Estado reactivo del composable
@@ -469,6 +209,7 @@ export default {
       hasPrompts,
       currentCompanyId,
       currentCompanyName,
+      agentsList,
       
       // Funciones del composable (nombres exactos que funcionan con backend)
       loadPrompts,
@@ -480,6 +221,24 @@ export default {
       exportPrompts,
       formatDate
     } = usePrompts()
+
+    // ===============================================================================
+    // PASO 3: HANDLERS PARA EVENTOS DE PROMPT EDITOR
+    // ===============================================================================
+    const handlePromptUpdate = (promptData) => {
+      // PromptEditor emite el objeto completo, extraer el nombre del agente
+      updatePrompt(promptData.id || promptData.name)
+    }
+
+    const handlePromptReset = (promptData) => {
+      // PromptEditor emite el objeto completo, extraer el nombre del agente
+      resetPrompt(promptData.id || promptData.name)
+    }
+
+    const handlePromptPreview = (promptData) => {
+      // PromptEditor emite el objeto completo, extraer el nombre del agente
+      previewPrompt(promptData.id || promptData.name)
+    }
 
     // ===============================================================================
     // HANDLERS PARA EVENTOS DE PROMPTSSTATUS.VUE
@@ -541,6 +300,7 @@ export default {
       hasPrompts,
       currentCompanyId,
       currentCompanyName,
+      agentsList,
       
       // Funciones del composable
       loadPrompts,
@@ -552,10 +312,15 @@ export default {
       exportPrompts,
       formatDate,
       
-      // Handlers locales
+      // Handlers para PromptsStatus
       handleStatusLoaded,
       handleMigrationComplete,
-      copyPreviewResponse
+      copyPreviewResponse,
+      
+      // PASO 3: Handlers para PromptEditor
+      handlePromptUpdate,
+      handlePromptReset,
+      handlePromptPreview
     }
   },
   watch: {
