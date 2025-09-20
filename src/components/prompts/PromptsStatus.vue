@@ -1,4 +1,4 @@
-# PromptsStatus.vue - CORRECCIÓN ESTADO POSTGRESQL
+# PromptsStatus.vue
 <template>
   <div class="prompts-status-container">
     <!-- Header -->
@@ -34,7 +34,7 @@
     <!-- Main Status Display -->
     <div v-else-if="systemStatus" class="status-content">
       
-      <!-- Database Status - ✅ CORREGIDO -->
+      <!-- Database Status -->
       <div class="status-card database-status" :class="databaseStatusClass">
         <div class="status-card-header">
           <h4>🗄️ Estado de Base de Datos</h4>
@@ -45,34 +45,34 @@
         </div>
         
         <div class="status-card-body">
-          <!-- ✅ CORRECCIÓN: Verificación mejorada de PostgreSQL -->
+          <!-- PostgreSQL Status -->
           <div class="status-detail">
             <span class="detail-label">PostgreSQL:</span>
-            <span class="detail-value" :class="postgresqlStatusClass">
-              {{ postgresqlStatusText }}
+            <span class="detail-value" :class="{ 'success': systemStatus.postgresql_available, 'error': !systemStatus.postgresql_available }">
+              {{ systemStatus.postgresql_available ? '✅ Disponible' : '❌ No disponible' }}
             </span>
           </div>
           
-          <!-- ✅ NUEVO: Mostrar estado real desde prompts -->
-          <div class="status-detail" v-if="systemStatus.prompt_system">
-            <span class="detail-label">Sistema de Prompts:</span>
-            <span class="detail-value" :class="promptSystemStatusClass">
-              {{ promptSystemStatusText }}
+          <!-- Tables Status -->
+          <div class="status-detail" v-if="systemStatus.postgresql_available">
+            <span class="detail-label">Tablas:</span>
+            <span class="detail-value" :class="{ 'success': systemStatus.tables_exist, 'warning': !systemStatus.tables_exist }">
+              {{ systemStatus.tables_exist ? '✅ Creadas' : '⚠️ No creadas' }}
+            </span>
+          </div>
+          
+          <!-- Fallback Status -->
+          <div class="status-detail" v-if="systemStatus.fallback_active">
+            <span class="detail-label">Modo Fallback:</span>
+            <span class="detail-value warning">
+              ⚠️ Activo ({{ systemStatus.fallback_used || systemStatus.fallback_active }})
             </span>
           </div>
           
           <!-- Custom Prompts Count -->
-          <div class="status-detail">
+          <div class="status-detail" v-if="systemStatus.total_custom_prompts !== undefined">
             <span class="detail-label">Prompts Personalizados:</span>
-            <span class="detail-value">{{ customPromptsCount }}</span>
-          </div>
-          
-          <!-- ✅ NUEVO: Mostrar source de prompts -->
-          <div class="status-detail" v-if="promptSource">
-            <span class="detail-label">Fuente de Datos:</span>
-            <span class="detail-value" :class="sourceStatusClass">
-              {{ promptSource }}
-            </span>
+            <span class="detail-value">{{ systemStatus.total_custom_prompts || 0 }}</span>
           </div>
           
           <!-- Migration Button -->
@@ -131,11 +131,13 @@
         
         <div class="status-card-body">
           <div class="health-grid">
+            <!-- API Status -->
             <div class="health-item">
               <span class="health-label">API:</span>
               <span class="health-value success">✅ Operativo</span>
             </div>
             
+            <!-- Agents Status -->
             <div class="health-item" v-if="systemStatus.agents_status">
               <span class="health-label">Agentes:</span>
               <span class="health-value" :class="getAgentsStatusClass()">
@@ -143,11 +145,13 @@
               </span>
             </div>
             
+            <!-- Last Update -->
             <div class="health-item" v-if="systemStatus.last_updated">
               <span class="health-label">Última actualización:</span>
               <span class="health-value">{{ formatDateTime(systemStatus.last_updated) }}</span>
             </div>
             
+            <!-- Uptime -->
             <div class="health-item" v-if="systemStatus.uptime">
               <span class="health-label">Uptime:</span>
               <span class="health-value">{{ formatUptime(systemStatus.uptime) }}</span>
@@ -185,7 +189,7 @@
             <button 
               @click="optimizeDatabase"
               class="tool-button optimize-btn"
-              :disabled="isProcessing || !isDatabaseAvailable"
+              :disabled="isProcessing || !systemStatus.postgresql_available"
             >
               <span v-if="isProcessing">⏳ Optimizando...</span>
               <span v-else>⚡ Optimizar BD</span>
@@ -218,9 +222,17 @@ import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
 
+// ============================================================================
+// COMPOSABLES
+// ============================================================================
+
 const appStore = useAppStore()
 const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
+
+// ============================================================================
+// EMITS - INTEGRACIÓN CON PROMPTSTAB.VUE
+// ============================================================================
 
 const emit = defineEmits(['status-loaded', 'migration-complete'])
 
@@ -237,129 +249,12 @@ const lastUpdated = ref(null)
 const refreshInterval = ref(null)
 
 // ============================================================================
-// ✅ COMPUTED PROPERTIES CORREGIDOS
+// COMPUTED PROPERTIES
 // ============================================================================
 
-// ✅ CORRECCIÓN: Detectar PostgreSQL desde múltiples fuentes
-const postgresqlStatusClass = computed(() => {
-  if (!systemStatus.value) return 'unknown'
-  
-  // ✅ Verificar desde prompt_system si está disponible
-  const promptSystem = systemStatus.value.prompt_system
-  const directPostgres = systemStatus.value.postgresql_available
-  
-  // Si hay información del sistema de prompts, usarla
-  if (promptSystem && promptSystem.database_available !== undefined) {
-    return promptSystem.database_available ? 'success' : 'error'
-  }
-  
-  // Fallback a verificación directa
-  return directPostgres ? 'success' : 'error'
-})
-
-const postgresqlStatusText = computed(() => {
-  if (!systemStatus.value) return 'Desconocido'
-  
-  const promptSystem = systemStatus.value.prompt_system
-  const directPostgres = systemStatus.value.postgresql_available
-  
-  if (promptSystem && promptSystem.database_available !== undefined) {
-    return promptSystem.database_available ? '✅ Conectado' : '❌ No disponible'
-  }
-  
-  return directPostgres ? '✅ Disponible' : '❌ No disponible'
-})
-
-// ✅ NUEVO: Estado del sistema de prompts
-const promptSystemStatusClass = computed(() => {
-  if (!systemStatus.value?.prompt_system) return 'unknown'
-  
-  const ps = systemStatus.value.prompt_system
-  
-  if (ps.status === 'operational' || ps.database_available) {
-    return 'success'
-  } else if (ps.fallback_active) {
-    return 'warning'
-  } else {
-    return 'error'
-  }
-})
-
-const promptSystemStatusText = computed(() => {
-  if (!systemStatus.value?.prompt_system) return 'No disponible'
-  
-  const ps = systemStatus.value.prompt_system
-  
-  if (ps.status === 'operational' && ps.database_available) {
-    return '✅ PostgreSQL Operativo'
-  } else if (ps.fallback_active) {
-    return '⚠️ Modo Fallback Activo'
-  } else if (ps.database_available) {
-    return '✅ Base de Datos Conectada'
-  } else {
-    return '❌ Sistema No Disponible'
-  }
-})
-
-// ✅ NUEVO: Mostrar fuente de datos actual
-const promptSource = computed(() => {
-  if (!systemStatus.value?.prompt_system) return null
-  
-  const ps = systemStatus.value.prompt_system
-  
-  if (ps.database_available) {
-    return '🗄️ PostgreSQL Database'
-  } else if (ps.fallback_active) {
-    return '📁 Archivos de Repositorio'
-  } else {
-    return '❓ Fuente Desconocida'
-  }
-})
-
-const sourceStatusClass = computed(() => {
-  if (!systemStatus.value?.prompt_system) return ''
-  
-  const ps = systemStatus.value.prompt_system
-  
-  if (ps.database_available) {
-    return 'success'
-  } else if (ps.fallback_active) {
-    return 'warning'
-  } else {
-    return 'error'
-  }
-})
-
-// ✅ CORRECCIÓN: Conteo correcto de prompts personalizados
-const customPromptsCount = computed(() => {
-  if (!systemStatus.value) return 0
-  
-  // Priorizar datos del prompt_system
-  if (systemStatus.value.prompt_system?.custom_prompts !== undefined) {
-    return systemStatus.value.prompt_system.custom_prompts
-  }
-  
-  // Fallback a datos directos
-  return systemStatus.value.total_custom_prompts || systemStatus.value.custom_prompts || 0
-})
-
-// ✅ CORRECCIÓN: Estado general de la base de datos
 const databaseStatusClass = computed(() => {
   if (!systemStatus.value) return 'unknown'
   
-  const promptSystem = systemStatus.value.prompt_system
-  
-  if (promptSystem) {
-    if (promptSystem.database_available && !promptSystem.fallback_active) {
-      return 'success'
-    } else if (promptSystem.fallback_active) {
-      return 'warning'
-    } else {
-      return 'error'
-    }
-  }
-  
-  // Fallback a lógica anterior
   const { postgresql_available, tables_exist, fallback_active } = systemStatus.value
   
   if (postgresql_available && tables_exist && !fallback_active) {
@@ -376,19 +271,6 @@ const databaseStatusClass = computed(() => {
 const databaseStatusText = computed(() => {
   if (!systemStatus.value) return 'Desconocido'
   
-  const promptSystem = systemStatus.value.prompt_system
-  
-  if (promptSystem) {
-    if (promptSystem.database_available && !promptSystem.fallback_active) {
-      return `✅ PostgreSQL Operativo (${customPromptsCount.value} prompts personalizados)`
-    } else if (promptSystem.fallback_active) {
-      return `⚠️ Modo Fallback Activo - Sistema Funcional`
-    } else {
-      return '❌ Sistema de prompts no disponible'
-    }
-  }
-  
-  // Fallback a lógica anterior
   const { postgresql_available, tables_exist, fallback_active, total_custom_prompts } = systemStatus.value
   
   if (postgresql_available && tables_exist && !fallback_active) {
@@ -402,35 +284,18 @@ const databaseStatusText = computed(() => {
   }
 })
 
-// ✅ CORRECCIÓN: Verificación de disponibilidad de base de datos
-const isDatabaseAvailable = computed(() => {
-  if (!systemStatus.value) return false
-  
-  const promptSystem = systemStatus.value.prompt_system
-  
-  if (promptSystem) {
-    return promptSystem.database_available || false
-  }
-  
-  return systemStatus.value.postgresql_available || false
-})
-
 const showMigrationButton = computed(() => {
   if (!systemStatus.value) return false
-  
-  const promptSystem = systemStatus.value.prompt_system
-  
-  if (promptSystem) {
-    return !promptSystem.database_available && promptSystem.fallback_active
-  }
-  
   return systemStatus.value.postgresql_available && !systemStatus.value.tables_exist
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES (sin cambios significativos)
+// FUNCIONES PRINCIPALES - USANDO ENDPOINTS COMO PROMPTSTAB.VUE
 // ============================================================================
 
+/**
+ * Carga el estado del sistema - USANDO MISMO ENDPOINT QUE PROMPTSTAB.VUE
+ */
 const loadSystemStatus = async () => {
   isLoading.value = true
   error.value = null
@@ -438,11 +303,11 @@ const loadSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
+    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest(`/api/admin/status?company_id=${appStore.currentCompanyId}`)
     
-    // ✅ PROCESAMIENTO MEJORADO DE RESPUESTA
+    // ✅ ESTRUCTURA DE RESPUESTA IGUAL A PROMPTSTAB.VUE
     systemStatus.value = {
-      // Datos existentes
       postgresql_available: response.postgresql_available || false,
       tables_exist: response.tables_exist || false,
       total_custom_prompts: response.total_custom_prompts || 0,
@@ -451,24 +316,13 @@ const loadSystemStatus = async () => {
       metrics: response.metrics || null,
       agents_status: response.agents_status || null,
       last_updated: response.last_updated || new Date().toISOString(),
-      uptime: response.uptime || null,
-      
-      // ✅ NUEVO: Datos específicos del sistema de prompts
-      prompt_system: response.prompt_system || null,
-      custom_prompts: response.custom_prompts || 0
+      uptime: response.uptime || null
     }
     
     lastUpdated.value = new Date().toISOString()
     appStore.addToLog('Prompts system status loaded successfully', 'info')
     
-    // ✅ LOGGING DETALLADO
-    console.log('🔍 System Status Loaded:', {
-      postgresql: systemStatus.value.postgresql_available,
-      prompt_system: systemStatus.value.prompt_system,
-      custom_prompts: customPromptsCount.value,
-      database_available: isDatabaseAvailable.value
-    })
-    
+    // ✅ EMITIR EVENTO PARA PROMPTSTAB.VUE
     emit('status-loaded', systemStatus.value)
     
   } catch (error) {
@@ -480,7 +334,9 @@ const loadSystemStatus = async () => {
   }
 }
 
-// Resto de funciones sin cambios...
+/**
+ * Migra a PostgreSQL - USANDO MISMOS ENDPOINTS QUE PROMPTSTAB.VUE
+ */
 const migrateToPostgreSQL = async () => {
   if (!confirm('¿Estás seguro de migrar el sistema de prompts a PostgreSQL? Esta operación puede tardar unos minutos.')) {
     return
@@ -491,6 +347,7 @@ const migrateToPostgreSQL = async () => {
   try {
     appStore.addToLog('Starting prompts migration to PostgreSQL', 'info')
     
+    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest('/api/admin/prompts/migrate', {
       method: 'POST',
       body: {
@@ -501,7 +358,10 @@ const migrateToPostgreSQL = async () => {
     showNotification('Migración completada exitosamente', 'success')
     appStore.addToLog('Prompts migration completed successfully', 'info')
     
+    // Recargar estado después de la migración
     await loadSystemStatus()
+    
+    // ✅ EMITIR EVENTO PARA PROMPTSTAB.VUE
     emit('migration-complete')
     
   } catch (error) {
@@ -512,9 +372,16 @@ const migrateToPostgreSQL = async () => {
   }
 }
 
+/**
+ * Actualizar estado
+ */
 const refreshStatus = async () => {
   await loadSystemStatus()
 }
+
+// ============================================================================
+// HERRAMIENTAS DEL SISTEMA - USANDO MISMOS ENDPOINTS QUE PROMPTSTAB.VUE
+// ============================================================================
 
 const repairAllPrompts = async () => {
   if (!confirm('¿Reparar todos los prompts desde el repositorio? Esta operación sobrescribirá prompts corruptos.')) {
@@ -526,6 +393,7 @@ const repairAllPrompts = async () => {
   try {
     appStore.addToLog('Starting repair of all prompts', 'info')
     
+    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest('/api/admin/prompts/repair', {
       method: 'POST',
       body: {
@@ -536,6 +404,7 @@ const repairAllPrompts = async () => {
     
     showNotification(`Reparación completada: ${response.repaired_count || 0} prompts reparados`, 'success')
     
+    // Recargar estado
     await loadSystemStatus()
     
   } catch (error) {
@@ -581,6 +450,7 @@ const optimizeDatabase = async () => {
     
     showNotification('Base de datos optimizada exitosamente', 'success')
     
+    // Recargar estado
     await loadSystemStatus()
     
   } catch (error) {
@@ -622,7 +492,10 @@ const exportSystemReport = async () => {
   }
 }
 
-// Funciones auxiliares sin cambios...
+// ============================================================================
+// FUNCIONES DE UTILIDADES
+// ============================================================================
+
 const getAgentsStatusClass = () => {
   if (!systemStatus.value?.agents_status) return ''
   
@@ -673,14 +546,17 @@ const formatUptime = (uptime) => {
 onMounted(async () => {
   appStore.addToLog('PromptsStatus component mounted', 'info')
   
+  // Cargar estado inicial
   await loadSystemStatus()
   
+  // Configurar actualización automática cada 30 segundos
   refreshInterval.value = setInterval(() => {
     if (!isLoading.value) {
       loadSystemStatus()
     }
   }, 30000)
   
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
   if (typeof window !== 'undefined') {
     window.loadPromptsSystemStatus = loadSystemStatus
     window.migratePromptsToPostgreSQL = migrateToPostgreSQL
@@ -689,10 +565,12 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // Limpiar interval
   if (refreshInterval.value) {
     clearInterval(refreshInterval.value)
   }
   
+  // Limpiar funciones globales
   if (typeof window !== 'undefined') {
     delete window.loadPromptsSystemStatus
     delete window.migratePromptsToPostgreSQL
