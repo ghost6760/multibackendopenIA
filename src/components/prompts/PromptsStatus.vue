@@ -83,7 +83,7 @@
               :disabled="isMigrating"
             >
               <span v-if="isMigrating">⏳ Migrando...</span>
-              <span v-else">🚀 Migrar a PostgreSQL</span>
+              <span v-else>🚀 Migrar a PostgreSQL</span>
             </button>
             <p class="migration-help">Crea las tablas necesarias en PostgreSQL</p>
           </div>
@@ -201,7 +201,7 @@
               :disabled="isProcessing"
             >
               <span v-if="isProcessing">⏳ Exportando...</span>
-              <span v-else">📄 Exportar Reporte</span>
+              <span v-else>📄 Exportar Reporte</span>
             </button>
           </div>
         </div>
@@ -229,6 +229,12 @@ import { useNotifications } from '@/composables/useNotifications'
 const appStore = useAppStore()
 const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
+
+// ============================================================================
+// EMITS - INTEGRACIÓN CON PROMPTSTAB.VUE
+// ============================================================================
+
+const emit = defineEmits(['status-loaded', 'migration-complete'])
 
 // ============================================================================
 // ESTADO REACTIVO
@@ -284,12 +290,11 @@ const showMigrationButton = computed(() => {
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - MIGRADAS DEL SCRIPT.JS - ENDPOINTS CORREGIDOS
+// FUNCIONES PRINCIPALES - USANDO ENDPOINTS COMO PROMPTSTAB.VUE
 // ============================================================================
 
 /**
- * Carga el estado del sistema - CORREGIDO: usar /api/admin/status como script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Carga el estado del sistema - USANDO MISMO ENDPOINT QUE PROMPTSTAB.VUE
  */
 const loadSystemStatus = async () => {
   isLoading.value = true
@@ -298,11 +303,10 @@ const loadSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    // ✅ CORRECCIÓN: Usar el endpoint correcto con company_id
+    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest(`/api/admin/status?company_id=${appStore.currentCompanyId}`)
     
-    // ✅ CORRECCIÓN: La respuesta tiene la estructura directa, no nested
-    // El backend devuelve: {postgresql_available, tables_exist, total_custom_prompts, etc}
+    // ✅ ESTRUCTURA DE RESPUESTA IGUAL A PROMPTSTAB.VUE
     systemStatus.value = {
       postgresql_available: response.postgresql_available || false,
       tables_exist: response.tables_exist || false,
@@ -316,8 +320,10 @@ const loadSystemStatus = async () => {
     }
     
     lastUpdated.value = new Date().toISOString()
-    
     appStore.addToLog('Prompts system status loaded successfully', 'info')
+    
+    // ✅ EMITIR EVENTO PARA PROMPTSTAB.VUE
+    emit('status-loaded', systemStatus.value)
     
   } catch (error) {
     appStore.addToLog(`Error loading prompts system status: ${error.message}`, 'error')
@@ -327,9 +333,9 @@ const loadSystemStatus = async () => {
     isLoading.value = false
   }
 }
+
 /**
- * Migra a PostgreSQL - MIGRADO: migratePromptsToPostgreSQL() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Migra a PostgreSQL - USANDO MISMOS ENDPOINTS QUE PROMPTSTAB.VUE
  */
 const migrateToPostgreSQL = async () => {
   if (!confirm('¿Estás seguro de migrar el sistema de prompts a PostgreSQL? Esta operación puede tardar unos minutos.')) {
@@ -341,7 +347,7 @@ const migrateToPostgreSQL = async () => {
   try {
     appStore.addToLog('Starting prompts migration to PostgreSQL', 'info')
     
-    // ✅ CORRECCIÓN: Usar endpoint correcto como script.js
+    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest('/api/admin/prompts/migrate', {
       method: 'POST',
       body: {
@@ -355,6 +361,9 @@ const migrateToPostgreSQL = async () => {
     // Recargar estado después de la migración
     await loadSystemStatus()
     
+    // ✅ EMITIR EVENTO PARA PROMPTSTAB.VUE
+    emit('migration-complete')
+    
   } catch (error) {
     appStore.addToLog(`Error during prompts migration: ${error.message}`, 'error')
     showNotification('Error durante la migración: ' + error.message, 'error')
@@ -364,15 +373,14 @@ const migrateToPostgreSQL = async () => {
 }
 
 /**
- * Actualizar estado - MIGRADO: updateSystemStatusDisplay() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Actualizar estado
  */
 const refreshStatus = async () => {
   await loadSystemStatus()
 }
 
 // ============================================================================
-// HERRAMIENTAS DEL SISTEMA
+// HERRAMIENTAS DEL SISTEMA - USANDO MISMOS ENDPOINTS QUE PROMPTSTAB.VUE
 // ============================================================================
 
 const repairAllPrompts = async () => {
@@ -385,6 +393,7 @@ const repairAllPrompts = async () => {
   try {
     appStore.addToLog('Starting repair of all prompts', 'info')
     
+    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest('/api/admin/prompts/repair', {
       method: 'POST',
       body: {
