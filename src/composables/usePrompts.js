@@ -1,622 +1,483 @@
 /**
  * usePrompts.js - Composable para Gestión de Prompts
- * MIGRADO DE: script.js funciones loadCurrentPrompts(), updatePrompt(), resetPrompt(), previewPrompt(), etc.
+ * MIGRADO DE: PromptsTab.vue - todas las llamadas API
  * PRESERVAR: Comportamiento exacto de las funciones originales
- * COMPATIBILIDAD: 100% con el script.js original y backend Flask
+ * COMPATIBILIDAD: 100% con el backend Flask
  */
 
 import { ref, computed, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
-import { useSystemLog } from '@/composables/useSystemLog'
 
 export const usePrompts = () => {
   const appStore = useAppStore()
   const { apiRequest } = useApiRequest()
   const { showNotification } = useNotifications()
-  const { addToLog } = useSystemLog()
-
-  // Estado básico
-  const systemStatus = ref(null)
-  const isLoading = ref(false)
-  const isMigrating = ref(false)
 
   // ============================================================================
-  // ESTADO LOCAL - ESTRUCTURA COMPATIBLE CON SCRIPT.JS ORIGINAL
+  // ESTADO REACTIVO - MIGRADO DE PROMPTSTAB.VUE
   // ============================================================================
 
-  // IMPORTANTE: Mantener como objeto (no array) para compatibilidad con backend
-  const prompts = ref({})
-  const isLoading = ref(false)
-  const isUpdating = ref(false)
-  const isResetting = ref(false)
-  const isPreviewing = ref(false)
-  const isRepairing = ref(false)
-  const isMigrating = ref(false)
-  
-  const systemStatus = ref(null)
-  const previewData = ref(null)
-  const repairResults = ref(null)
-  const migrationResults = ref(null)
-  const lastUpdateTime = ref(null)
+  const agents = ref({
+    emergency_agent: null,
+    router_agent: null,
+    sales_agent: null,
+    schedule_agent: null,
+    support_agent: null
+  })
+
+  const isLoadingPrompts = ref(false)
+  const isProcessing = ref(false)
+  const error = ref(null)
+
+  // Preview state
+  const showPreview = ref(false)
+  const previewAgent = ref('')
+  const previewContent = ref('')
+  const previewTestMessage = ref('')
+  const previewResponse = ref(null)
+  const previewLoading = ref(false)
 
   // ============================================================================
-  // COMPUTED PROPERTIES - CONVERSIÓN PARA COMPATIBILIDAD CON COMPONENTE
+  // COMPUTED PROPERTIES
   // ============================================================================
-
-  /**
-   * Convierte el objeto de prompts en array para usar en componentes
-   * Mantiene compatibilidad con estructura original del backend
-   */
-  const promptsArray = computed(() => {
-    if (!prompts.value || Object.keys(prompts.value).length === 0) {
-      return []
-    }
-
-    return Object.entries(prompts.value).map(([agentName, promptData]) => {
-      const agent = promptData.agent || {}
-      
-      return {
-        name: agentName,
-        displayName: agent.display_name || agentName.replace('Agent', '').replace(/([A-Z])/g, ' $1').trim(),
-        content: promptData.current_prompt || '',
-        isCustom: promptData.is_custom || false,
-        isModified: false, // Se manejará en el componente
-        lastModified: promptData.last_modified || null,
-        version: promptData.version || null,
-        fallbackLevel: promptData.fallback_level || null,
-        category: agent.category || 'General',
-        description: agent.description || '',
-        supports_repair: agent.supports_repair !== false
-      }
-    })
-  })
-
-  const customPrompts = computed(() => {
-    return promptsArray.value.filter(prompt => prompt.isCustom)
-  })
-
-  const defaultPrompts = computed(() => {
-    return promptsArray.value.filter(prompt => !prompt.isCustom)
-  })
-
-  const promptsCount = computed(() => {
-    return Object.keys(prompts.value).length
-  })
 
   const hasPrompts = computed(() => {
-    return promptsCount.value > 0
+    return Object.keys(agents.value).some(key => agents.value[key] !== null)
   })
 
-  const isSystemHealthy = computed(() => {
-    return systemStatus.value?.healthy === true
+  const currentCompanyId = computed(() => {
+    return appStore.currentCompanyId
+  })
+
+  const currentCompanyName = computed(() => {
+    return appStore.currentCompanyName || currentCompanyId.value
   })
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES - PRESERVAR COMPORTAMIENTO EXACTO DE SCRIPT.JS
+  // FUNCIONES PRINCIPALES - MIGRADAS EXACTAS DE PROMPTSTAB.VUE
   // ============================================================================
 
   /**
-   * Carga prompts actuales - MIGRADO: loadCurrentPrompts() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Carga prompts - MIGRADA EXACTA de PromptsTab.vue loadPrompts()
    */
-  const loadCurrentPrompts = async () => {
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
+  const loadPrompts = async () => {
+    if (!currentCompanyId.value) {
+      error.value = 'Por favor selecciona una empresa primero'
+      return
     }
 
     try {
-      isLoading.value = true
-      addToLog(`Loading prompts for company: ${appStore.currentCompanyId}`, 'info')
-
-      // PRESERVAR: Endpoint exacto como script.js
-      const response = await apiRequest('/api/admin/prompts', {
-        method: 'GET'
+      isLoadingPrompts.value = true
+      error.value = null
+      
+      console.log(`Loading prompts for company: ${currentCompanyId.value}`)
+      
+      // PRESERVAR: Request exacto como PromptsTab.vue
+      const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Company-ID': currentCompanyId.value
+        }
       })
-
-      if (response && response.agents) {
-        // PRESERVAR: Estructura de datos exacta como script.js
-        prompts.value = response.agents
-        lastUpdateTime.value = new Date().toISOString()
-
-        // PRESERVAR: Actualizar DOM como script.js original
-        Object.entries(response.agents).forEach(([agentName, agentData]) => {
-          const promptEditor = document.getElementById(`prompt-${agentName}`)
-          if (promptEditor) {
-            promptEditor.value = agentData.current_prompt || ''
-            promptEditor.disabled = false
-          }
-
-          // PRESERVAR: Actualizar indicador de estado como script.js
-          const statusDiv = document.getElementById(`status-${agentName}`)
-          if (statusDiv) {
-            const isCustom = agentData.is_custom
-            const lastModified = agentData.last_modified
-            const fallbackLevel = agentData.fallback_level
-            
-            let statusText = isCustom ? 
-              `✅ Personalizado${lastModified ? ` (${new Date(lastModified).toLocaleDateString()})` : ''}` : 
-              '🔵 Por defecto'
-            
-            // PRESERVAR: Indicador de nivel de fallback como script.js
-            if (fallbackLevel && fallbackLevel !== 'postgresql') {
-              statusText += ` - Fallback: ${fallbackLevel}`
-            }
-            
-            statusDiv.textContent = statusText
-            statusDiv.className = `prompt-status ${isCustom ? 'custom' : 'default'} ${fallbackLevel}`
-          }
-        })
-
-        addToLog(`Prompts loaded successfully (${Object.keys(response.agents).length} agents)`, 'success')
+      
+      const data = await response.json()
+      console.log('Prompts response:', data)
+      console.log('Agents detail:', JSON.stringify(data.agents, null, 2))
+      
+      if (data && data.agents) {
+        // PRESERVAR: Estructura exacta como PromptsTab.vue
+        agents.value = {
+          emergency_agent: data.agents.emergency_agent || null,
+          router_agent: data.agents.router_agent || null,
+          sales_agent: data.agents.sales_agent || null,
+          schedule_agent: data.agents.schedule_agent || null,
+          support_agent: data.agents.support_agent || null
+        }
+        
+        console.log('Assigned agents:', agents.value)
+        console.log('Has prompts?', hasPrompts.value)
+        console.log(`Loaded ${Object.keys(data.agents).length} prompts`)
         
       } else {
-        showNotification('No se encontraron prompts. Puedes crear prompts personalizados.', 'info')
+        error.value = 'No se recibieron prompts del servidor'
       }
-
-      return response
-
-    } catch (error) {
-      addToLog(`Error loading prompts: ${error.message}`, 'error')
-      showNotification('Error al cargar prompts: ' + error.message, 'error')
-
-      // PRESERVAR: Habilitar textareas para crear nuevos prompts como script.js
-      document.querySelectorAll('.prompt-editor').forEach(textarea => {
-        textarea.value = 'Error al cargar el prompt. Puedes escribir uno nuevo aquí.'
-        textarea.disabled = false
-      })
-
-      throw error
-
+      
+    } catch (err) {
+      error.value = `Error cargando prompts: ${err.message}`
+      console.error('Error loading prompts:', err)
     } finally {
-      isLoading.value = false
+      isLoadingPrompts.value = false
     }
   }
 
   /**
-   * Actualiza un prompt - MIGRADO: updatePrompt() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Actualiza prompt - MIGRADA EXACTA de PromptsTab.vue updatePrompt()
    */
-  const updatePrompt = async (agentName, promptContent = null) => {
-    if (!appStore.currentCompanyId) {
+  const updatePrompt = async (agentName) => {
+    if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
+      return
     }
 
-    // Si no se pasa contenido, obtenerlo del DOM como script.js
-    if (!promptContent) {
-      const textarea = document.getElementById(`prompt-${agentName}`)
-      if (!textarea) {
-        showNotification(`Error: No se encontró el textarea para ${agentName}`, 'error')
-        return false
-      }
-      promptContent = textarea.value.trim()
-    }
-
-    if (!promptContent) {
+    const promptContent = agents.value[agentName]?.current_prompt
+    if (!promptContent || !promptContent.trim()) {
       showNotification('El prompt no puede estar vacío', 'error')
-      return false
+      return
     }
 
     try {
-      isUpdating.value = true
-      addToLog(`Updating prompt for ${agentName} in company ${appStore.currentCompanyId}`, 'info')
-
-      // PRESERVAR: Request exacto como script.js
-      const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
+      isProcessing.value = true
+      
+      console.log(`Updating prompt for ${agentName}`)
+      
+      // PRESERVAR: Request exacto como PromptsTab.vue
+      const response = await fetch(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
-        body: {
-          company_id: appStore.currentCompanyId,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          company_id: currentCompanyId.value,
           prompt_template: promptContent
-        }
+        })
       })
-
-      // PRESERVAR: Mensaje de éxito con versión como script.js
-      let successMessage = `Prompt de ${agentName} actualizado exitosamente`
-      if (response.version) {
-        successMessage += ` (v${response.version})`
-      }
-
-      showNotification(successMessage, 'success')
-      addToLog(`Prompt updated: ${agentName} v${response.version || 'unknown'}`, 'success')
-
-      // PRESERVAR: Actualizar datos locales
-      if (prompts.value[agentName]) {
-        prompts.value[agentName] = {
-          ...prompts.value[agentName],
-          current_prompt: promptContent,
-          is_custom: true,
-          last_modified: new Date().toISOString(),
-          version: response.version
+      
+      const data = await response.json()
+      console.log('Update response:', data)
+      
+      if (response.ok) {
+        // PRESERVAR: Actualización de estado local
+        if (agents.value[agentName]) {
+          agents.value[agentName].is_custom = true
+          agents.value[agentName].last_modified = new Date().toISOString()
+          if (data.version) {
+            agents.value[agentName].version = data.version
+          }
         }
+        
+        let successMessage = `Prompt de ${agentName} actualizado exitosamente`
+        if (data.version) {
+          successMessage += ` (v${data.version})`
+        }
+        showNotification(successMessage, 'success')
+        
+        // Recargar los prompts para sincronizar
+        await loadPrompts()
+      } else {
+        throw new Error(data.error || data.message || 'Error actualizando prompt')
       }
-
-      // PRESERVAR: Actualizar indicador de estado en DOM como script.js
-      const statusDiv = document.getElementById(`status-${agentName}`)
-      if (statusDiv) {
-        statusDiv.textContent = `✅ Personalizado (${new Date().toLocaleDateString()})`
-        statusDiv.className = 'prompt-status custom'
-      }
-
-      return true
-
-    } catch (error) {
-      addToLog(`Error updating prompt ${agentName}: ${error.message}`, 'error')
-      showNotification('Error al actualizar prompt: ' + error.message, 'error')
-      return false
-
+      
+    } catch (err) {
+      showNotification(`Error actualizando prompt: ${err.message}`, 'error')
+      console.error('Error updating prompt:', err)
     } finally {
-      isUpdating.value = false
+      isProcessing.value = false
     }
   }
 
   /**
-   * Restaura un prompt - MIGRADO: resetPrompt() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Resetea prompt - MIGRADA EXACTA de PromptsTab.vue resetPrompt()
    */
   const resetPrompt = async (agentName) => {
-    if (!appStore.currentCompanyId) {
+    if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
+      return
     }
 
-    if (!confirm(`¿Estás seguro de restaurar el prompt de ${agentName} a su estado original?`)) {
-      return false
+    if (!confirm(`¿Estás seguro de restaurar el prompt de ${agentName} a su valor por defecto?`)) {
+      return
     }
 
     try {
-      isResetting.value = true
-      addToLog(`Resetting prompt for ${agentName}`, 'info')
-
-      // PRESERVAR: Request exacto como script.js
-      const response = await apiRequest(`/api/admin/prompts/${agentName}`, {
+      isProcessing.value = true
+      
+      console.log(`Resetting prompt for ${agentName}`)
+      
+      // PRESERVAR: Request exacto como PromptsTab.vue
+      const response = await fetch(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
         method: 'DELETE',
-        body: {
-          company_id: appStore.currentCompanyId
+        headers: {
+          'Content-Type': 'application/json'
         }
       })
-
-      showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
-      addToLog(`Prompt reset: ${agentName}`, 'success')
-
-      // PRESERVAR: Recargar prompts después del reset
-      await loadCurrentPrompts()
-
-      return true
-
-    } catch (error) {
-      addToLog(`Error resetting prompt ${agentName}: ${error.message}`, 'error')
-      showNotification('Error al restaurar prompt: ' + error.message, 'error')
-      return false
-
+      
+      console.log('Reset response status:', response.status)
+      
+      if (response.ok) {
+        const data = await response.json()
+        console.log('Reset response data:', data)
+        
+        // PRESERVAR: Actualización con prompt por defecto
+        if (data.default_prompt && agents.value[agentName]) {
+          agents.value[agentName].current_prompt = data.default_prompt
+          agents.value[agentName].is_custom = false
+          agents.value[agentName].last_modified = null
+        }
+        
+        showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
+        
+        // Recargar los prompts
+        await loadPrompts()
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || errorData.message || 'Error reseteando prompt')
+      }
+      
+    } catch (err) {
+      showNotification(`Error reseteando prompt: ${err.message}`, 'error')
+      console.error('Error resetting prompt:', err)
     } finally {
-      isResetting.value = false
+      isProcessing.value = false
     }
   }
 
   /**
-   * Vista previa de prompt - MIGRADO: previewPrompt() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Vista previa de prompt - MIGRADA EXACTA de PromptsTab.vue previewPrompt()
    */
-  const previewPrompt = async (promptData) => {
-    const agentName = typeof promptData === 'string' ? promptData : promptData.name
+  const previewPrompt = async (agentName) => {
+    const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
+    
+    if (!testMessage) return
+    
+    const promptContent = agents.value[agentName]?.current_prompt
+    if (!promptContent) {
+      showNotification('No hay contenido de prompt para generar vista previa', 'error')
+      return
+    }
+    
+    // Preparar datos del preview
+    previewAgent.value = agentName
+    previewContent.value = promptContent
+    previewTestMessage.value = testMessage
+    previewResponse.value = null
+    previewLoading.value = true
+    showPreview.value = true
     
     try {
-      isPreviewing.value = true
-      addToLog(`Generating preview for ${agentName}`, 'info')
-
-      let promptContent = ''
+      console.log(`Generating preview for ${agentName}`)
       
-      if (typeof promptData === 'string') {
-        // Si se pasa solo el nombre, obtener del DOM
-        const textarea = document.getElementById(`prompt-${agentName}`)
-        promptContent = textarea ? textarea.value : ''
-      } else {
-        // Si se pasa objeto, usar su contenido
-        promptContent = promptData.content || ''
-      }
-
-      if (!promptContent.trim()) {
-        showNotification('No hay contenido de prompt para generar vista previa', 'warning')
-        return
-      }
-
-      // PRESERVAR: Para script.js, la vista previa es simple
-      // Si el backend tiene endpoint de preview, usarlo. Si no, mostrar contenido básico
-      try {
-        const response = await apiRequest(`/api/admin/prompts/${agentName}/preview`, {
-          method: 'POST',
-          body: {
-            company_id: appStore.currentCompanyId,
-            prompt_content: promptContent,
-            test_message: 'Mensaje de prueba para vista previa'
-          }
+      // PRESERVAR: Request exacto como PromptsTab.vue
+      const response = await fetch('/api/admin/prompts/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          agent_name: agentName,
+          company_id: currentCompanyId.value,
+          prompt_template: promptContent,
+          message: testMessage
         })
-
-        previewData.value = {
-          name: agentName,
-          displayName: promptData.displayName || agentName,
-          content: promptContent,
-          preview_result: response
-        }
-
-      } catch (previewError) {
-        // Si no hay endpoint de preview, mostrar vista previa simple
-        addToLog(`Preview endpoint not available, showing simple preview`, 'info')
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        console.log('Preview response:', data)
         
-        previewData.value = {
-          name: agentName,
-          displayName: promptData.displayName || agentName,
-          content: promptContent,
-          preview_result: null
+        // PRESERVAR: Estructura de respuesta
+        previewResponse.value = {
+          success: true,
+          preview: data.preview || data.response || '',
+          agent_used: data.agent_used || agentName,
+          prompt_source: data.prompt_source || 'custom',
+          debug_info: data.debug_info || {},
+          model_info: data.model_info || {},
+          metrics: data.metrics || {},
+          timestamp: new Date().toISOString()
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        previewResponse.value = {
+          success: false,
+          error: errorData.error || errorData.message || 'Error generando preview',
+          timestamp: new Date().toISOString()
         }
       }
-
-      addToLog(`Preview generated for ${agentName}`, 'info')
-
-    } catch (error) {
-      addToLog(`Error generating preview for ${agentName}: ${error.message}`, 'error')
-      showNotification(`Error generando vista previa: ${error.message}`, 'error')
       
-      // Mostrar vista previa simple sin procesamiento
-      previewData.value = {
-        name: agentName,
-        displayName: promptData.displayName || agentName,
-        content: promptData.content || '',
-        preview_result: null
+    } catch (err) {
+      console.log('Preview endpoint error:', err)
+      previewResponse.value = {
+        success: false,
+        error: 'Endpoint de preview no disponible',
+        fallback: true,
+        prompt_content: promptContent,
+        timestamp: new Date().toISOString()
       }
-
     } finally {
-      isPreviewing.value = false
+      previewLoading.value = false
     }
   }
 
   /**
-   * Repara prompts - MIGRADO: repairPrompts() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Cierra preview
    */
-  const repairPrompts = async (specificAgent = null) => {
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
-    }
-
-    try {
-      isRepairing.value = true
-      
-      const actionText = specificAgent ? 
-        `Reparando prompt de ${specificAgent}` : 
-        'Reparando todos los prompts'
-      
-      addToLog(actionText, 'info')
-      showNotification(actionText + '...', 'info')
-
-      // PRESERVAR: Request como script.js (endpoint puede no existir aún)
-      const endpoint = specificAgent ? 
-        `/api/admin/prompts/${specificAgent}/repair` : 
-        '/api/admin/prompts/repair'
-      
-      const response = await apiRequest(endpoint, {
-        method: 'POST',
-        body: {
-          company_id: appStore.currentCompanyId
-        }
-      })
-
-      repairResults.value = response
-      
-      showNotification('Reparación de prompts completada', 'success')
-      addToLog('Prompts repair completed', 'success')
-
-      // Recargar prompts después de la reparación
-      await loadCurrentPrompts()
-      
-      return true
-
-    } catch (error) {
-      addToLog(`Error repairing prompts: ${error.message}`, 'error')
-      showNotification('Error en reparación de prompts: ' + error.message, 'error')
-      return false
-
-    } finally {
-      isRepairing.value = false
-    }
+  const closePreview = () => {
+    showPreview.value = false
+    previewAgent.value = ''
+    previewContent.value = ''
+    previewTestMessage.value = ''
+    previewResponse.value = null
+    previewLoading.value = false
   }
 
   /**
-   * Migra prompts a PostgreSQL - MIGRADO: migratePromptsToPostgreSQL() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Repara todos los prompts - MIGRADA EXACTA de PromptsTab.vue repairAllPrompts()
    */
-  const migratePromptsToPostgreSQL = async () => {
-    if (!confirm('¿Migrar prompts de JSON a PostgreSQL?\n\nEsta operación migrará todos los prompts personalizados existentes a la base de datos PostgreSQL.')) {
-      return false
+  const repairAllPrompts = async () => {
+    if (!confirm('¿Reparar todos los prompts desde el repositorio? Esto restaurará los prompts corruptos o faltantes.')) {
+      return
     }
 
     try {
-      isMigrating.value = true
-      appStore.addToLog('Starting migration from JSON to PostgreSQL...', 'info')
+      isProcessing.value = true
       
-      // ✅ CORRECCIÓN: Usar estructura de body exacta como script.js
-      const response = await apiRequest('/api/admin/prompts/migrate', {
+      console.log('Repairing all prompts...')
+      
+      // PRESERVAR: Request exacto como PromptsTab.vue
+      const response = await fetch('/api/admin/prompts/repair', {
         method: 'POST',
-        body: {
-          force: false  // Como en script.js original
-        }
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          company_id: currentCompanyId.value,
+          agents: Object.keys(agents.value)
+        })
       })
       
-      if (response.statistics) {
-        const stats = response.statistics
-        showNotification(
-          `Migración completada: ${stats.prompts_migrated} prompts de ${stats.companies_migrated} empresas`, 
-          'success'
-        )
+      console.log('Repair response status:', response.status)
+      
+      if (response.ok) {
+        const data = await response.json()
+        console.log('Repair response:', data)
         
-        appStore.addToLog(`Migration statistics: ${JSON.stringify(stats, null, 2)}`, 'info')
+        let message = 'Prompts reparados exitosamente'
+        if (data.repaired_count !== undefined) {
+          message += ` (${data.repaired_count} prompts reparados)`
+        }
+        if (data.details) {
+          console.log('Repair details:', data.details)
+        }
+        
+        showNotification(message, 'success')
+        
+        // Recargar los prompts después de la reparación
+        await loadPrompts()
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || errorData.message || 'Error reparando prompts')
       }
       
-      return true
-
-    } catch (error) {
-      appStore.addToLog(`Error in migration: ${error.message}`, 'error')
-      showNotification('Error en migración: ' + error.message, 'error')
-      return false
-
+    } catch (err) {
+      showNotification(`Error reparando prompts: ${err.message}`, 'error')
+      console.error('Error repairing prompts:', err)
     } finally {
-      isMigrating.value = false
-    }
-  }
-
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON SCRIPT.JS
-  if (typeof window !== 'undefined') {
-    window.loadPromptsSystemStatus = loadPromptsSystemStatus
-    window.migratePromptsToPostgreSQL = migratePromptsToPostgreSQL
-  }
-
-  return {
-    systemStatus,
-    isLoading,
-    isMigrating,
-    loadPromptsSystemStatus,
-    migratePromptsToPostgreSQL
+      isProcessing.value = false
     }
   }
 
   /**
-   * Carga el estado del sistema de prompts - MIGRADO: loadPromptsSystemStatus() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Exporta prompts
    */
-  const loadPromptsSystemStatus = async () => {
+  const exportPrompts = () => {
     try {
-      appStore.addToLog('Loading prompts system status', 'info')
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
       
-      // ✅ CORRECCIÓN: Usar el endpoint correcto como en script.js
-      const response = await apiRequest('/api/admin/status', {
-        method: 'GET'
-      })
-
-      // ✅ CORRECCIÓN: Extraer prompt_system como hace script.js
-      systemStatus.value = response.prompt_system || response
-      appStore.addToLog('Prompts system status loaded', 'info')
-      
-      return response
-
-    } catch (error) {
-      appStore.addToLog(`Error loading prompts system status: ${error.message}`, 'error')
-      systemStatus.value = null
-      return null
-    }
-  }
-
-  // ============================================================================
-  // FUNCIONES AUXILIARES
-  // ============================================================================
-
-  const getPromptById = (agentName) => {
-    return prompts.value[agentName] || null
-  }
-
-  const exportPrompts = (format = 'json') => {
-    try {
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '')
-      let exportData
-      let blob
-      
-      if (format === 'json') {
-        exportData = JSON.stringify(prompts.value, null, 2)
-        blob = new Blob([exportData], { type: 'application/json' })
-      } else if (format === 'csv') {
-        // Crear CSV simple
-        const headers = 'Agent,Content,Is_Custom,Last_Modified\n'
-        const rows = Object.entries(prompts.value).map(([agentName, data]) => {
-          const content = (data.current_prompt || '').replace(/"/g, '""')
-          return `"${agentName}","${content}","${data.is_custom}","${data.last_modified || ''}"`
-        }).join('\n')
-        exportData = headers + rows
-        blob = new Blob([exportData], { type: 'text/csv' })
+      const exportData = {
+        company_id: currentCompanyId.value,
+        company_name: currentCompanyName.value,
+        exported_at: new Date().toISOString(),
+        agents: {}
       }
-
-      const url = URL.createObjectURL(blob)
+      
+      // Incluir solo los datos relevantes de cada agente
+      Object.entries(agents.value).forEach(([key, agent]) => {
+        if (agent) {
+          exportData.agents[key] = {
+            current_prompt: agent.current_prompt,
+            is_custom: agent.is_custom,
+            last_modified: agent.last_modified,
+            version: agent.version || null
+          }
+        }
+      })
+      
+      const dataStr = JSON.stringify(exportData, null, 2)
+      const dataBlob = new Blob([dataStr], { type: 'application/json' })
+      
       const link = document.createElement('a')
-      link.href = url
-      link.download = `prompts_${appStore.currentCompanyId}_${timestamp}.${format}`
+      link.href = URL.createObjectURL(dataBlob)
+      link.download = `prompts_${currentCompanyId.value}_${timestamp}.json`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-
-      addToLog(`Prompts exported to ${format.toUpperCase()} format`, 'success')
-      showNotification(`Prompts exportados en formato ${format.toUpperCase()}`, 'success')
+      URL.revokeObjectURL(link.href)
       
-    } catch (error) {
-      addToLog(`Error exporting prompts: ${error.message}`, 'error')
-      showNotification(`Error exportando prompts: ${error.message}`, 'error')
+      showNotification('Prompts exportados exitosamente', 'success')
+    } catch (err) {
+      showNotification('Error exportando prompts: ' + err.message, 'error')
+      console.error('Error exporting prompts:', err)
     }
   }
 
-  const searchPrompts = (query) => {
-    if (!query.trim()) return promptsArray.value
-    
-    const lowerQuery = query.toLowerCase()
-    return promptsArray.value.filter(prompt => 
-      prompt.name.toLowerCase().includes(lowerQuery) ||
-      prompt.displayName.toLowerCase().includes(lowerQuery) ||
-      (prompt.content || '').toLowerCase().includes(lowerQuery)
-    )
+  /**
+   * Formatea fecha
+   */
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A'
+    try {
+      return new Date(dateString).toLocaleDateString()
+    } catch {
+      return 'Fecha inválida'
+    }
   }
 
   // ============================================================================
   // WATCHERS
   // ============================================================================
 
-  // Watcher para recargar cuando cambie la empresa
+  // Recargar cuando cambie la empresa
   watch(() => appStore.currentCompanyId, async (newCompanyId) => {
     if (newCompanyId) {
-      await loadCurrentPrompts()
-      await loadPromptsSystemStatus()
+      await loadPrompts()
     }
   })
 
   // ============================================================================
-  // RETURN COMPOSABLE API
+  // RETORNO DEL COMPOSABLE
   // ============================================================================
 
   return {
     // Estado reactivo
-    prompts,
-    isLoading,
-    isUpdating,
-    isResetting,
-    isPreviewing,
-    isRepairing,
-    isMigrating,
-    systemStatus,
-    previewData,
-    repairResults,
-    migrationResults,
-    lastUpdateTime,
-
+    agents,
+    isLoadingPrompts,
+    isProcessing,
+    error,
+    
+    // Preview state
+    showPreview,
+    previewAgent,
+    previewContent,
+    previewTestMessage,
+    previewResponse,
+    previewLoading,
+    
     // Computed properties
-    promptsArray,
-    customPrompts,
-    defaultPrompts,
-    promptsCount,
     hasPrompts,
-    isSystemHealthy,
-
-    // Funciones principales (PRESERVAR nombres exactos de script.js)
-    loadCurrentPrompts,
+    currentCompanyId,
+    currentCompanyName,
+    
+    // Funciones principales (nombres exactos de PromptsTab.vue)
+    loadPrompts,
     updatePrompt,
     resetPrompt,
     previewPrompt,
-    repairPrompts,
-    migratePromptsToPostgreSQL,
-    loadPromptsSystemStatus,
-
-    // Funciones auxiliares
-    getPromptById,
+    closePreview,
+    repairAllPrompts,
     exportPrompts,
-    searchPrompts
+    formatDate
   }
 }
