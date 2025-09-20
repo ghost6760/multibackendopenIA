@@ -9,11 +9,11 @@
       </p>
     </div>
 
-    <!-- Estado del Sistema (Comentado temporalmente para debug) -->
-    <!-- <PromptsStatus 
+    <!-- Estado del Sistema - PASO 1: ACTIVADO -->
+    <PromptsStatus 
       @status-loaded="handleStatusLoaded"
       @migration-complete="handleMigrationComplete"
-    /> -->
+    />
 
     <!-- Main Prompts Section -->
     <div class="prompts-main-section">
@@ -431,144 +431,137 @@
 </template>
 
 <script>
+// ===============================================================================
+// PASO 2: COMPOSABLE CENTRALIZADO - ELIMINADA TODA LÓGICA API DUPLICADA  
+// ===============================================================================
+import { usePrompts } from '@/composables/usePrompts'
+import PromptsStatus from './PromptsStatus.vue'
+
 export default {
   name: 'PromptsTab',
+  components: {
+    PromptsStatus
+  },
   props: {
     isActive: {
       type: Boolean,
       default: false
-    },
-    
-    // Método para debug manual
-    async debugPrompts() {
-      console.log('=== DEBUG PROMPTS ===')
-      console.log('1. Current Company ID:', this.currentCompanyId)
-      console.log('2. Current Agents State:', JSON.stringify(this.agents, null, 2))
-      console.log('3. Has Prompts?:', this.hasPrompts)
-      console.log('4. Is Loading?:', this.isLoadingPrompts)
-      console.log('5. Error?:', this.error)
+    }
+  },
+  setup() {
+    // ===============================================================================
+    // PASO 2: USAR ÚNICAMENTE EL COMPOSABLE - ELIMINAR data(), methods(), etc.
+    // ===============================================================================
+    const {
+      // Estado reactivo del composable
+      agents,
+      isLoadingPrompts,
+      isProcessing,
+      error,
+      showPreview,
+      previewAgent,
+      previewContent,
+      previewTestMessage,
+      previewResponse,
+      previewLoading,
       
-      // Hacer petición manual para ver respuesta raw
-      try {
-        const response = await fetch(`/api/admin/prompts?company_id=${this.currentCompanyId}`)
-        const data = await response.json()
-        console.log('6. RAW API Response:', data)
-        
-        // Analizar estructura
-        if (data.agents) {
-          console.log('7. Agent Keys in Response:', Object.keys(data.agents))
-          console.log('8. Agent Values:')
-          Object.entries(data.agents).forEach(([key, value]) => {
-            console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
-                       value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
-          })
-        }
-        
-        return data
-      } catch (err) {
-        console.error('Debug Error:', err)
-        return null
+      // Computed properties del composable
+      hasPrompts,
+      currentCompanyId,
+      currentCompanyName,
+      
+      // Funciones del composable (nombres exactos que funcionan con backend)
+      loadPrompts,
+      updatePrompt,
+      resetPrompt,
+      previewPrompt,
+      closePreview,
+      repairAllPrompts,
+      exportPrompts,
+      formatDate
+    } = usePrompts()
+
+    // ===============================================================================
+    // HANDLERS PARA EVENTOS DE PROMPTSSTATUS.VUE
+    // ===============================================================================
+    const handleStatusLoaded = (status) => {
+      console.log('Status loaded:', status)
+      if (status?.postgresql_available && status?.tables_exist) {
+        loadPrompts()
       }
-    },
-    
-    // Método para test manual de endpoints
-    async testEndpoints() {
-      console.log('=== TESTING ENDPOINTS ===')
-      const testAgent = 'emergency_agent'
-      
-      // Test GET
-      console.log('\n1. Testing GET /api/admin/prompts')
-      try {
-        const getResponse = await fetch(`/api/admin/prompts?company_id=${this.currentCompanyId}`)
-        console.log('GET Status:', getResponse.status)
-        const getData = await getResponse.json()
-        console.log('GET Response:', getData)
-      } catch (err) {
-        console.error('GET Error:', err)
-      }
-      
-      // Test UPDATE (sin realmente actualizar)
-      console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
-      console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
-      console.log('Body:', {
-        company_id: this.currentCompanyId,
-        prompt_template: 'test'
-      })
-      
-      // Test DELETE
-      console.log('\n3. Testing DELETE endpoint')
-      console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${this.currentCompanyId}`)
-      
-      // Test PREVIEW
-      console.log('\n4. Testing PREVIEW endpoint')
-      try {
-        const previewResponse = await fetch('/api/admin/prompts/preview', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            agent_name: testAgent,
-            company_id: this.currentCompanyId,
-            prompt_template: 'test prompt',
-            message: 'test message'
+    }
+
+    const handleMigrationComplete = () => {
+      loadPrompts()
+    }
+
+    // ===============================================================================
+    // FUNCIÓN PARA COPIAR RESPUESTA DE PREVIEW
+    // ===============================================================================
+    const copyPreviewResponse = () => {
+      if (previewResponse.value?.preview) {
+        const textToCopy = previewResponse.value.preview
+        
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(textToCopy).then(() => {
+            alert('Respuesta copiada al portapapeles')
+          }).catch(() => {
+            fallbackCopy(textToCopy)
           })
-        })
-        console.log('Preview Status:', previewResponse.status)
-        if (previewResponse.status !== 404) {
-          const previewData = await previewResponse.json()
-          console.log('Preview Response:', previewData)
         } else {
-          console.log('Preview endpoint not found (404)')
+          fallbackCopy(textToCopy)
         }
-      } catch (err) {
-        console.error('Preview Error:', err)
       }
-      
-      // Test REPAIR
-      console.log('\n5. Testing REPAIR endpoint')
-      console.log('Endpoint: /api/admin/prompts/repair')
-      console.log('Would send:', {
-        company_id: this.currentCompanyId,
-        agents: Object.keys(this.agents)
-      })
     }
-  },
-  data() {
+
+    const fallbackCopy = (text) => {
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      alert('Respuesta copiada al portapapeles')
+    }
+
     return {
-      isLoading: false,
-      isLoadingPrompts: false,
-      isProcessing: false,
-      error: null,
-      agents: {
-        emergency_agent: null,
-        router_agent: null,
-        sales_agent: null,
-        schedule_agent: null,
-        support_agent: null
-      },
-      // Preview properties
-      showPreview: false,
-      previewAgent: '',
-      previewContent: '',
-      previewTestMessage: '',
-      previewResponse: null,
-      previewLoading: false
-    }
-  },
-  computed: {
-    currentCompanyId() {
-      // Obtener desde window.currentCompanyId o localStorage
-      return window.currentCompanyId || localStorage.getItem('currentCompanyId') || 'dental_clinic'
-    },
-    currentCompanyName() {
-      return window.currentCompanyName || this.currentCompanyId
-    },
-    hasPrompts() {
-      return Object.keys(this.agents).some(key => this.agents[key] !== null)
+      // Estado del composable
+      agents,
+      isLoadingPrompts,
+      isProcessing,
+      error,
+      showPreview,
+      previewAgent,
+      previewContent,
+      previewTestMessage,
+      previewResponse,
+      previewLoading,
+      
+      // Computed properties del composable
+      hasPrompts,
+      currentCompanyId,
+      currentCompanyName,
+      
+      // Funciones del composable
+      loadPrompts,
+      updatePrompt,
+      resetPrompt,
+      previewPrompt,
+      closePreview,
+      repairAllPrompts,
+      exportPrompts,
+      formatDate,
+      
+      // Handlers locales
+      handleStatusLoaded,
+      handleMigrationComplete,
+      copyPreviewResponse
     }
   },
   watch: {
+    // ===============================================================================
+    // CARGAR PROMPTS CUANDO SE ACTIVA EL TAB
+    // ===============================================================================
     isActive(newVal) {
       if (newVal) {
         console.log('PromptsTab is now active, loading prompts...')
@@ -579,425 +572,35 @@ export default {
   mounted() {
     console.log('PromptsTab mounted, isActive:', this.isActive)
     
-    // Siempre cargar prompts cuando se monta el componente si está activo
+    // Cargar prompts si está activo
     if (this.isActive) {
       console.log('Tab is active on mount, loading prompts...')
       this.loadPrompts()
     }
     
-    // Exponer funciones globales
+    // ===============================================================================
+    // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON SCRIPT.JS
+    // ===============================================================================
     window.loadCurrentPrompts = () => this.loadPrompts()
     window.updatePrompt = (agentName) => this.updatePrompt(agentName)
     window.resetPrompt = (agentName) => this.resetPrompt(agentName)
-    window.debugPrompts = () => this.debugPrompts()
-    window.testPromptEndpoints = () => this.testEndpoints()
+    window.previewPrompt = (agentName) => this.previewPrompt(agentName)
+    window.repairAllPrompts = () => this.repairAllPrompts()
+    window.exportPrompts = () => this.exportPrompts()
     
     // Exponer instancia para debug
     window.PromptsTabInstance = this
   },
-  methods: {
-    async loadPrompts() {
-      if (!this.currentCompanyId) {
-        this.error = 'Por favor selecciona una empresa primero'
-        return
-      }
-
-      try {
-        this.isLoadingPrompts = true
-        this.error = null
-        
-        console.log(`Loading prompts for company: ${this.currentCompanyId}`)
-        
-        // Hacer la petición directamente
-        const response = await fetch(`/api/admin/prompts?company_id=${this.currentCompanyId}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Company-ID': this.currentCompanyId
-          }
-        })
-        
-        const data = await response.json()
-        console.log('Prompts response:', data)
-        console.log('Agents detail:', JSON.stringify(data.agents, null, 2))
-        
-        if (data && data.agents) {
-          // DEBUG: Ver exactamente qué agentes vienen
-          console.log('Available agents in response:')
-          Object.keys(data.agents).forEach(key => {
-            console.log(`- ${key}:`, data.agents[key] ? 'Has data' : 'Empty')
-          })
-          
-          // Asignar los agentes recibidos con los nombres correctos del backend
-          this.agents = {
-            emergency_agent: data.agents.emergency_agent || null,
-            router_agent: data.agents.router_agent || null,
-            sales_agent: data.agents.sales_agent || null,
-            schedule_agent: data.agents.schedule_agent || null,
-            support_agent: data.agents.support_agent || null
-          }
-          
-          // DEBUG: Ver estado después de asignar
-          console.log('Assigned agents:', this.agents)
-          console.log('Has prompts?', this.hasPrompts)
-          console.log('hasPrompts calculation test:')
-          Object.keys(this.agents).forEach(key => {
-            console.log(`  ${key} !== null?`, this.agents[key] !== null)
-          })
-          console.log(`Loaded ${Object.keys(data.agents).length} prompts`)
-          
-          // Forzar actualización de la vista
-          this.$forceUpdate()
-        } else {
-          this.error = 'No se recibieron prompts del servidor'
-        }
-        
-      } catch (err) {
-        this.error = `Error cargando prompts: ${err.message}`
-        console.error('Error loading prompts:', err)
-      } finally {
-        this.isLoadingPrompts = false
-      }
-    },
-    
-    async updatePrompt(agentName) {
-      if (!this.currentCompanyId) {
-        alert('Por favor selecciona una empresa primero')
-        return
-      }
-
-      const promptContent = this.agents[agentName]?.current_prompt
-      if (!promptContent || !promptContent.trim()) {
-        alert('El prompt no puede estar vacío')
-        return
-      }
-
-      try {
-        this.isProcessing = true
-        
-        console.log(`Updating prompt for ${agentName}`)
-        
-        // IMPORTANTE: El backend espera el agentName sin company_id en la URL
-        const response = await fetch(`/api/admin/prompts/${agentName}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            company_id: this.currentCompanyId,
-            prompt_template: promptContent
-          })
-        })
-        
-        const data = await response.json()
-        console.log('Update response:', data)
-        
-        if (response.ok) {
-          // Actualizar el estado local
-          if (this.agents[agentName]) {
-            this.agents[agentName].is_custom = true
-            this.agents[agentName].last_modified = new Date().toISOString()
-            if (data.version) {
-              this.agents[agentName].version = data.version
-            }
-          }
-          
-          let successMessage = `Prompt de ${agentName} actualizado exitosamente`
-          if (data.version) {
-            successMessage += ` (v${data.version})`
-          }
-          alert(successMessage)
-          
-          // Recargar los prompts para sincronizar con el backend
-          await this.loadPrompts()
-        } else {
-          throw new Error(data.error || data.message || 'Error actualizando prompt')
-        }
-        
-      } catch (err) {
-        alert(`Error actualizando prompt: ${err.message}`)
-        console.error('Error updating prompt:', err)
-      } finally {
-        this.isProcessing = false
-      }
-    },
-    
-    async resetPrompt(agentName) {
-      if (!this.currentCompanyId) {
-        alert('Por favor selecciona una empresa primero')
-        return
-      }
-
-      if (!confirm(`¿Estás seguro de restaurar el prompt de ${agentName} a su valor por defecto?`)) {
-        return
-      }
-
-      try {
-        this.isProcessing = true
-        
-        console.log(`Resetting prompt for ${agentName}`)
-        
-        // El endpoint DELETE necesita company_id como query param
-        const response = await fetch(`/api/admin/prompts/${agentName}?company_id=${this.currentCompanyId}`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        })
-        
-        console.log('Reset response status:', response.status)
-        
-        if (response.ok) {
-          const data = await response.json()
-          console.log('Reset response data:', data)
-          
-          // Actualizar con el prompt por defecto si viene en la respuesta
-          if (data.default_prompt && this.agents[agentName]) {
-            this.agents[agentName].current_prompt = data.default_prompt
-            this.agents[agentName].is_custom = false
-            this.agents[agentName].last_modified = null
-          }
-          
-          alert(`Prompt de ${agentName} restaurado exitosamente`)
-          
-          // Recargar los prompts para obtener el valor por defecto
-          await this.loadPrompts()
-        } else {
-          const errorData = await response.json().catch(() => ({}))
-          throw new Error(errorData.error || errorData.message || 'Error reseteando prompt')
-        }
-        
-      } catch (err) {
-        alert(`Error reseteando prompt: ${err.message}`)
-        console.error('Error resetting prompt:', err)
-      } finally {
-        this.isProcessing = false
-      }
-    },
-    
-    async previewPrompt(agentName) {
-      const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
-      
-      if (!testMessage) return
-      
-      const promptContent = this.agents[agentName]?.current_prompt
-      if (!promptContent) {
-        alert('No hay contenido de prompt para generar vista previa')
-        return
-      }
-      
-      // Preparar datos del preview
-      this.previewAgent = agentName
-      this.previewContent = promptContent
-      this.previewTestMessage = testMessage
-      this.previewResponse = null
-      this.previewLoading = true
-      this.showPreview = true
-      
-      try {
-        console.log(`Generating preview for ${agentName}`)
-        
-        // Llamar al endpoint de preview
-        const response = await fetch('/api/admin/prompts/preview', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            agent_name: agentName,
-            company_id: this.currentCompanyId,
-            prompt_template: promptContent,
-            message: testMessage
-          })
-        })
-        
-        if (response.ok) {
-          const data = await response.json()
-          console.log('Preview response:', data)
-          
-          // Guardar toda la respuesta para mostrar en el modal
-          this.previewResponse = {
-            success: true,
-            preview: data.preview || data.response || '',
-            agent_used: data.agent_used || agentName,
-            prompt_source: data.prompt_source || 'custom',
-            debug_info: data.debug_info || {},
-            model_info: data.model_info || {},
-            metrics: data.metrics || {},
-            timestamp: new Date().toISOString()
-          }
-        } else {
-          // Error del servidor
-          const errorData = await response.json().catch(() => ({}))
-          this.previewResponse = {
-            success: false,
-            error: errorData.error || errorData.message || 'Error generando preview',
-            timestamp: new Date().toISOString()
-          }
-        }
-        
-      } catch (err) {
-        // Error de red o preview no disponible
-        console.log('Preview endpoint error:', err)
-        this.previewResponse = {
-          success: false,
-          error: 'Endpoint de preview no disponible',
-          fallback: true,
-          prompt_content: promptContent,
-          timestamp: new Date().toISOString()
-        }
-      } finally {
-        this.previewLoading = false
-      }
-    },
-    
-    closePreview() {
-      this.showPreview = false
-      this.previewAgent = ''
-      this.previewContent = ''
-      this.previewTestMessage = ''
-      this.previewResponse = null
-      this.previewLoading = false
-    },
-    
-    copyPreviewResponse() {
-      if (this.previewResponse?.preview) {
-        const textToCopy = this.previewResponse.preview
-        
-        // Intentar usar la API moderna
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(textToCopy).then(() => {
-            alert('Respuesta copiada al portapapeles')
-          }).catch(() => {
-            this.fallbackCopy(textToCopy)
-          })
-        } else {
-          this.fallbackCopy(textToCopy)
-        }
-      }
-    },
-    
-    fallbackCopy(text) {
-      const textArea = document.createElement('textarea')
-      textArea.value = text
-      document.body.appendChild(textArea)
-      textArea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textArea)
-      alert('Respuesta copiada al portapapeles')
-    },
-    
-    async repairAllPrompts() {
-      if (!confirm('¿Reparar todos los prompts desde el repositorio? Esto restaurará los prompts corruptos o faltantes.')) {
-        return
-      }
-
-      try {
-        this.isProcessing = true
-        
-        console.log('Repairing all prompts...')
-        
-        const response = await fetch('/api/admin/prompts/repair', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            company_id: this.currentCompanyId,
-            agents: Object.keys(this.agents) // Enviar los nombres de los agentes actuales
-          })
-        })
-        
-        console.log('Repair response status:', response.status)
-        
-        if (response.ok) {
-          const data = await response.json()
-          console.log('Repair response:', data)
-          
-          let message = 'Prompts reparados exitosamente'
-          if (data.repaired_count !== undefined) {
-            message += ` (${data.repaired_count} prompts reparados)`
-          }
-          if (data.details) {
-            console.log('Repair details:', data.details)
-          }
-          
-          alert(message)
-          
-          // Recargar los prompts después de la reparación
-          await this.loadPrompts()
-        } else {
-          const errorData = await response.json().catch(() => ({}))
-          throw new Error(errorData.error || errorData.message || 'Error reparando prompts')
-        }
-        
-      } catch (err) {
-        alert(`Error reparando prompts: ${err.message}`)
-        console.error('Error repairing prompts:', err)
-      } finally {
-        this.isProcessing = false
-      }
-    },
-    
-    exportPrompts() {
-      try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
-        
-        const exportData = {
-          company_id: this.currentCompanyId,
-          company_name: this.currentCompanyName,
-          exported_at: new Date().toISOString(),
-          agents: {}
-        }
-        
-        // Incluir solo los datos relevantes de cada agente
-        Object.entries(this.agents).forEach(([key, agent]) => {
-          if (agent) {
-            exportData.agents[key] = {
-              current_prompt: agent.current_prompt,
-              is_custom: agent.is_custom,
-              last_modified: agent.last_modified,
-              version: agent.version || null
-            }
-          }
-        })
-        
-        const dataStr = JSON.stringify(exportData, null, 2)
-        const dataBlob = new Blob([dataStr], { type: 'application/json' })
-        
-        const link = document.createElement('a')
-        link.href = URL.createObjectURL(dataBlob)
-        link.download = `prompts_${this.currentCompanyId}_${timestamp}.json`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(link.href)
-        
-        alert('Prompts exportados exitosamente')
-      } catch (err) {
-        alert('Error exportando prompts: ' + err.message)
-        console.error('Error exporting prompts:', err)
-      }
-    },
-    
-    formatDate(dateString) {
-      if (!dateString) return 'N/A'
-      try {
-        return new Date(dateString).toLocaleDateString()
-      } catch {
-        return 'Fecha inválida'
-      }
-    },
-    
-    handleStatusLoaded(status) {
-      console.log('Status loaded:', status)
-      if (status?.postgresql_available && status?.tables_exist) {
-        this.loadPrompts()
-      }
-    },
-    
-    handleMigrationComplete() {
-      this.loadPrompts()
+  unmounted() {
+    // Limpiar funciones globales
+    if (typeof window !== 'undefined') {
+      delete window.loadCurrentPrompts
+      delete window.updatePrompt
+      delete window.resetPrompt
+      delete window.previewPrompt
+      delete window.repairAllPrompts
+      delete window.exportPrompts
+      delete window.PromptsTabInstance
     }
   }
 }
