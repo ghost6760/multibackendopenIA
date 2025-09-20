@@ -55,6 +55,31 @@ export const usePrompts = () => {
     return appStore.currentCompanyName || currentCompanyId.value
   })
 
+  // Lista de agentes para iterar en componentes
+  const agentsList = computed(() => {
+    const agentConfigs = [
+      { name: 'emergency_agent', displayName: 'Emergency Agent', icon: '🚨' },
+      { name: 'router_agent', displayName: 'Router Agent', icon: '🚦' },
+      { name: 'sales_agent', displayName: 'Sales Agent', icon: '💼' },
+      { name: 'schedule_agent', displayName: 'Schedule Agent', icon: '📅' },
+      { name: 'support_agent', displayName: 'Support Agent', icon: '🎧' }
+    ]
+
+    return agentConfigs
+      .filter(config => agents.value[config.name])
+      .map(config => ({
+        id: config.name,
+        name: config.name,
+        displayName: config.displayName,
+        icon: config.icon,
+        content: agents.value[config.name]?.current_prompt || '',
+        isCustom: agents.value[config.name]?.is_custom || false,
+        lastModified: agents.value[config.name]?.last_modified || null,
+        version: agents.value[config.name]?.version || null,
+        placeholder: `Prompt para ${config.displayName}...`
+      }))
+  })
+
   // ============================================================================
   // FUNCIONES PRINCIPALES - MIGRADAS EXACTAS DE PROMPTSTAB.VUE
   // ============================================================================
