@@ -79,11 +79,12 @@ export const useConversations = () => {
     try {
       appStore.addToLog(`Testing conversation: "${message}" for user ${userId}`, 'info')
       
-      const response = await apiRequest('/api/conversations/test', {
+      // 🔧 CORRECCIÓN CRÍTICA: Usar endpoint exacto del script.js original
+      const response = await apiRequest(`/api/conversations/${userId}/test`, {
         method: 'POST',
         body: {
-          message,
-          user_id: userId
+          message: message,
+          company_id: appStore.currentCompanyId  // 🔧 CORRECCIÓN: usar company_id, no user_id
         }
       })
       
@@ -99,7 +100,7 @@ export const useConversations = () => {
       
     } catch (error) {
       console.error('Error testing conversation:', error)
-      notifyApiError('/api/conversations/test', error)
+      notifyApiError(`/api/conversations/${userId}/test`, error)
       appStore.addToLog(`Conversation test error: ${error.message}`, 'error')
       return false
       
