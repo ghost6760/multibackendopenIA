@@ -90,7 +90,7 @@ export const useEnterprise = () => {
       addToLog('Loading enterprise companies', 'info')
 
       // PRESERVAR: Llamada API exacta como script.js con API key
-      const response = await apiRequest('/api/enterprise/companies', {
+      const response = await apiRequest('/api/admin/companies', {
         method: 'GET',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
@@ -160,7 +160,7 @@ export const useEnterprise = () => {
       }
 
       // PRESERVAR: Request exacto como script.js con API key
-      const response = await apiRequest('/api/enterprise/companies', {
+      const response = await apiRequest('/api/admin/companies', {
         method: 'POST',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
@@ -232,7 +232,7 @@ export const useEnterprise = () => {
       addToLog(`Viewing enterprise company: ${companyId}`, 'info')
 
       // PRESERVAR: Request exacto como script.js
-      const response = await apiRequest(`/api/enterprise/companies/${companyId}`, {
+      const response = await apiRequest(`/api/admin/companies/${companyId}`, {
         method: 'GET',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
@@ -306,7 +306,7 @@ export const useEnterprise = () => {
       showNotification('Actualizando empresa enterprise...', 'info')
 
       // PRESERVAR: Request exacto como script.js
-      const response = await apiRequest(`/api/enterprise/companies/${companyId}`, {
+      const response = await apiRequest(`/api/admin/companies/${companyId}`, {
         method: 'PUT',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
@@ -380,7 +380,7 @@ export const useEnterprise = () => {
       showNotification('Probando empresa enterprise...', 'info')
 
       // PRESERVAR: Request exacto como script.js
-      const response = await apiRequest(`/api/enterprise/companies/${companyId}/test`, {
+      const response = await apiRequest(`/api/admin/companies/${companyId}/test`, {
         method: 'POST',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
@@ -457,7 +457,7 @@ export const useEnterprise = () => {
       showNotification('Iniciando migración de empresas a PostgreSQL...', 'info')
 
       // PRESERVAR: Request como script.js
-      const response = await apiRequest('/api/enterprise/companies/migrate', {
+      const response = await apiRequest('/api/admin/companies/migrate', {
         method: 'POST',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
