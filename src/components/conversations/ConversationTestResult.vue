@@ -26,7 +26,7 @@
             <strong>Mensaje enviado:</strong>
           </div>
           <div class="message-content user-message">
-            {{ results.message || results.input || 'N/A' }}
+            {{ results.user_message || results.message || results.input || 'N/A' }}
           </div>
         </div>
         
@@ -37,7 +37,7 @@
             <strong>Respuesta del sistema:</strong>
           </div>
           <div class="message-content assistant-message">
-            {{ results.response || 'No se recibió respuesta' }}
+            {{ results.bot_response || results.response || 'No se recibió respuesta' }}
           </div>
         </div>
         
@@ -54,7 +54,11 @@
             </div>
             <div class="metadata-item">
               <span class="metadata-label">🏢 Empresa:</span>
-              <span class="metadata-value">{{ results.company || getCurrentCompany() }}</span>
+              <span class="metadata-value">{{ results.company_id || results.company || getCurrentCompany() }}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">🤖 Agente:</span>
+              <span class="metadata-value">{{ results.agent_used || 'N/A' }}</span>
             </div>
             <div v-if="results.response_time" class="metadata-item">
               <span class="metadata-label">⚡ Tiempo:</span>
@@ -73,6 +77,20 @@
             </summary>
             <div class="debug-content">
               <pre class="debug-data">{{ formatDebugInfo(results.debug_info) }}</pre>
+            </div>
+          </details>
+        </div>
+        
+        <!-- Raw Response (for debugging) -->
+        <div v-if="showAdvancedOptions" class="debug-section">
+          <details class="debug-details">
+            <summary class="debug-summary">
+              <span class="debug-icon">🔧</span>
+              <strong>Respuesta completa del servidor</strong>
+              <span class="debug-toggle">▼</span>
+            </summary>
+            <div class="debug-content">
+              <pre class="debug-data">{{ JSON.stringify(results, null, 2) }}</pre>
             </div>
           </details>
         </div>
@@ -317,14 +335,15 @@ const copyResults = async () => {
     const text = [
       '=== RESULTADOS DE PRUEBA DE CONVERSACIÓN ===',
       `Usuario: ${props.results.user_id || 'test-user'}`,
-      `Empresa: ${props.results.company || getCurrentCompany()}`,
+      `Empresa: ${props.results.company_id || props.results.company || getCurrentCompany()}`,
+      `Agente usado: ${props.results.agent_used || 'N/A'}`,
       `Timestamp: ${formatTimestamp(props.results.timestamp)}`,
       '',
       '--- MENSAJE ENVIADO ---',
-      props.results.message || props.results.input || 'N/A',
+      props.results.user_message || props.results.message || props.results.input || 'N/A',
       '',
       '--- RESPUESTA DEL SISTEMA ---',
-      props.results.response || 'No se recibió respuesta',
+      props.results.bot_response || props.results.response || 'No se recibió respuesta',
       ''
     ]
     
@@ -359,9 +378,12 @@ const shareResults = () => {
     return
   }
   
+  const message = props.results.user_message || props.results.message || props.results.input
+  const response = props.results.bot_response || props.results.response
+  
   const shareData = {
     title: 'Resultados de Prueba de Conversación',
-    text: `Prueba exitosa: "${props.results.message}" → "${props.results.response}"`
+    text: `Prueba exitosa: "${message}" → "${response}"`
   }
   
   navigator.share(shareData).catch((error) => {
