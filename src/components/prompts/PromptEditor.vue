@@ -270,66 +270,18 @@ const validateContent = () => {
   const errors = []
   const content = internalContent.value
   
-  // Validación de longitud
+  // Validación 1: Longitud máxima
   if (content.length > 10000) {
     errors.push('El prompt es demasiado largo (máximo 10,000 caracteres)')
   }
   
-  // Validación de user_message único
+  // Validación 2: Solo una instancia de {user_message}
   if (content.includes('{user_message}') && content.split('{user_message}').length > 2) {
     errors.push('Solo se permite una instancia de {user_message}')
   }
   
-  // ✅ CORRECCIÓN: Validación más inteligente de variables
-  // Solo validar variables que NO estén dentro de bloques JSON válidos
-  const jsonBlockRegex = /```json[\s\S]*?```/g
-  const codeBlockRegex = /```[\s\S]*?```/g
-  
-  // Remover bloques de código/JSON del contenido para validar
-  let contentToValidate = content
-  
-  // Remover bloques de código completos
-  contentToValidate = contentToValidate.replace(codeBlockRegex, '')
-  
-  // También remover líneas que claramente son JSON (contienen : y , en patrones JSON)
-  const lines = contentToValidate.split('\n')
-  const nonJsonLines = lines.filter(line => {
-    const trimmed = line.trim()
-    // Si la línea parece JSON (tiene : y está entre llaves o es parte de estructura JSON)
-    if (trimmed.includes(':') && (trimmed.includes('{') || trimmed.includes('}') || trimmed.includes('"'))) {
-      return false
-    }
-    return true
-  }).join('\n')
-  
-  // ✅ CORRECCIÓN: Solo validar en contenido que NO es JSON
-  const forbiddenPatterns = [
-    { 
-      regex: /\{\{[^}]+\}\}/g, 
-      message: 'Formato de variable no válido. Usa {variable} en lugar de {{variable}}' 
-    },
-    { 
-      regex: /\$\{[^}]+\}/g, 
-      message: 'Formato de variable no válido. Usa {variable} en lugar de ${variable}' 
-    }
-  ]
-  
-  forbiddenPatterns.forEach(({ regex, message }) => {
-    const matches = nonJsonLines.match(regex)
-    if (matches) {
-      // Solo agregar error si realmente encontramos variables fuera de contexto JSON
-      const isInJsonContext = matches.some(match => {
-        // Verificar si el match está cerca de : o dentro de comillas
-        const matchIndex = content.indexOf(match)
-        const surrounding = content.slice(Math.max(0, matchIndex - 20), matchIndex + match.length + 20)
-        return surrounding.includes('"') && surrounding.includes(':')
-      })
-      
-      if (!isInJsonContext) {
-        errors.push(message)
-      }
-    }
-  })
+  // ✅ CORRECCIÓN: Remover validación de variables (era demasiado estricta)
+  // Los prompts pueden contener JSON válido con cualquier formato de variables
   
   validationErrors.value = errors
 }
