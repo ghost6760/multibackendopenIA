@@ -87,7 +87,12 @@ export const useApiRequest = () => {
           const errorJson = JSON.parse(errorText)
           errorMessage = errorJson.error || errorJson.message || `HTTP ${response.status}: ${response.statusText}`
         } catch {
-          errorMessage = `HTTP ${response.status}: ${response.statusText}`
+          // 🔧 CORRECCIÓN: Mejorar detección de endpoints inexistentes
+          if (response.status === 404) {
+            errorMessage = `API endpoint not found: ${endpoint}`
+          } else {
+            errorMessage = `HTTP ${response.status}: ${response.statusText}`
+          }
         }
         
         throw new Error(errorMessage)
@@ -196,6 +201,52 @@ export const useApiRequest = () => {
       
       return { success: false, message: `Error: ${error.message}` }
     }
+  }
+  
+  /**
+   * 🔧 FUNCIÓN AGREGADA: apiRequestWithKey - CRÍTICA PARA ENTERPRISE
+   * Función helper para requests que requieren API key - MIGRADA DEL SCRIPT.JS
+   */
+  const apiRequestWithKey = async (endpoint, options = {}) => {
+    // 🔧 CORRECCIÓN: Usar misma detección que script.js
+    const requiresApiKey = [
+      '/api/admin/companies/create',
+      '/api/admin/companies/',
+      '/api/admin/companies',
+      '/api/documents/cleanup'
+    ].some(path => endpoint.includes(path)) || 
+    // 🔧 NUEVO: Detectar rutas específicas de empresa (GET/PUT /api/admin/companies/{id})
+    /^\/api\/admin\/companies\/[^\/]+$/.test(endpoint)
+
+    if (requiresApiKey && !ADMIN_API_KEY && !appStore.adminApiKey) {
+      if (appStore.addNotification) {
+        appStore.addNotification('Se requiere API key para esta función', 'warning')
+      }
+      throw new Error('API key requerida')
+    }
+
+    // Asegurar que headers siempre sea un objeto válido
+    const headers = { 
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+
+    // 🔧 CORRECCIÓN CRÍTICA: Usar header exacto del script.js
+    if (requiresApiKey && (ADMIN_API_KEY || appStore.adminApiKey)) {
+      headers['X-API-Key'] = ADMIN_API_KEY || appStore.adminApiKey  // ✅ MISMO HEADER QUE SCRIPT.JS
+      console.log('🔑 API Key added to request:', endpoint)
+    }
+
+    // Asegurar stringify del body si es objeto
+    let processedOptions = { ...options, headers }
+
+    if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+      processedOptions.body = JSON.stringify(options.body)
+    }
+
+    console.log('🌐 API Request with Key:', endpoint, processedOptions)
+
+    return await apiRequest(endpoint, processedOptions)
   }
   
   // ============================================================================
@@ -370,6 +421,8 @@ export const useApiRequest = () => {
     window.clearAdminApiKey = clearAdminApiKey
     window.testApiKey = testApiKey
     window.hasAdminApiKey = hasAdminApiKey
+    // 🔧 AGREGAR: Exponer función crítica para enterprise
+    window.apiRequestWithKey = apiRequestWithKey
   }
   
   return {
@@ -382,6 +435,9 @@ export const useApiRequest = () => {
     clearAdminApiKey,
     hasAdminApiKey,
     testApiKey,
+    
+    // 🔧 FUNCIÓN CRÍTICA AGREGADA para enterprise
+    apiRequestWithKey,
     
     // Wrappers de conveniencia
     get,
