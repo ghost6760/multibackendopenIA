@@ -89,7 +89,7 @@
               :disabled="isMigrating"
             >
               <span v-if="isMigrating">⏳ Migrando...</span>
-              <span v-else">🚀 Migrar a PostgreSQL</span>
+              <span v-else>🚀 Migrar a PostgreSQL</span>
             </button>
             <p class="migration-help">Crea las tablas necesarias en PostgreSQL</p>
           </div>
