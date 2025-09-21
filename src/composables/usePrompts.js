@@ -302,42 +302,59 @@ export const usePrompts = () => {
    * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
    */
   const repairAllPrompts = async () => {
-    if (!confirm('¿Reparar todos los prompts desde el repositorio? Esto restaurará los prompts corruptos o faltantes.')) {
+    if (!confirm('¿Restaurar TODOS los prompts a sus valores por defecto del repositorio?\n\nEsto eliminará todas las personalizaciones.')) {
       return
     }
-
+  
     try {
       isProcessing.value = true
       
-      console.log('Repairing all prompts...')
+      console.log('Restoring all prompts to repository defaults...')
       
-      // ✅ FIX: Usar apiRequest en lugar de fetch directo
-      const data = await apiRequest('/api/admin/prompts/repair', {
-        method: 'POST',
-        body: {
-          company_id: currentCompanyId.value,
-          agents: Object.keys(agents.value)
+      const agentNames = Object.keys(agents.value).filter(key => agents.value[key] !== null)
+      let successCount = 0
+      let errorCount = 0
+      
+      // ✅ CORRECCIÓN: Hacer DELETE para cada agente (igual que resetPrompt)
+      for (const agentName of agentNames) {
+        try {
+          console.log(`Restoring ${agentName} to default...`)
+          
+          // Mismo endpoint y método que resetPrompt()
+          const data = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
+            method: 'DELETE'
+          })
+          
+          console.log(`✅ ${agentName} restored successfully`)
+          
+          // Actualizar estado local con prompt por defecto
+          if (data.default_prompt && agents.value[agentName]) {
+            agents.value[agentName].current_prompt = data.default_prompt
+            agents.value[agentName].is_custom = false
+            agents.value[agentName].last_modified = null
+          }
+          
+          successCount++
+          
+        } catch (error) {
+          console.error(`❌ Error restoring ${agentName}:`, error)
+          errorCount++
         }
-      })
-      
-      console.log('Repair response:', data)
-      
-      let message = 'Prompts reparados exitosamente'
-      if (data.repaired_count !== undefined) {
-        message += ` (${data.repaired_count} prompts reparados)`
-      }
-      if (data.details) {
-        console.log('Repair details:', data.details)
       }
       
-      showNotification(message, 'success')
+      // Mostrar resultado final
+      if (errorCount === 0) {
+        showNotification(`✅ Todos los prompts restaurados exitosamente (${successCount}/${agentNames.length})`, 'success')
+      } else {
+        showNotification(`⚠️ Restauración completada: ${successCount} exitosos, ${errorCount} errores`, 'warning')
+      }
       
-      // Recargar los prompts después de la reparación
+      // Recargar todos los prompts para sincronizar
       await loadPrompts()
       
     } catch (err) {
-      showNotification(`Error reparando prompts: ${err.message}`, 'error')
-      console.error('Error repairing prompts:', err)
+      showNotification(`Error restaurando prompts: ${err.message}`, 'error')
+      console.error('Error in repair all prompts:', err)
     } finally {
       isProcessing.value = false
     }
