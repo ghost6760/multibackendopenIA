@@ -36,7 +36,7 @@
               :disabled="isReloading"
             >
               <span v-if="isReloading">⏳ Recargando...</span>
-              <span v-else">🔄 Recargar Config</span>
+              <span v-else>🔄 Recargar Config</span>
             </button>
           </div>
         </div>
@@ -160,7 +160,7 @@
               :disabled="isRegeneratingKeys"
             >
               <span v-if="isRegeneratingKeys">⏳ Regenerando...</span>
-              <span v-else">🔑 Regenerar Keys</span>
+              <span v-else>🔑 Regenerar Keys</span>
             </button>
           </div>
         </div>
@@ -176,7 +176,7 @@
               :disabled="isAuditing"
             >
               <span v-if="isAuditing">⏳ Auditando...</span>
-              <span v-else">📋 Auditar</span>
+              <span v-else>📋 Auditar</span>
             </button>
           </div>
         </div>
@@ -192,7 +192,7 @@
               :disabled="isReviewingLogs"
             >
               <span v-if="isReviewingLogs">⏳ Revisando...</span>
-              <span v-else">🔒 Revisar Logs</span>
+              <span v-else>🔒 Revisar Logs</span>
             </button>
           </div>
         </div>
