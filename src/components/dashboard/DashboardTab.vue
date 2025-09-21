@@ -284,7 +284,7 @@ const loadCompaniesStatus = async () => {
   isLoadingCompanies.value = true
   
   try {
-    const response = await apiRequest('/api/companies/status')
+    const response = await apiRequest('/api/health/companies')
     companiesStatus.value = response
     
     appStore.addToLog('Companies status loaded successfully', 'info')
