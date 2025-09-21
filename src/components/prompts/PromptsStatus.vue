@@ -459,26 +459,48 @@ const migrateToPostgreSQL = async () => {
 const refreshStatus = async () => {
   await loadSystemStatus()
 }
-
+  
 const repairAllPrompts = async () => {
-  if (!confirm('¿Reparar todos los prompts desde el repositorio? Esta operación sobrescribirá prompts corruptos.')) {
+  if (!confirm('¿Restaurar TODOS los prompts a sus valores por defecto del repositorio?\n\nEsto eliminará todas las personalizaciones y restaurará los prompts originales.')) {
     return
   }
   
   isProcessing.value = true
   
   try {
-    appStore.addToLog('Starting repair of all prompts', 'info')
+    appStore.addToLog('Starting repair of all prompts to repository defaults', 'info')
     
-    const response = await apiRequest('/api/admin/prompts/repair', {
-      method: 'POST',
-      body: {
-        company_id: appStore.currentCompanyId,
-        repair_all: true
+    const agents = ['emergency_agent', 'router_agent', 'sales_agent', 'schedule_agent', 'support_agent']
+    let successCount = 0
+    let errorCount = 0
+    
+    // ✅ CORRECCIÓN: Usar DELETE individual para cada agente (igual que reset)
+    for (const agentName of agents) {
+      try {
+        console.log(`Restoring ${agentName} to repository default...`)
+        
+        // Mismo endpoint que el reset individual
+        const response = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${appStore.currentCompanyId}`, {
+          method: 'DELETE'
+        })
+        
+        console.log(`✅ ${agentName} restored to default successfully`)
+        successCount++
+        
+      } catch (error) {
+        console.error(`❌ Error restoring ${agentName}:`, error)
+        errorCount++
       }
-    })
+    }
     
-    showNotification(`Reparación completada: ${response.repaired_count || 0} prompts reparados`, 'success')
+    // Resultado final
+    if (errorCount === 0) {
+      showNotification(`Reparación completada: ${successCount} prompts restaurados a defaults`, 'success')
+    } else {
+      showNotification(`Reparación completada: ${successCount} exitosos, ${errorCount} errores`, 'warning')
+    }
+    
+    // Recargar estado del sistema
     await loadSystemStatus()
     
   } catch (error) {
