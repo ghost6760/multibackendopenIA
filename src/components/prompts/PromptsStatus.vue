@@ -75,6 +75,12 @@
             <span class="detail-value">{{ systemStatus.total_custom_prompts || 0 }}</span>
           </div>
           
+          <!-- Debug Info -->
+          <div class="status-detail" v-if="debugMode">
+            <span class="detail-label">Debug - Fuente de datos:</span>
+            <span class="detail-value">{{ systemStatus.data_source || 'response directo' }}</span>
+          </div>
+          
           <!-- Migration Button -->
           <div v-if="showMigrationButton" class="migration-section">
             <button 
@@ -83,7 +89,7 @@
               :disabled="isMigrating"
             >
               <span v-if="isMigrating">⏳ Migrando...</span>
-              <span v-else>🚀 Migrar a PostgreSQL</span>
+              <span v-else">🚀 Migrar a PostgreSQL</span>
             </button>
             <p class="migration-help">Crea las tablas necesarias en PostgreSQL</p>
           </div>
@@ -203,6 +209,16 @@
               <span v-if="isProcessing">⏳ Exportando...</span>
               <span v-else>📄 Exportar Reporte</span>
             </button>
+            
+            <!-- Debug Button -->
+            <button 
+              @click="debugSystemStatus"
+              class="tool-button debug-btn"
+              :disabled="isProcessing"
+              title="Verificar estructura de respuesta del backend"
+            >
+              🐛 Debug Status
+            </button>
           </div>
         </div>
       </div>
@@ -247,9 +263,10 @@ const isProcessing = ref(false)
 const error = ref(null)
 const lastUpdated = ref(null)
 const refreshInterval = ref(null)
+const debugMode = ref(false)
 
 // ============================================================================
-// COMPUTED PROPERTIES
+// COMPUTED PROPERTIES CORREGIDOS
 // ============================================================================
 
 const databaseStatusClass = computed(() => {
@@ -257,11 +274,14 @@ const databaseStatusClass = computed(() => {
   
   const { postgresql_available, tables_exist, fallback_active } = systemStatus.value
   
+  // ✅ CORRECCIÓN: Lógica igual al sistema original
   if (postgresql_available && tables_exist && !fallback_active) {
     return 'success'
   } else if (postgresql_available && !tables_exist) {
     return 'warning'
   } else if (fallback_active) {
+    return 'warning'
+  } else if (postgresql_available) {  // ✅ NUEVO: Estado intermedio más permisivo
     return 'warning'
   } else {
     return 'error'
@@ -273,12 +293,15 @@ const databaseStatusText = computed(() => {
   
   const { postgresql_available, tables_exist, fallback_active, total_custom_prompts } = systemStatus.value
   
+  // ✅ CORRECCIÓN: Usar misma lógica que el sistema original
   if (postgresql_available && tables_exist && !fallback_active) {
     return `✅ PostgreSQL Activo (${total_custom_prompts || 0} prompts personalizados)`
   } else if (postgresql_available && !tables_exist) {
     return '⚠️ PostgreSQL disponible - Tablas no creadas'
   } else if (fallback_active) {
     return `⚠️ Modo Fallback Activo (${systemStatus.value.fallback_used || fallback_active})`
+  } else if (postgresql_available) {  // ✅ NUEVO: Estado intermedio
+    return '⚠️ PostgreSQL conectado - Verificando configuración'
   } else {
     return '❌ Sistema de prompts no disponible'
   }
@@ -290,11 +313,11 @@ const showMigrationButton = computed(() => {
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - USANDO ENDPOINTS COMO PROMPTSTAB.VUE
+// FUNCIÓN PRINCIPAL CORREGIDA
 // ============================================================================
 
 /**
- * Carga el estado del sistema - USANDO MISMO ENDPOINT QUE PROMPTSTAB.VUE
+ * ✅ CORRECCIÓN CRÍTICA: Carga el estado del sistema con la estructura correcta
  */
 const loadSystemStatus = async () => {
   isLoading.value = true
@@ -303,40 +326,105 @@ const loadSystemStatus = async () => {
   try {
     appStore.addToLog('Loading prompts system status', 'info')
     
-    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest(`/api/admin/status?company_id=${appStore.currentCompanyId}`)
     
-    // ✅ ESTRUCTURA DE RESPUESTA IGUAL A PROMPTSTAB.VUE
+    // ✅ CORRECCIÓN CRÍTICA: Detectar estructura correcta igual al sistema original
+    const promptSystem = response.prompt_system || response
+    
+    // ✅ CORRECCIÓN: Buscar campos en ambas ubicaciones posibles
     systemStatus.value = {
-      postgresql_available: response.postgresql_available || false,
-      tables_exist: response.tables_exist || false,
-      total_custom_prompts: response.total_custom_prompts || 0,
-      fallback_active: response.fallback_active || false,
-      fallback_used: response.fallback_used || null,
-      metrics: response.metrics || null,
-      agents_status: response.agents_status || null,
-      last_updated: response.last_updated || new Date().toISOString(),
-      uptime: response.uptime || null
+      // Campo principal PostgreSQL
+      postgresql_available: promptSystem.postgresql_available || false,
+      
+      // ✅ CORRECCIÓN: Buscar tables_status OR tables_exist (igual que el original)
+      tables_exist: promptSystem.tables_status || promptSystem.tables_exist || false,
+      
+      // Otros campos importantes
+      total_custom_prompts: promptSystem.total_custom_prompts || promptSystem.custom_prompts || 0,
+      fallback_active: promptSystem.fallback_active || false,
+      fallback_used: promptSystem.fallback_used || null,
+      
+      // Métricas y estado
+      metrics: promptSystem.metrics || response.metrics || null,
+      agents_status: promptSystem.agents_status || response.agents_status || null,
+      last_updated: promptSystem.last_updated || response.last_updated || new Date().toISOString(),
+      uptime: promptSystem.uptime || response.uptime || null,
+      
+      // ✅ DEBUG: Agregar información de fuente para debugging
+      data_source: response.prompt_system ? 'prompt_system' : 'response_root'
     }
     
     lastUpdated.value = new Date().toISOString()
     appStore.addToLog('Prompts system status loaded successfully', 'info')
     
-    // ✅ EMITIR EVENTO PARA PROMPTSTAB.VUE
+    // ✅ Log de debug para verificar datos
+    console.log('🔍 PromptsStatus DEBUG:', {
+      raw_response: response,
+      prompt_system_exists: !!response.prompt_system,
+      processed_status: systemStatus.value,
+      postgresql_available: systemStatus.value.postgresql_available,
+      tables_exist: systemStatus.value.tables_exist
+    })
+    
     emit('status-loaded', systemStatus.value)
     
   } catch (error) {
     appStore.addToLog(`Error loading prompts system status: ${error.message}`, 'error')
     error.value = error.message
     systemStatus.value = null
+    
+    // ✅ Log de error para debugging
+    console.error('❌ PromptsStatus ERROR:', error)
   } finally {
     isLoading.value = false
   }
 }
 
 /**
- * Migra a PostgreSQL - USANDO MISMOS ENDPOINTS QUE PROMPTSTAB.VUE
+ * ✅ NUEVA FUNCIÓN: Debug del estado del sistema
  */
+const debugSystemStatus = async () => {
+  try {
+    showNotification('🐛 Ejecutando debug del estado...', 'info')
+    
+    // Hacer request directo para ver respuesta raw
+    const response = await fetch(`/api/admin/status?company_id=${appStore.currentCompanyId}`)
+    const data = await response.json()
+    
+    console.log('=== DEBUG PROMPTS STATUS ===')
+    console.log('1. RAW Response:', JSON.stringify(data, null, 2))
+    console.log('2. ¿Tiene prompt_system?:', !!data.prompt_system)
+    console.log('3. postgresql_available (raíz):', data.postgresql_available)
+    console.log('4. postgresql_available (prompt_system):', data.prompt_system?.postgresql_available)
+    console.log('5. tables_exist (raíz):', data.tables_exist)
+    console.log('6. tables_status (raíz):', data.tables_status)
+    console.log('7. tables_exist/status (prompt_system):', data.prompt_system?.tables_exist || data.prompt_system?.tables_status)
+    console.log('8. Estado Vue actual:', systemStatus.value)
+    
+    // Mostrar resultado en notificación
+    const hasPromptSystem = !!data.prompt_system
+    const pgAvailable = data.prompt_system?.postgresql_available || data.postgresql_available
+    const tablesExist = data.prompt_system?.tables_status || data.prompt_system?.tables_exist || data.tables_exist
+    
+    showNotification(
+      `Debug: prompt_system=${hasPromptSystem}, pg=${pgAvailable}, tables=${tablesExist}`,
+      'info',
+      10000
+    )
+    
+    // Toggle debug mode
+    debugMode.value = !debugMode.value
+    
+  } catch (error) {
+    console.error('Error en debug:', error)
+    showNotification('Error en debug: ' + error.message, 'error')
+  }
+}
+
+// ============================================================================
+// RESTO DE FUNCIONES (SIN CAMBIOS)
+// ============================================================================
+
 const migrateToPostgreSQL = async () => {
   if (!confirm('¿Estás seguro de migrar el sistema de prompts a PostgreSQL? Esta operación puede tardar unos minutos.')) {
     return
@@ -347,7 +435,6 @@ const migrateToPostgreSQL = async () => {
   try {
     appStore.addToLog('Starting prompts migration to PostgreSQL', 'info')
     
-    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest('/api/admin/prompts/migrate', {
       method: 'POST',
       body: {
@@ -358,10 +445,7 @@ const migrateToPostgreSQL = async () => {
     showNotification('Migración completada exitosamente', 'success')
     appStore.addToLog('Prompts migration completed successfully', 'info')
     
-    // Recargar estado después de la migración
     await loadSystemStatus()
-    
-    // ✅ EMITIR EVENTO PARA PROMPTSTAB.VUE
     emit('migration-complete')
     
   } catch (error) {
@@ -372,16 +456,9 @@ const migrateToPostgreSQL = async () => {
   }
 }
 
-/**
- * Actualizar estado
- */
 const refreshStatus = async () => {
   await loadSystemStatus()
 }
-
-// ============================================================================
-// HERRAMIENTAS DEL SISTEMA - USANDO MISMOS ENDPOINTS QUE PROMPTSTAB.VUE
-// ============================================================================
 
 const repairAllPrompts = async () => {
   if (!confirm('¿Reparar todos los prompts desde el repositorio? Esta operación sobrescribirá prompts corruptos.')) {
@@ -393,7 +470,6 @@ const repairAllPrompts = async () => {
   try {
     appStore.addToLog('Starting repair of all prompts', 'info')
     
-    // ✅ USAR MISMO ENDPOINT QUE PROMPTSTAB.VUE
     const response = await apiRequest('/api/admin/prompts/repair', {
       method: 'POST',
       body: {
@@ -403,8 +479,6 @@ const repairAllPrompts = async () => {
     })
     
     showNotification(`Reparación completada: ${response.repaired_count || 0} prompts reparados`, 'success')
-    
-    // Recargar estado
     await loadSystemStatus()
     
   } catch (error) {
@@ -449,8 +523,6 @@ const optimizeDatabase = async () => {
     })
     
     showNotification('Base de datos optimizada exitosamente', 'success')
-    
-    // Recargar estado
     await loadSystemStatus()
     
   } catch (error) {
@@ -493,7 +565,7 @@ const exportSystemReport = async () => {
 }
 
 // ============================================================================
-// FUNCIONES DE UTILIDADES
+// FUNCIONES DE UTILIDADES (SIN CAMBIOS)
 // ============================================================================
 
 const getAgentsStatusClass = () => {
@@ -546,35 +618,32 @@ const formatUptime = (uptime) => {
 onMounted(async () => {
   appStore.addToLog('PromptsStatus component mounted', 'info')
   
-  // Cargar estado inicial
   await loadSystemStatus()
   
-  // Configurar actualización automática cada 30 segundos
   refreshInterval.value = setInterval(() => {
     if (!isLoading.value) {
       loadSystemStatus()
     }
   }, 30000)
   
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
   if (typeof window !== 'undefined') {
     window.loadPromptsSystemStatus = loadSystemStatus
     window.migratePromptsToPostgreSQL = migrateToPostgreSQL
     window.updateSystemStatusDisplay = refreshStatus
+    window.debugPromptsStatus = debugSystemStatus
   }
 })
 
 onUnmounted(() => {
-  // Limpiar interval
   if (refreshInterval.value) {
     clearInterval(refreshInterval.value)
   }
   
-  // Limpiar funciones globales
   if (typeof window !== 'undefined') {
     delete window.loadPromptsSystemStatus
     delete window.migratePromptsToPostgreSQL
     delete window.updateSystemStatusDisplay
+    delete window.debugPromptsStatus
   }
   
   appStore.addToLog('PromptsStatus component unmounted', 'info')
@@ -901,6 +970,15 @@ onUnmounted(() => {
 
 .export-btn:hover:not(:disabled) {
   background: #117a8b;
+}
+
+.debug-btn {
+  background: #e83e8c;
+  color: white;
+}
+
+.debug-btn:hover:not(:disabled) {
+  background: #d91a72;
 }
 
 .status-footer {
