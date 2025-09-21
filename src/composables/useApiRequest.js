@@ -40,7 +40,7 @@ export const useApiRequest = () => {
     
     // ✅ AGREGAR API KEY ADMINISTRATIVA - MIGRADO DEL SCRIPT.JS
     if (ADMIN_API_KEY) {
-      defaultHeaders['X-Admin-API-Key'] = ADMIN_API_KEY
+      defaultHeaders['X-API-Key'] = ADMIN_API_KEY
     }
     
     // Combinar headers - PRESERVAR EXACTO
@@ -173,7 +173,7 @@ export const useApiRequest = () => {
       const response = await apiRequest('/api/admin/test', {
         method: 'GET',
         headers: {
-          'X-Admin-API-Key': keyToTest
+          'X-API-Key': keyToTest
         }
       })
       
