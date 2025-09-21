@@ -151,9 +151,14 @@ const {
  * Handler para evento update de PromptEditor
  * ✅ CORREGIDO: Recibe solo agentName, no objeto completo
  */
-const handlePromptUpdate = (agentName) => {
-  // Pasar directamente el nombre del agente (igual que el monolito)
-  updatePrompt(agentName)
+const handlePromptUpdate = (updateData) => {
+  if (typeof updateData === 'string') {
+    // Compatibilidad con llamadas antiguas (solo agentName)
+    updatePrompt(updateData)
+  } else {
+    // ✅ FIX: Usar el nuevo formato con contenido
+    updatePrompt(updateData.agentName, updateData.content)
+  }
 }
 
 /**
