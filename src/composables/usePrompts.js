@@ -136,24 +136,30 @@ export const usePrompts = () => {
   /**
    * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
    */
-  const updatePrompt = async (agentName) => {
+  const updatePrompt = async (agentName, customContent = null) => {
     if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
       return
     }
-
-    const promptContent = agents.value[agentName]?.current_prompt
+  
+    // ✅ FIX: Usar contenido pasado como parámetro o leer del estado
+    let promptContent = customContent
+    
+    if (!promptContent) {
+      promptContent = agents.value[agentName]?.current_prompt
+    }
+  
     if (!promptContent || !promptContent.trim()) {
       showNotification('El prompt no puede estar vacío', 'error')
       return
     }
-
+  
     try {
       isProcessing.value = true
       
       console.log(`Updating prompt for ${agentName}`)
+      console.log('Content to send:', promptContent.substring(0, 100) + '...')
       
-      // ✅ FIX: Usar apiRequest en lugar de fetch directo
       const data = await apiRequest(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
         body: {
@@ -164,8 +170,9 @@ export const usePrompts = () => {
       
       console.log('Update response:', data)
       
-      // Actualizar estado local
+      // ✅ FIX: Actualizar estado local INMEDIATAMENTE con el contenido enviado
       if (agents.value[agentName]) {
+        agents.value[agentName].current_prompt = promptContent // Usar el contenido enviado
         agents.value[agentName].is_custom = true
         agents.value[agentName].last_modified = new Date().toISOString()
         if (data.version) {
@@ -179,8 +186,8 @@ export const usePrompts = () => {
       }
       showNotification(successMessage, 'success')
       
-      // Recargar prompts para sincronizar
-      await loadPrompts()
+      // ✅ FIX: NO recargar inmediatamente (puede sobrescribir el cambio)
+      // await loadPrompts() // Comentar esta línea
       
     } catch (err) {
       showNotification(`Error actualizando prompt: ${err.message}`, 'error')
