@@ -1,6 +1,6 @@
 /**
  * usePrompts.js - Composable para Gestión de Prompts
- * ✅ CORREGIDO: agentsList incluido en return
+ * ✅ CORREGIDO: Headers consistentes usando apiRequest en todas las llamadas
  */
 
 import { ref, computed, watch } from 'vue'
@@ -53,7 +53,6 @@ export const usePrompts = () => {
     return window.currentCompanyName || currentCompanyId.value
   })
 
-  // ✅ CRÍTICO: Este computed debe estar en el return
   const agentsList = computed(() => {
     const agentConfigs = [
       { name: 'emergency_agent', displayName: 'Emergency Agent', icon: '🚨' },
@@ -77,7 +76,6 @@ export const usePrompts = () => {
         placeholder: `Prompt para ${config.displayName}...`
       }))
 
-    // ✅ DEBUG: Log para verificar transformación
     console.log('agentsList computed:', result.length, 'agents')
     result.forEach(agent => {
       console.log(`- ${agent.displayName}: ${agent.content ? 'Has content' : 'Empty'}`)
@@ -87,9 +85,12 @@ export const usePrompts = () => {
   })
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES (sin cambios)
+  // FUNCIONES PRINCIPALES - ✅ CORREGIDAS CON apiRequest()
   // ============================================================================
 
+  /**
+   * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
+   */
   const loadPrompts = async () => {
     if (!currentCompanyId.value) {
       error.value = 'Por favor selecciona una empresa primero'
@@ -102,15 +103,9 @@ export const usePrompts = () => {
       
       console.log(`Loading prompts for company: ${currentCompanyId.value}`)
       
-      const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Company-ID': currentCompanyId.value
-        }
-      })
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
+      const data = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       
-      const data = await response.json()
       console.log('Prompts response:', data)
       
       if (data && data.agents) {
@@ -138,6 +133,9 @@ export const usePrompts = () => {
     }
   }
 
+  /**
+   * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
+   */
   const updatePrompt = async (agentName) => {
     if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
@@ -155,39 +153,34 @@ export const usePrompts = () => {
       
       console.log(`Updating prompt for ${agentName}`)
       
-      const response = await fetch(`/api/admin/prompts/${agentName}`, {
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
+      const data = await apiRequest(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+        body: {
           company_id: currentCompanyId.value,
           prompt_template: promptContent
-        })
+        }
       })
       
-      const data = await response.json()
       console.log('Update response:', data)
       
-      if (response.ok) {
-        if (agents.value[agentName]) {
-          agents.value[agentName].is_custom = true
-          agents.value[agentName].last_modified = new Date().toISOString()
-          if (data.version) {
-            agents.value[agentName].version = data.version
-          }
-        }
-        
-        let successMessage = `Prompt de ${agentName} actualizado exitosamente`
+      // Actualizar estado local
+      if (agents.value[agentName]) {
+        agents.value[agentName].is_custom = true
+        agents.value[agentName].last_modified = new Date().toISOString()
         if (data.version) {
-          successMessage += ` (v${data.version})`
+          agents.value[agentName].version = data.version
         }
-        showNotification(successMessage, 'success')
-        
-        await loadPrompts()
-      } else {
-        throw new Error(data.error || data.message || 'Error actualizando prompt')
       }
+      
+      let successMessage = `Prompt de ${agentName} actualizado exitosamente`
+      if (data.version) {
+        successMessage += ` (v${data.version})`
+      }
+      showNotification(successMessage, 'success')
+      
+      // Recargar prompts para sincronizar
+      await loadPrompts()
       
     } catch (err) {
       showNotification(`Error actualizando prompt: ${err.message}`, 'error')
@@ -197,6 +190,9 @@ export const usePrompts = () => {
     }
   }
 
+  /**
+   * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
+   */
   const resetPrompt = async (agentName) => {
     if (!currentCompanyId.value) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
@@ -212,32 +208,24 @@ export const usePrompts = () => {
       
       console.log(`Resetting prompt for ${agentName}`)
       
-      const response = await fetch(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json'
-        }
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
+      const data = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
+        method: 'DELETE'
       })
       
-      console.log('Reset response status:', response.status)
+      console.log('Reset response data:', data)
       
-      if (response.ok) {
-        const data = await response.json()
-        console.log('Reset response data:', data)
-        
-        if (data.default_prompt && agents.value[agentName]) {
-          agents.value[agentName].current_prompt = data.default_prompt
-          agents.value[agentName].is_custom = false
-          agents.value[agentName].last_modified = null
-        }
-        
-        showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
-        
-        await loadPrompts()
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || errorData.message || 'Error reseteando prompt')
+      // Actualizar estado local con prompt por defecto
+      if (data.default_prompt && agents.value[agentName]) {
+        agents.value[agentName].current_prompt = data.default_prompt
+        agents.value[agentName].is_custom = false
+        agents.value[agentName].last_modified = null
       }
+      
+      showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
+      
+      // Recargar prompts
+      await loadPrompts()
       
     } catch (err) {
       showNotification(`Error reseteando prompt: ${err.message}`, 'error')
@@ -247,6 +235,9 @@ export const usePrompts = () => {
     }
   }
 
+  /**
+   * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
+   */
   const previewPrompt = async (agentName) => {
     const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
     
@@ -258,6 +249,7 @@ export const usePrompts = () => {
       return
     }
     
+    // Preparar datos del preview
     previewAgent.value = agentName
     previewContent.value = promptContent
     previewTestMessage.value = testMessage
@@ -268,40 +260,28 @@ export const usePrompts = () => {
     try {
       console.log(`Generating preview for ${agentName}`)
       
-      const response = await fetch('/api/admin/prompts/preview', {
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
+      const data = await apiRequest('/api/admin/prompts/preview', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+        body: {
           agent_name: agentName,
           company_id: currentCompanyId.value,
           prompt_template: promptContent,
           message: testMessage
-        })
+        }
       })
       
-      if (response.ok) {
-        const data = await response.json()
-        console.log('Preview response:', data)
-        
-        previewResponse.value = {
-          success: true,
-          preview: data.preview || data.response || '',
-          agent_used: data.agent_used || agentName,
-          prompt_source: data.prompt_source || 'custom',
-          debug_info: data.debug_info || {},
-          model_info: data.model_info || {},
-          metrics: data.metrics || {},
-          timestamp: new Date().toISOString()
-        }
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        previewResponse.value = {
-          success: false,
-          error: errorData.error || errorData.message || 'Error generando preview',
-          timestamp: new Date().toISOString()
-        }
+      console.log('Preview response:', data)
+      
+      previewResponse.value = {
+        success: true,
+        preview: data.preview || data.response || '',
+        agent_used: data.agent_used || agentName,
+        prompt_source: data.prompt_source || 'custom',
+        debug_info: data.debug_info || {},
+        model_info: data.model_info || {},
+        metrics: data.metrics || {},
+        timestamp: new Date().toISOString()
       }
       
     } catch (err) {
@@ -318,15 +298,9 @@ export const usePrompts = () => {
     }
   }
 
-  const closePreview = () => {
-    showPreview.value = false
-    previewAgent.value = ''
-    previewContent.value = ''
-    previewTestMessage.value = ''
-    previewResponse.value = null
-    previewLoading.value = false
-  }
-
+  /**
+   * ✅ CORREGIDO: Usa apiRequest en lugar de fetch directo
+   */
   const repairAllPrompts = async () => {
     if (!confirm('¿Reparar todos los prompts desde el repositorio? Esto restaurará los prompts corruptos o faltantes.')) {
       return
@@ -337,38 +311,29 @@ export const usePrompts = () => {
       
       console.log('Repairing all prompts...')
       
-      const response = await fetch('/api/admin/prompts/repair', {
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
+      const data = await apiRequest('/api/admin/prompts/repair', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+        body: {
           company_id: currentCompanyId.value,
           agents: Object.keys(agents.value)
-        })
+        }
       })
       
-      console.log('Repair response status:', response.status)
+      console.log('Repair response:', data)
       
-      if (response.ok) {
-        const data = await response.json()
-        console.log('Repair response:', data)
-        
-        let message = 'Prompts reparados exitosamente'
-        if (data.repaired_count !== undefined) {
-          message += ` (${data.repaired_count} prompts reparados)`
-        }
-        if (data.details) {
-          console.log('Repair details:', data.details)
-        }
-        
-        showNotification(message, 'success')
-        
-        await loadPrompts()
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || errorData.message || 'Error reparando prompts')
+      let message = 'Prompts reparados exitosamente'
+      if (data.repaired_count !== undefined) {
+        message += ` (${data.repaired_count} prompts reparados)`
       }
+      if (data.details) {
+        console.log('Repair details:', data.details)
+      }
+      
+      showNotification(message, 'success')
+      
+      // Recargar los prompts después de la reparación
+      await loadPrompts()
       
     } catch (err) {
       showNotification(`Error reparando prompts: ${err.message}`, 'error')
@@ -376,6 +341,19 @@ export const usePrompts = () => {
     } finally {
       isProcessing.value = false
     }
+  }
+
+  // ============================================================================
+  // FUNCIONES SIN CAMBIOS
+  // ============================================================================
+
+  const closePreview = () => {
+    showPreview.value = false
+    previewAgent.value = ''
+    previewContent.value = ''
+    previewTestMessage.value = ''
+    previewResponse.value = null
+    previewLoading.value = false
   }
 
   const exportPrompts = () => {
@@ -437,6 +415,9 @@ export const usePrompts = () => {
     }
   })
 
+  /**
+   * ✅ CORREGIDO: debugPrompts usa apiRequest en lugar de fetch directo
+   */
   const debugPrompts = async () => {
     console.log('=== DEBUG PROMPTS ===')
     console.log('1. Current Company ID:', currentCompanyId.value)
@@ -448,8 +429,8 @@ export const usePrompts = () => {
     console.log('7. Error?:', error.value)
     
     try {
-      const response = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      const data = await response.json()
+      // ✅ FIX: Usar apiRequest para consistencia
+      const data = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       console.log('8. RAW API Response:', data)
       
       if (data.agents) {
@@ -468,20 +449,23 @@ export const usePrompts = () => {
     }
   }
   
+  /**
+   * ✅ CORREGIDO: testEndpoints usa apiRequest en lugar de fetch directo
+   */
   const testEndpoints = async () => {
     console.log('=== TESTING ENDPOINTS ===')
     const testAgent = 'emergency_agent'
     
+    // Test GET
     console.log('\n1. Testing GET /api/admin/prompts')
     try {
-      const getResponse = await fetch(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      console.log('GET Status:', getResponse.status)
-      const getData = await getResponse.json()
+      const getData = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       console.log('GET Response:', getData)
     } catch (err) {
       console.error('GET Error:', err)
     }
     
+    // Test UPDATE (estructura)
     console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
     console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
     console.log('Body:', {
@@ -489,32 +473,29 @@ export const usePrompts = () => {
       prompt_template: 'test'
     })
     
+    // Test DELETE (estructura)
     console.log('\n3. Testing DELETE endpoint')
     console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${currentCompanyId.value}`)
     
+    // Test PREVIEW
     console.log('\n4. Testing PREVIEW endpoint')
     try {
-      const previewResponse = await fetch('/api/admin/prompts/preview', {
+      const previewData = await apiRequest('/api/admin/prompts/preview', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+        body: {
           agent_name: testAgent,
           company_id: currentCompanyId.value,
           prompt_template: 'test prompt',
           message: 'test message'
-        })
+        }
       })
-      console.log('Preview Status:', previewResponse.status)
-      if (previewResponse.status !== 404) {
-        const previewData = await previewResponse.json()
-        console.log('Preview Response:', previewData)
-      } else {
-        console.log('Preview endpoint not found (404)')
-      }
+      console.log('Preview Response:', previewData)
     } catch (err) {
-      console.error('Preview Error:', err)
+      if (err.message.includes('404')) {
+        console.log('Preview endpoint not found (404)')
+      } else {
+        console.error('Preview Error:', err)
+      }
     }
     
     console.log('\n5. Testing REPAIR endpoint')
@@ -526,7 +507,7 @@ export const usePrompts = () => {
   }
 
   // ============================================================================
-  // ✅ RETORNO CORREGIDO - INCLUIR agentsList
+  // RETORNO COMPLETO
   // ============================================================================
 
   return {
@@ -548,9 +529,9 @@ export const usePrompts = () => {
     hasPrompts,
     currentCompanyId,
     currentCompanyName,
-    agentsList, // ✅ CRÍTICO: Este faltaba!
+    agentsList,
     
-    // Funciones principales
+    // Funciones principales (nombres exactos de PromptsTab.vue)
     loadPrompts,
     updatePrompt,
     resetPrompt,
