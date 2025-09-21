@@ -332,7 +332,7 @@
               :disabled="isSaving"
             >
               <span v-if="isSaving">⏳ Guardando...</span>
-              <span v-else">💾 Guardar Cambios</span>
+              <span v-else>💾 Guardar Cambios</span>
             </button>
           </div>
         </form>
