@@ -189,8 +189,9 @@ watch(internalContent, () => {
 /**
  * Actualiza el prompt - ✅ CORREGIDO: Emitir solo agentName, no objeto completo
  */
-const updatePrompt = async () => {
+const updatePrompt = () => {
   const content = internalContent.value.trim()
+  
   if (!content) {
     console.warn('El prompt no puede estar vacío')
     return
@@ -204,11 +205,11 @@ const updatePrompt = async () => {
   try {
     isProcessing.value = true
     
-    // Actualizar contenido original para detectar cambios futuros
-    originalContent.value = content
-    
-    // ✅ CORREGIDO: Emitir solo el nombre del agente, igual que el monolito
-    emit('update', props.promptData.id || props.promptData.name)
+    // ✅ FIX: Pasar el contenido actual como parámetro
+    emit('update', {
+      agentName: props.promptData.id || props.promptData.name,
+      content: content  // Pasar el contenido actual
+    })
     
   } finally {
     isProcessing.value = false
