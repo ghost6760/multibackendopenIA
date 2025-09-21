@@ -21,7 +21,7 @@
         class="btn btn-primary"
       >
         <span v-if="isRunningDiagnostics">⏳ Ejecutando...</span>
-        <span v-else">🚀 Auto-Diagnósticos</span>
+        <span v-else>🚀 Auto-Diagnósticos</span>
       </button>
 
       <button 
