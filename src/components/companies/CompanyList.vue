@@ -16,7 +16,7 @@
           :disabled="isLoading"
         >
           <span v-if="isLoading">⏳</span>
-          <span v-else">🔄</span>
+          <span v-else>🔄</span>
           {{ isLoading ? 'Cargando...' : 'Actualizar' }}
         </button>
         
