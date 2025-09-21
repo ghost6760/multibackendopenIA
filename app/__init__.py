@@ -1,6 +1,6 @@
 # app/__init__.py - Multi-Tenant Flask Application Factory - VERSIÓN REFACTORIZADA
 
-from flask import Flask, request, send_from_directory, send_file, jsonify
+from flask import Flask, request, send_from_directory, send_file, jsonify, make_response
 from app.config import Config
 from app.utils.error_handlers import register_error_handlers
 from app.services.redis_service import init_redis
@@ -321,11 +321,11 @@ def create_app(config_class=Config):
             }), 500
 
     # ================================================================
-    # DEBUG: Ver estructura de archivos estáticos
+    # DEBUG: Estructura de archivos Vue.js
     # ================================================================
-    @app.route('/debug/static-structure')
-    def debug_static_structure():
-        """Ver la estructura de archivos estáticos"""
+    @app.route('/debug/vue-structure')
+    def debug_vue_structure():
+        """Ver la estructura de archivos del build de Vue.js"""
         result = {
             "static_path": STATIC_DIR,
             "exists": os.path.exists(STATIC_DIR)
@@ -333,27 +333,46 @@ def create_app(config_class=Config):
         
         if os.path.exists(STATIC_DIR):
             try:
+                # Archivos en la raíz
                 files = os.listdir(STATIC_DIR)
-                result["files"] = []
+                result["root_files"] = []
                 
                 for file in files:
                     file_path = os.path.join(STATIC_DIR, file)
-                    result["files"].append({
-                        "name": file,
-                        "size": os.path.getsize(file_path) if os.path.isfile(file_path) else 0,
-                        "is_file": os.path.isfile(file_path),
-                        "path": file_path
-                    })
+                    if os.path.isfile(file_path):
+                        result["root_files"].append({
+                            "name": file,
+                            "size": os.path.getsize(file_path),
+                            "path": file_path
+                        })
                 
-                result["total_files"] = len(files)
+                # Assets directory (donde Vue.js pone JS/CSS)
+                assets_path = os.path.join(STATIC_DIR, 'assets')
+                if os.path.exists(assets_path):
+                    result["assets_dir"] = {
+                        "exists": True,
+                        "path": assets_path,
+                        "files": []
+                    }
+                    
+                    for file in os.listdir(assets_path):
+                        file_path = os.path.join(assets_path, file)
+                        if os.path.isfile(file_path):
+                            result["assets_dir"]["files"].append({
+                                "name": file,
+                                "size": os.path.getsize(file_path),
+                                "type": "js" if file.endswith('.js') else "css" if file.endswith('.css') else "other"
+                            })
+                else:
+                    result["assets_dir"] = {"exists": False}
                 
-                # Archivos esperados
-                expected_files = ['index.html', 'script.js', 'style.css']
-                result["expected_files"] = {}
+                # Verificar archivos críticos
+                critical_files = ['index.html', 'vite.svg', 'favicon.ico']
+                result["critical_files"] = {}
                 
-                for file in expected_files:
+                for file in critical_files:
                     file_path = os.path.join(STATIC_DIR, file)
-                    result["expected_files"][file] = {
+                    result["critical_files"][file] = {
                         "exists": os.path.exists(file_path),
                         "path": file_path
                     }
@@ -364,12 +383,28 @@ def create_app(config_class=Config):
         return jsonify(result)
     
     # ================================================================
-    # SERVIR ARCHIVOS ESTÁTICOS SIMPLES
+    # SERVIR FRONTEND VUE.JS - SPA SUPPORT
     # ================================================================
+    
+    @app.route('/assets/<path:filename>')
+    def serve_vue_assets(filename):
+        """Servir assets de Vue.js (JS, CSS, imágenes)"""
+        assets_dir = os.path.join(STATIC_DIR, 'assets')
+        logger.info(f"📦 Vue asset request: {filename}")
+        
+        try:
+            return send_from_directory(assets_dir, filename)
+        except Exception as e:
+            logger.error(f"❌ Error serving Vue asset {filename}: {e}")
+            return jsonify({
+                "error": "Vue asset not found",
+                "requested": filename,
+                "assets_dir": assets_dir
+            }), 404
     
     @app.route('/static/<path:filename>')
     def serve_static_files(filename):
-        """Servir archivos estáticos (script.js, style.css, etc.)"""
+        """Servir archivos estáticos adicionales (favicon, etc.)"""
         logger.info(f"📁 Static file request: {filename}")
         
         try:
@@ -382,42 +417,18 @@ def create_app(config_class=Config):
                 "static_dir": STATIC_DIR
             }), 404
     
-    @app.route('/script.js')
-    def serve_script():
-        """Servir script.js directamente"""
-        script_path = os.path.join(STATIC_DIR, 'script.js')
-        logger.info(f"📄 Script request: {script_path}")
-        
-        if os.path.exists(script_path):
-            logger.info("✅ Serving script.js")
-            return send_file(script_path, mimetype='application/javascript')
-        else:
-            logger.error("❌ script.js not found")
-            return jsonify({"error": "script.js not found"}), 404
-    
-    @app.route('/style.css')
-    def serve_style():
-        """Servir style.css directamente"""
-        style_path = os.path.join(STATIC_DIR, 'style.css')
-        logger.info(f"📄 Style request: {style_path}")
-        
-        if os.path.exists(style_path):
-            logger.info("✅ Serving style.css")
-            return send_file(style_path, mimetype='text/css')
-        else:
-            logger.error("❌ style.css not found")
-            return jsonify({"error": "style.css not found"}), 404
-    
     # ================================================================
-    # SERVIR PÁGINA PRINCIPAL - CATCH-ALL ROUTE
+    # VUE.JS SPA ROUTING - CATCH-ALL ROUTE
     # ================================================================
     
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
-    def serve_frontend(path):
-        """Servir página principal con fallback correcto"""
+    def serve_vue_spa(path):
+        """Servir Vue.js SPA con soporte completo para routing"""
         
-        # No interferir con rutas de API (más específico y completo)
+        # ============================================
+        # 1. No interferir con rutas de API
+        # ============================================
         api_prefixes = ['api/', 'debug/']
         if any(path.startswith(prefix) for prefix in api_prefixes):
             logger.warning(f"⚠️ API route not found: /{path}")
@@ -431,40 +442,65 @@ def create_app(config_class=Config):
                     "/api/admin/status",
                     "/api/documents",
                     "/api/conversations",
-                    "/api/multimedia"
+                    "/api/multimedia",
+                    "/api/prompts",
+                    "/api/enterprise/*",
+                    "/api/admin/*"
                 ]
             }), 404
         
-        # Archivos estáticos directos
-        static_files = ['script.js', 'style.css', 'favicon.ico']
-        if path in static_files:
-            if path == 'script.js':
-                return serve_script()
-            elif path == 'style.css':
-                return serve_style()
-            # Para otros archivos estáticos
+        # ============================================
+        # 2. Servir assets de Vue.js directamente
+        # ============================================
+        if path.startswith('assets/'):
+            asset_filename = path[7:]  # Remover 'assets/' prefix
+            return serve_vue_assets(asset_filename)
+        
+        # ============================================
+        # 3. Archivos estáticos especiales
+        # ============================================
+        special_files = ['favicon.ico', 'robots.txt', 'sitemap.xml']
+        if path in special_files:
             try:
                 return send_from_directory(STATIC_DIR, path)
             except:
-                return jsonify({"error": f"Static file not found: {path}"}), 404
+                # Si no existe, servir 404 silencioso
+                return jsonify({"error": f"File not found: {path}"}), 404
         
-        # Servir index.html para todas las rutas de frontend válidas
+        # ============================================
+        # 4. SERVIR VUE.JS SPA - index.html para todas las rutas
+        # ============================================
         index_path = os.path.join(STATIC_DIR, 'index.html')
         
-        logger.info(f"🌐 Frontend route request: '{path}'")
+        logger.info(f"🌐 Vue.js SPA route request: '{path}'")
         
         if os.path.exists(index_path):
-            logger.info("✅ Serving frontend index.html")
-            return send_file(index_path)
+            logger.info("✅ Serving Vue.js SPA index.html")
+            
+            # Agregar headers para SPA
+            response = make_response(send_file(index_path))
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            
+            return response
         else:
-            logger.error(f"❌ Frontend index.html not found at {index_path}")
-            return jsonify({
-                "error": "Frontend not found",
+            logger.error(f"❌ Vue.js index.html not found at {index_path}")
+            
+            # Debug info para troubleshooting
+            debug_info = {
+                "error": "Vue.js frontend not found",
                 "expected_path": index_path,
                 "static_dir": STATIC_DIR,
-                "files_in_static": os.listdir(STATIC_DIR) if os.path.exists(STATIC_DIR) else [],
-                "suggestion": "Check if index.html exists in static directory"
-            }), 500
+                "static_dir_exists": os.path.exists(STATIC_DIR)
+            }
+            
+            if os.path.exists(STATIC_DIR):
+                debug_info["files_in_static"] = os.listdir(STATIC_DIR)
+            
+            return jsonify(debug_info), 500
+    
+
 
     # ================================================================
     # Inicialización multi-tenant
