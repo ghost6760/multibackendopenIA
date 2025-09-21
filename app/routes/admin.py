@@ -346,18 +346,16 @@ def preview_prompt():
             # 5. Inyectar temporalmente el prompt personalizado
             real_agent.prompt_template = temp_template
             
-            logger.info(f"🔧 [PREVIEW] Using direct agent invocation for {agent_key}")
+            logger.info(f"🔧 [PREVIEW] Temporarily injected custom prompt for {agent_key}")
             
             # 6. Usar el método REAL del orchestrator (igual que test_conversation)
-            preview_response = real_agent.invoke({
-                "question": test_message,
-                "chat_history": [],
-                "user_id": temp_user_id,
-                "company_id": company_id
-            })
+            preview_response, agent_used = orchestrator.get_response(
+                test_message, 
+                temp_user_id, 
+                manager
+            )
             
-            agent_used = agent_name  # Retornar el agente solicitado original
-            logger.info(f"✅ [PREVIEW] Direct invocation successful, response length: {len(preview_response)}")
+            logger.info(f"✅ [PREVIEW] Generated response: {len(preview_response)} chars")
             
         finally:
             # 7. Restaurar prompt original
