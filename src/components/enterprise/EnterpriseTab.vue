@@ -526,7 +526,7 @@ const loadEnterpriseCompanies = async () => {
     appStore.addToLog('Loading enterprise companies', 'info')
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/enterprise/companies', {
+    const response = await apiRequest('/api/admin/companies', {
       headers: {
         'X-API-Key': appStore.adminApiKey
       }
@@ -556,7 +556,7 @@ const createEnterpriseCompany = async (companyData) => {
     appStore.addToLog('Creating enterprise company', 'info')
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/enterprise/companies', {
+    const response = await apiRequest('/api/admin/companies', {
       method: 'POST',
       headers: {
         'X-API-Key': appStore.adminApiKey
@@ -588,7 +588,7 @@ const viewEnterpriseCompany = async (companyId) => {
     appStore.addToLog(`Viewing enterprise company: ${companyId}`, 'info')
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/enterprise/companies/${companyId}`, {
+    const response = await apiRequest(`/api/admin/companies/${companyId}`, {
       headers: {
         'X-API-Key': appStore.adminApiKey
       }
@@ -609,7 +609,7 @@ const viewEnterpriseCompany = async (companyId) => {
 const editEnterpriseCompany = async (companyId) => {
   try {
     // Cargar datos de la empresa
-    const response = await apiRequest(`/api/enterprise/companies/${companyId}`, {
+    const response = await apiRequest(`/api/admin/companies/${companyId}`, {
       headers: {
         'X-API-Key': appStore.adminApiKey
       }
@@ -664,7 +664,7 @@ const saveEnterpriseCompany = async () => {
     
     if (isEditMode.value) {
       // Actualizar empresa existente
-      const response = await apiRequest(`/api/enterprise/companies/${companyData.id}`, {
+      const response = await apiRequest(`/api/admin/companies/${companyData.id}`, {
         method: 'PUT',
         headers: {
           'X-API-Key': appStore.adminApiKey
@@ -703,7 +703,7 @@ const testEnterpriseCompany = async (companyId) => {
     showNotification('Iniciando prueba de conexión...', 'info')
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/enterprise/companies/${companyId}/test`, {
+    const response = await apiRequest(`/api/admin/companies/${companyId}/test`, {
       method: 'POST',
       headers: {
         'X-API-Key': appStore.adminApiKey
