@@ -1,6 +1,7 @@
 // composables/useConversations.js
 // Composable para gestión de conversaciones - MIGRACIÓN desde script.js
 // CRÍTICO: Mantener comportamiento idéntico para preservar compatibilidad
+// 🔧 CORREGIDO: Eliminar conflictos DOM directo vs Vue reactivo
 
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
@@ -48,8 +49,7 @@ export const useConversations = () => {
   
   /**
    * Prueba una conversación con el sistema
-   * MIGRADO: testConversation() de script.js
-   * ⚠️ NO MODIFICAR: Debe mantener comportamiento idéntico
+   * 🔧 CORREGIDO: Endpoint y eliminación de conflicto DOM
    */
   const testConversation = async () => {
     if (!appStore.currentCompanyId) {
@@ -88,10 +88,8 @@ export const useConversations = () => {
         }
       })
       
+      // 🔧 CORRECCIÓN: Solo actualizar estado reactivo, eliminar manipulación DOM
       testResults.value = response
-      
-      // Mostrar resultados en el DOM - PRESERVAR COMPORTAMIENTO ORIGINAL
-      displayTestResults(response)
       
       notifyApiSuccess('Conversación probada exitosamente')
       appStore.addToLog(`Conversation test completed successfully for user ${userId}`, 'info')
@@ -111,7 +109,7 @@ export const useConversations = () => {
   
   /**
    * Obtiene una conversación específica
-   * MIGRADO: getConversation() de script.js
+   * 🔧 CORREGIDO: Eliminar manipulación DOM directa
    */
   const getConversation = async (userId = null) => {
     if (!appStore.currentCompanyId) {
@@ -134,10 +132,8 @@ export const useConversations = () => {
       
       const response = await apiRequest(`/api/conversations/${targetUserId}`)
       
+      // 🔧 CORRECCIÓN: Solo actualizar estado reactivo
       currentConversation.value = response
-      
-      // Mostrar detalles en el DOM - PRESERVAR COMPORTAMIENTO ORIGINAL
-      displayConversationDetails(response)
       
       appStore.addToLog(`Conversation retrieved for user ${targetUserId}`, 'info')
       
@@ -156,7 +152,7 @@ export const useConversations = () => {
   
   /**
    * Elimina una conversación
-   * MIGRADO: deleteConversation() de script.js
+   * 🔧 CORREGIDO: Mantener limpieza DOM pero sin conflicto reactivo
    */
   const deleteConversation = async (userId = null) => {
     if (!appStore.currentCompanyId) {
@@ -194,7 +190,7 @@ export const useConversations = () => {
         currentConversation.value = null
       }
       
-      // Limpiar detalles del DOM
+      // 🔧 MANTENER: Limpieza DOM específica para compatibilidad con HTML original
       const detailsContainer = document.getElementById('conversationDetails')
       if (detailsContainer) {
         detailsContainer.innerHTML = '<p>Conversación eliminada exitosamente.</p>'
@@ -220,7 +216,7 @@ export const useConversations = () => {
   
   /**
    * Carga la lista de conversaciones
-   * MIGRADO: loadConversations() de script.js
+   * 🔧 CORREGIDO: Eliminar manipulación DOM directa
    */
   const loadConversations = async () => {
     if (!appStore.currentCompanyId) {
@@ -240,6 +236,7 @@ export const useConversations = () => {
                               response.conversations ? response.conversations :
                               response.data ? response.data : []
       
+      // 🔧 CORRECCIÓN: Solo actualizar estado reactivo
       conversations.value = conversationsList.map(conv => ({
         ...conv,
         // Asegurar campos requeridos
@@ -249,9 +246,6 @@ export const useConversations = () => {
         last_activity: conv.last_activity || conv.updated_at || conv.created_at,
         status: conv.status || 'active'
       }))
-      
-      // Mostrar lista en el DOM - PRESERVAR COMPORTAMIENTO ORIGINAL
-      displayConversationsList(conversations.value)
       
       appStore.addToLog(`Loaded ${conversations.value.length} conversations`, 'info')
       
@@ -328,18 +322,26 @@ export const useConversations = () => {
   }
   
   // ============================================================================
-  // MÉTODOS DE VISUALIZACIÓN - PRESERVAR LÓGICA DOM ORIGINAL
+  // MÉTODOS DE VISUALIZACIÓN LEGACY - MANTENER PARA COMPATIBILIDAD CON HTML ORIGINAL
+  // Estas funciones se mantienen para compatibilidad con el sistema original,
+  // pero NO deben ser llamadas desde el código Vue para evitar conflictos
   // ============================================================================
   
   /**
    * Muestra los resultados del test en el DOM
-   * PRESERVAR: Lógica exacta del script.js original
+   * 🔧 LEGACY: Solo para compatibilidad con HTML original, no usar en Vue
    */
   const displayTestResults = (results) => {
     const container = document.getElementById('conversationResult')
     if (!container) return
     
-    if (!results || !results.response) {
+    // Verificar si el container es parte del sistema Vue
+    if (container.closest('[data-v-app]')) {
+      console.warn('⚠️ displayTestResults: Evitando manipulación DOM en componente Vue')
+      return
+    }
+    
+    if (!results || (!results.response && !results.bot_response)) {
       container.innerHTML = `
         <div class="result-container result-error">
           <h4>❌ Error en la prueba</h4>
@@ -349,19 +351,22 @@ export const useConversations = () => {
       return
     }
     
+    const response = results.bot_response || results.response
+    const userMessage = results.user_message || results.message || results.input
+    
     container.innerHTML = `
       <div class="result-container result-success">
         <h4>✅ Conversación Probada Exitosamente</h4>
         <div class="conversation-test-result">
           <div class="test-message">
             <strong>📤 Mensaje enviado:</strong>
-            <p>${escapeHTML(results.message || results.input || 'N/A')}</p>
+            <p>${escapeHTML(userMessage || 'N/A')}</p>
           </div>
           
           <div class="test-response">
             <strong>📥 Respuesta del sistema:</strong>
             <div class="response-content">
-              ${escapeHTML(results.response)}
+              ${escapeHTML(response)}
             </div>
           </div>
           
@@ -388,11 +393,17 @@ export const useConversations = () => {
   
   /**
    * Muestra los detalles de una conversación en el DOM
-   * PRESERVAR: Lógica exacta del script.js original
+   * 🔧 LEGACY: Solo para compatibilidad con HTML original
    */
   const displayConversationDetails = (conversation) => {
     const container = document.getElementById('conversationDetails')
     if (!container) return
+    
+    // Verificar si el container es parte del sistema Vue
+    if (container.closest('[data-v-app]')) {
+      console.warn('⚠️ displayConversationDetails: Evitando manipulación DOM en componente Vue')
+      return
+    }
     
     if (!conversation) {
       container.innerHTML = `
@@ -404,7 +415,7 @@ export const useConversations = () => {
       return
     }
     
-    const messages = conversation.messages || conversation.conversation || []
+    const messages = conversation.messages || conversation.conversation || conversation.history || []
     const messagesHtml = Array.isArray(messages) 
       ? messages.map(msg => `
           <div class="message-item ${msg.role || 'user'}">
@@ -458,11 +469,17 @@ export const useConversations = () => {
   
   /**
    * Muestra la lista de conversaciones en el DOM
-   * PRESERVAR: Lógica exacta del script.js original
+   * 🔧 LEGACY: Solo para compatibilidad con HTML original
    */
   const displayConversationsList = (conversationsList) => {
     const container = document.getElementById('conversationsList')
     if (!container) return
+    
+    // Verificar si el container es parte del sistema Vue
+    if (container.closest('[data-v-app]')) {
+      console.warn('⚠️ displayConversationsList: Evitando manipulación DOM en componente Vue')
+      return
+    }
     
     if (!conversationsList || conversationsList.length === 0) {
       container.innerHTML = `
@@ -581,7 +598,7 @@ export const useConversations = () => {
   // ============================================================================
   
   return {
-    // Estado
+    // Estado reactivo
     conversations,
     currentConversation,
     isLoading,
@@ -595,7 +612,7 @@ export const useConversations = () => {
     canTestConversation,
     recentConversations,
     
-    // Métodos principales
+    // Métodos principales (SIN conflictos DOM)
     testConversation,
     getConversation,
     deleteConversation,
@@ -603,7 +620,7 @@ export const useConversations = () => {
     viewConversationDetail,
     deleteConversationFromList,
     
-    // Métodos de visualización
+    // Métodos legacy para compatibilidad HTML original (NO usar en Vue)
     displayTestResults,
     displayConversationDetails,
     displayConversationsList,
