@@ -1,8 +1,9 @@
 /**
- * useEnterprise.js - Composable para Funciones Enterprise
+ * useEnterprise.js - Composable para Funciones Enterprise - CORREGIDO
  * MIGRADO DE: script.js funciones loadEnterpriseCompanies(), createEnterpriseCompany(), editEnterpriseCompany(), etc.
  * PRESERVAR: Comportamiento exacto de las funciones originales
  * COMPATIBILIDAD: 100% con el script.js original
+ * 🔧 CORRECCIÓN: Manejo correcto del formato de respuesta de la API
  */
 
 import { ref, computed, watch } from 'vue'
@@ -75,11 +76,12 @@ export const useEnterprise = () => {
   )
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS
+  // FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS - CORREGIDAS
   // ============================================================================
 
   /**
    * Carga empresas enterprise - MIGRADO: loadEnterpriseCompanies() de script.js
+   * 🔧 CORRECCIÓN: Manejo correcto del formato de respuesta API
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const loadEnterpriseCompanies = async () => {
@@ -97,24 +99,30 @@ export const useEnterprise = () => {
         }
       })
 
-      if (response && Array.isArray(response)) {
-        enterpriseCompanies.value = response
+      console.log('✅ Enterprise companies response:', response) // DEBUG para verificar formato
+
+      // 🔧 CORRECCIÓN CRÍTICA: La API devuelve {companies: Array}, no Array directo
+      if (response && response.companies && Array.isArray(response.companies)) {
+        enterpriseCompanies.value = response.companies
         lastUpdateTime.value = new Date().toISOString()
 
         // PRESERVAR: Actualizar cache como script.js
-        appStore.cache.enterpriseCompanies = response
+        appStore.cache.enterpriseCompanies = response.companies
         appStore.cache.lastUpdate.enterpriseCompanies = Date.now()
 
         // PRESERVAR: Actualizar tabla en DOM como script.js
-        updateEnterpriseCompaniesTable(response)
+        updateEnterpriseCompaniesTable(response.companies)
 
-        addToLog(`Enterprise companies loaded successfully (${response.length} companies)`, 'success')
+        addToLog(`Enterprise companies loaded successfully (${response.companies.length} companies)`, 'success')
+        showNotification(`${response.companies.length} empresas enterprise cargadas`, 'success')
         
       } else {
-        throw new Error('Invalid response format: expected array of companies')
+        // 🔧 CORRECCIÓN: Mensaje de error más específico
+        console.error('Invalid response format:', response)
+        throw new Error(`Invalid response format: expected object with companies array, got ${typeof response}`)
       }
 
-      return response
+      return response.companies
 
     } catch (error) {
       addToLog(`Error loading enterprise companies: ${error.message}`, 'error')
@@ -127,10 +135,14 @@ export const useEnterprise = () => {
           <div class="result-container result-error">
             <p>❌ Error al cargar empresas enterprise</p>
             <p>${error.message}</p>
+            <p><strong>Formato recibido:</strong> ${typeof response}</p>
+            <p><strong>API Key configurada:</strong> ${appStore.adminApiKey ? 'SÍ' : 'NO'}</p>
           </div>
         `
       }
 
+      // Limpiar estado en caso de error
+      enterpriseCompanies.value = []
       throw error
 
     } finally {
@@ -140,6 +152,7 @@ export const useEnterprise = () => {
 
   /**
    * Crea nueva empresa enterprise - MIGRADO: createEnterpriseCompany() de script.js
+   * 🔧 CORRECCIÓN: Manejo correcto de respuesta de creación
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const createEnterpriseCompany = async (companyData = null) => {
@@ -168,8 +181,16 @@ export const useEnterprise = () => {
         body: companyData
       })
 
+      // 🔧 CORRECCIÓN: Manejo correcto de respuesta de creación
+      let newCompany = response
+      if (response.company) {
+        newCompany = response.company
+      } else if (response.data) {
+        newCompany = response.data
+      }
+
       // Actualizar lista local
-      enterpriseCompanies.value.push(response)
+      enterpriseCompanies.value.push(newCompany)
 
       // PRESERVAR: Mostrar resultado como script.js
       const resultsContainer = document.getElementById('enterpriseResults')
@@ -177,10 +198,10 @@ export const useEnterprise = () => {
         resultsContainer.innerHTML = `
           <div class="result-container result-success">
             <h4>✅ Empresa Enterprise Creada</h4>
-            <p><strong>ID:</strong> ${response.company_id}</p>
-            <p><strong>Nombre:</strong> ${response.company_name}</p>
+            <p><strong>ID:</strong> ${newCompany.company_id}</p>
+            <p><strong>Nombre:</strong> ${newCompany.company_name}</p>
             <div class="json-container">
-              <pre>${JSON.stringify(response, null, 2)}</pre>
+              <pre>${JSON.stringify(newCompany, null, 2)}</pre>
             </div>
           </div>
         `
@@ -189,7 +210,7 @@ export const useEnterprise = () => {
       // Limpiar formulario
       clearCompanyForm()
 
-      addToLog(`Enterprise company created successfully: ${response.company_id}`, 'success')
+      addToLog(`Enterprise company created successfully: ${newCompany.company_id}`, 'success')
       showNotification('Empresa enterprise creada exitosamente', 'success')
 
       // Recargar lista
@@ -220,6 +241,7 @@ export const useEnterprise = () => {
 
   /**
    * Ver detalles de empresa enterprise - MIGRADO: viewEnterpriseCompany() de script.js
+   * 🔧 CORRECCIÓN: Manejo correcto de respuesta de empresa individual
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const viewEnterpriseCompany = async (companyId) => {
@@ -239,14 +261,22 @@ export const useEnterprise = () => {
         }
       })
 
-      selectedCompany.value = response
+      // 🔧 CORRECCIÓN: Manejo correcto de respuesta de empresa individual
+      let companyData = response
+      if (response.company) {
+        companyData = response.company
+      } else if (response.data) {
+        companyData = response.data
+      }
+
+      selectedCompany.value = companyData
 
       // PRESERVAR: Mostrar detalles en modal como script.js
-      showCompanyDetailsModal(response)
+      showCompanyDetailsModal(companyData)
 
       addToLog(`Enterprise company details loaded: ${companyId}`, 'success')
       
-      return response
+      return companyData
 
     } catch (error) {
       addToLog(`Error viewing enterprise company: ${error.message}`, 'error')
@@ -257,6 +287,7 @@ export const useEnterprise = () => {
 
   /**
    * Edita empresa enterprise - MIGRADO: editEnterpriseCompany() de script.js
+   * 🔧 CORRECCIÓN: Manejo correcto de carga de datos para edición
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const editEnterpriseCompany = async (companyId) => {
@@ -286,6 +317,7 @@ export const useEnterprise = () => {
 
   /**
    * Guarda cambios de empresa enterprise - MIGRADO: saveEnterpriseCompany() de script.js
+   * 🔧 CORRECCIÓN: Manejo correcto de respuesta de actualización
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const saveEnterpriseCompany = async (companyId, companyData = null) => {
@@ -314,10 +346,18 @@ export const useEnterprise = () => {
         body: companyData
       })
 
+      // 🔧 CORRECCIÓN: Manejo correcto de respuesta de actualización
+      let updatedCompany = response
+      if (response.company) {
+        updatedCompany = response.company
+      } else if (response.data) {
+        updatedCompany = response.data
+      }
+
       // Actualizar en lista local
       const index = enterpriseCompanies.value.findIndex(c => c.company_id === companyId)
       if (index !== -1) {
-        enterpriseCompanies.value[index] = response
+        enterpriseCompanies.value[index] = updatedCompany
       }
 
       // PRESERVAR: Mostrar resultado como script.js
@@ -326,10 +366,10 @@ export const useEnterprise = () => {
         resultsContainer.innerHTML = `
           <div class="result-container result-success">
             <h4>✅ Empresa Enterprise Actualizada</h4>
-            <p><strong>ID:</strong> ${response.company_id}</p>
-            <p><strong>Nombre:</strong> ${response.company_name}</p>
+            <p><strong>ID:</strong> ${updatedCompany.company_id}</p>
+            <p><strong>Nombre:</strong> ${updatedCompany.company_name}</p>
             <div class="json-container">
-              <pre>${JSON.stringify(response, null, 2)}</pre>
+              <pre>${JSON.stringify(updatedCompany, null, 2)}</pre>
             </div>
           </div>
         `
@@ -366,6 +406,7 @@ export const useEnterprise = () => {
 
   /**
    * Prueba empresa enterprise - MIGRADO: testEnterpriseCompany() de script.js
+   * 🔧 CORRECCIÓN: Manejo correcto de respuesta de test
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const testEnterpriseCompany = async (companyId) => {
