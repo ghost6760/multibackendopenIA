@@ -32,7 +32,7 @@
             <div class="card-icon">🏢</div>
             <div class="card-content">
               <h4>Total Empresas</h4>
-              <div class="card-value">{{ companies.length }}</div>
+              <div class="card-value">{{ companiesCount }}</div>
             </div>
           </div>
           
@@ -56,7 +56,7 @@
             <div class="card-icon">🔄</div>
             <div class="card-content">
               <h4>Última Sincronización</h4>
-              <div class="card-value">{{ formatDateTime(lastSync) }}</div>
+              <div class="card-value">{{ formatDateTime(lastUpdateTime) }}</div>
             </div>
           </div>
         </div>
@@ -69,7 +69,7 @@
           <div class="tools-actions">
             <button @click="loadEnterpriseCompanies" class="btn btn-secondary" :disabled="isLoading">
               <span v-if="isLoading">⏳ Cargando...</span>
-              <span v-else>🔄 Actualizar</span>
+              <span v-else">🔄 Actualizar</span>
             </button>
             <button @click="showCreateCompanyModal" class="btn btn-primary">
               ➕ Nueva Empresa
@@ -148,7 +148,7 @@
         <div v-else class="companies-grid">
           <div 
             v-for="company in filteredCompanies"
-            :key="company.id"
+            :key="company.company_id || company.id"
             class="company-card"
             :class="{ 
               'company-inactive': !company.is_active,
@@ -157,7 +157,7 @@
           >
             <div class="company-header">
               <div class="company-info">
-                <h4>{{ company.name || company.id }}</h4>
+                <h4>{{ company.company_name || company.name || company.company_id || company.id }}</h4>
                 <div class="company-badges">
                   <span :class="['badge', 'badge-status', getStatusClass(company.status)]">
                     {{ getStatusText(company.status) }}
@@ -169,13 +169,13 @@
               </div>
               
               <div class="company-actions">
-                <button @click="viewEnterpriseCompany(company.id)" class="btn btn-xs btn-info">
+                <button @click="viewEnterpriseCompany(company.company_id || company.id)" class="btn btn-xs btn-info">
                   👁️ Ver
                 </button>
-                <button @click="editEnterpriseCompany(company.id)" class="btn btn-xs btn-primary">
+                <button @click="editEnterpriseCompany(company.company_id || company.id)" class="btn btn-xs btn-primary">
                   ✏️ Editar
                 </button>
-                <button @click="testEnterpriseCompany(company.id)" class="btn btn-xs btn-success">
+                <button @click="testEnterpriseCompany(company.company_id || company.id)" class="btn btn-xs btn-success">
                   🧪 Test
                 </button>
               </div>
@@ -197,7 +197,7 @@
                 </div>
                 <div class="config-item">
                   <span class="config-label">Última actividad:</span>
-                  <span class="config-value">{{ formatDateTime(company.last_activity) }}</span>
+                  <span class="config-value">{{ formatDateTime(company.last_activity || company.last_modified) }}</span>
                 </div>
               </div>
               
@@ -222,14 +222,14 @@
         </div>
         
         <div class="modal-body">
-          <form @submit.prevent="saveEnterpriseCompany" class="company-form">
+          <form @submit.prevent="handleSaveCompany" class="company-form">
             <div class="form-grid">
               <div class="form-group">
                 <label for="companyId">ID de la empresa *:</label>
                 <input
                   id="companyId"
                   type="text"
-                  v-model="companyForm.id"
+                  v-model="localCompanyForm.company_id"
                   :disabled="isEditMode"
                   required
                   placeholder="ej: mi-empresa"
@@ -241,7 +241,7 @@
                 <input
                   id="companyName"
                   type="text"
-                  v-model="companyForm.name"
+                  v-model="localCompanyForm.company_name"
                   required
                   placeholder="Nombre de la empresa"
                 />
@@ -251,7 +251,7 @@
                 <label for="companyDescription">Descripción:</label>
                 <textarea
                   id="companyDescription"
-                  v-model="companyForm.description"
+                  v-model="localCompanyForm.description"
                   placeholder="Descripción de la empresa"
                   rows="3"
                 ></textarea>
@@ -262,14 +262,14 @@
                 <input
                   id="apiBaseUrl"
                   type="url"
-                  v-model="companyForm.api_base_url"
+                  v-model="localCompanyForm.api_base_url"
                   placeholder="https://api.empresa.com"
                 />
               </div>
               
               <div class="form-group">
                 <label for="databaseType">Tipo de base de datos:</label>
-                <select id="databaseType" v-model="companyForm.database_type">
+                <select id="databaseType" v-model="localCompanyForm.database_type">
                   <option value="">Seleccionar...</option>
                   <option value="postgresql">PostgreSQL</option>
                   <option value="mysql">MySQL</option>
@@ -280,7 +280,7 @@
               
               <div class="form-group">
                 <label for="environment">Entorno:</label>
-                <select id="environment" v-model="companyForm.environment">
+                <select id="environment" v-model="localCompanyForm.environment">
                   <option value="development">Desarrollo</option>
                   <option value="staging">Staging</option>
                   <option value="production">Producción</option>
@@ -289,25 +289,51 @@
               
               <div class="form-group">
                 <label>
-                  <input type="checkbox" v-model="companyForm.is_active" />
+                  <input type="checkbox" v-model="localCompanyForm.is_active" />
                   Empresa activa
                 </label>
+              </div>
+              
+              <div class="form-group full-width">
+                <label for="services">Servicios JSON:</label>
+                <textarea
+                  id="services"
+                  v-model="localCompanyForm.servicesJson"
+                  placeholder='{"service1": {"enabled": true}, "service2": {"enabled": false}}'
+                  rows="6"
+                  class="json-textarea"
+                ></textarea>
+                <div class="textarea-footer">
+                  <span :class="['json-status', isValidServicesJSON ? 'valid' : 'invalid']">
+                    {{ isValidServicesJSON ? '✅ JSON válido' : '❌ JSON inválido' }}
+                  </span>
+                </div>
               </div>
               
               <div class="form-group full-width">
                 <label for="configuration">Configuración JSON:</label>
                 <textarea
                   id="configuration"
-                  v-model="companyForm.configuration"
+                  v-model="localCompanyForm.configurationJson"
                   placeholder='{"key": "value"}'
                   rows="8"
                   class="json-textarea"
                 ></textarea>
                 <div class="textarea-footer">
-                  <span :class="['json-status', isValidJSON ? 'valid' : 'invalid']">
-                    {{ isValidJSON ? '✅ JSON válido' : '❌ JSON inválido' }}
+                  <span :class="['json-status', isValidConfigJSON ? 'valid' : 'invalid']">
+                    {{ isValidConfigJSON ? '✅ JSON válido' : '❌ JSON inválido' }}
                   </span>
                 </div>
+              </div>
+              
+              <div class="form-group full-width">
+                <label for="notes">Notas:</label>
+                <textarea
+                  id="notes"
+                  v-model="localCompanyForm.notes"
+                  placeholder="Notas adicionales sobre la empresa"
+                  rows="3"
+                ></textarea>
               </div>
             </div>
           </form>
@@ -315,7 +341,12 @@
         
         <div class="modal-footer">
           <div class="modal-actions">
-            <button type="submit" @click="saveEnterpriseCompany" class="btn btn-primary" :disabled="isSaving || !isValidJSON">
+            <button 
+              type="submit" 
+              @click="handleSaveCompany" 
+              class="btn btn-primary" 
+              :disabled="isSaving || !isValidForm"
+            >
               <span v-if="isSaving">⏳ Guardando...</span>
               <span v-else>💾 {{ isEditMode ? 'Actualizar' : 'Crear' }} Empresa</span>
             </button>
@@ -328,10 +359,10 @@
     </div>
 
     <!-- Modal de vista detallada -->
-    <div v-if="viewingCompany" class="company-modal" @click="closeViewModal">
+    <div v-if="selectedCompany && showViewModal" class="company-modal" @click="closeViewModal">
       <div class="modal-content large" @click.stop>
         <div class="modal-header">
-          <h4>👁️ Detalles: {{ viewingCompany.name || viewingCompany.id }}</h4>
+          <h4>👁️ Detalles: {{ selectedCompany.company_name || selectedCompany.name || selectedCompany.company_id || selectedCompany.id }}</h4>
           <button @click="closeViewModal" class="close-button">✕</button>
         </div>
         
@@ -341,39 +372,44 @@
               <h5>📊 Información General</h5>
               <div class="details-grid">
                 <div class="detail-item">
-                  <strong>ID:</strong> {{ viewingCompany.id }}
+                  <strong>ID:</strong> {{ selectedCompany.company_id || selectedCompany.id }}
                 </div>
                 <div class="detail-item">
-                  <strong>Nombre:</strong> {{ viewingCompany.name }}
+                  <strong>Nombre:</strong> {{ selectedCompany.company_name || selectedCompany.name }}
                 </div>
                 <div class="detail-item">
                   <strong>Estado:</strong> 
-                  <span :class="['status-badge', getStatusClass(viewingCompany.status)]">
-                    {{ getStatusText(viewingCompany.status) }}
+                  <span :class="['status-badge', getStatusClass(selectedCompany.status)]">
+                    {{ getStatusText(selectedCompany.status) }}
                   </span>
                 </div>
                 <div class="detail-item">
-                  <strong>Entorno:</strong> {{ viewingCompany.environment || 'N/A' }}
+                  <strong>Entorno:</strong> {{ selectedCompany.environment || 'N/A' }}
                 </div>
                 <div class="detail-item">
-                  <strong>Creado:</strong> {{ formatDateTime(viewingCompany.created_at) }}
+                  <strong>Creado:</strong> {{ formatDateTime(selectedCompany.created_at) }}
                 </div>
                 <div class="detail-item">
-                  <strong>Actualizado:</strong> {{ formatDateTime(viewingCompany.updated_at) }}
+                  <strong>Actualizado:</strong> {{ formatDateTime(selectedCompany.updated_at || selectedCompany.last_modified) }}
                 </div>
               </div>
             </div>
             
-            <div v-if="viewingCompany.configuration" class="details-section">
-              <h5>⚙️ Configuración</h5>
-              <pre class="config-json">{{ formatJSON(parseJSON(viewingCompany.configuration)) }}</pre>
+            <div v-if="selectedCompany.services" class="details-section">
+              <h5>⚙️ Servicios</h5>
+              <pre class="config-json">{{ formatJSON(selectedCompany.services) }}</pre>
             </div>
             
-            <div v-if="viewingCompany.health_status" class="details-section">
+            <div v-if="selectedCompany.configuration" class="details-section">
+              <h5>🔧 Configuración</h5>
+              <pre class="config-json">{{ formatJSON(parseJSON(selectedCompany.configuration)) }}</pre>
+            </div>
+            
+            <div v-if="selectedCompany.health_status" class="details-section">
               <h5>🏥 Estado de Salud</h5>
               <div class="health-grid">
                 <div 
-                  v-for="(status, service) in viewingCompany.health_status" 
+                  v-for="(status, service) in selectedCompany.health_status" 
                   :key="service"
                   class="health-item-detailed"
                 >
@@ -387,10 +423,10 @@
         
         <div class="modal-footer">
           <div class="modal-actions">
-            <button @click="editEnterpriseCompany(viewingCompany.id)" class="btn btn-primary">
+            <button @click="editEnterpriseCompany(selectedCompany.company_id || selectedCompany.id)" class="btn btn-primary">
               ✏️ Editar
             </button>
-            <button @click="testEnterpriseCompany(viewingCompany.id)" class="btn btn-success">
+            <button @click="testEnterpriseCompany(selectedCompany.company_id || selectedCompany.id)" class="btn btn-success">
               🧪 Probar Conexión
             </button>
             <button @click="closeViewModal" class="btn btn-secondary">
@@ -400,79 +436,128 @@
         </div>
       </div>
     </div>
+
+    <!-- Contenedor de resultados (para compatibilidad con useEnterprise) -->
+    <div id="enterpriseResults" style="margin-top: 20px;"></div>
+    <div id="enterpriseCompaniesTable" style="margin-top: 20px;"></div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
+import { useEnterprise } from '@/composables/useEnterprise' // ✅ IMPORTAR EL COMPOSABLE
 import { useNotifications } from '@/composables/useNotifications'
+
+// ============================================================================
+// PROPS
+// ============================================================================
+const props = defineProps({
+  isActive: {
+    type: Boolean,
+    default: false
+  }
+})
 
 // ============================================================================
 // STORES & COMPOSABLES
 // ============================================================================
-
 const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
 
-// ============================================================================
-// ESTADO LOCAL
-// ============================================================================
+// ✅ USAR EL COMPOSABLE useEnterprise EN LUGAR DE REIMPLEMENTAR
+const {
+  // Estado reactivo del composable
+  enterpriseCompanies,
+  selectedCompany,
+  isLoading,
+  isCreating,
+  isUpdating,
+  isTesting,
+  isMigrating,
+  companyForm,
+  testResults,
+  migrationResults,
+  lastUpdateTime,
 
-const isLoading = ref(false)
-const isMigrating = ref(false)
+  // Computed properties del composable
+  companiesCount,
+  hasCompanies,
+  activeCompanies,
+  companyOptions,
+  isFormValid,
+  isAnyProcessing,
+
+  // Funciones principales del composable
+  loadEnterpriseCompanies,
+  createEnterpriseCompany,
+  viewEnterpriseCompany,
+  editEnterpriseCompany,
+  saveEnterpriseCompany,
+  testEnterpriseCompany,
+  migrateCompaniesToPostgreSQL,
+
+  // Funciones auxiliares del composable
+  getCompanyById,
+  exportCompanies,
+  clearCompanyForm,
+  populateCompanyForm
+} = useEnterprise()
+
+// ============================================================================
+// ESTADO LOCAL ADICIONAL (Solo UI, no lógica de negocio)
+// ============================================================================
+const showCompanyModal = ref(false)
+const showViewModal = ref(false)
+const isEditMode = ref(false)
+const isSaving = ref(false)
 const isSyncing = ref(false)
 const isRunningHealthCheck = ref(false)
-const isSaving = ref(false)
 
-const companies = ref([])
-const lastSync = ref(null)
-const hasValidApiKey = ref(false)
-
-// Modales
-const showCompanyModal = ref(false)
-const viewingCompany = ref(null)
-const isEditMode = ref(false)
-
-// Filtros
+// Filtros de UI
 const searchQuery = ref('')
 const statusFilter = ref('')
 
-// Formulario de empresa
-const companyForm = ref({
-  id: '',
-  name: '',
+// Formulario local para el modal (mapea a companyForm del composable)
+const localCompanyForm = ref({
+  company_id: '',
+  company_name: '',
   description: '',
   api_base_url: '',
   database_type: '',
   environment: 'development',
   is_active: true,
-  configuration: ''
+  servicesJson: '',
+  configurationJson: '',
+  notes: ''
 })
 
 // ============================================================================
-// COMPUTED
+// COMPUTED PROPERTIES LOCALES
 // ============================================================================
+const hasValidApiKey = computed(() => !!appStore.adminApiKey)
 
 const activeCompaniesCount = computed(() => {
-  return companies.value.filter(c => c.is_active).length
+  return enterpriseCompanies.value.filter(company => 
+    company.is_active !== false && company.status !== 'inactive'
+  ).length
 })
 
 const companiesWithIssues = computed(() => {
-  return companies.value.filter(c => c.status === 'error' || c.status === 'warning').length
+  return enterpriseCompanies.value.filter(company => 
+    company.status === 'error' || company.status === 'warning'
+  ).length
 })
 
 const filteredCompanies = computed(() => {
-  let filtered = [...companies.value]
+  let filtered = [...enterpriseCompanies.value]
   
   // Filtro de búsqueda
   if (searchQuery.value.trim()) {
     const query = searchQuery.value.toLowerCase()
     filtered = filtered.filter(company =>
-      (company.name || '').toLowerCase().includes(query) ||
-      (company.id || '').toLowerCase().includes(query) ||
+      (company.company_name || company.name || '').toLowerCase().includes(query) ||
+      (company.company_id || company.id || '').toLowerCase().includes(query) ||
       (company.description || '').toLowerCase().includes(query)
     )
   }
@@ -481,10 +566,10 @@ const filteredCompanies = computed(() => {
   if (statusFilter.value) {
     switch (statusFilter.value) {
       case 'active':
-        filtered = filtered.filter(company => company.is_active)
+        filtered = filtered.filter(company => company.is_active !== false)
         break
       case 'inactive':
-        filtered = filtered.filter(company => !company.is_active)
+        filtered = filtered.filter(company => company.is_active === false)
         break
       case 'error':
         filtered = filtered.filter(company => company.status === 'error')
@@ -492,295 +577,47 @@ const filteredCompanies = computed(() => {
     }
   }
   
-  return filtered.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
+  return filtered.sort((a, b) => 
+    (a.company_name || a.name || a.company_id || a.id).localeCompare(
+      b.company_name || b.name || b.company_id || b.id
+    )
+  )
 })
 
-const isValidJSON = computed(() => {
-  if (!companyForm.value.configuration.trim()) return true
+const isValidServicesJSON = computed(() => {
+  if (!localCompanyForm.value.servicesJson.trim()) return true
   
   try {
-    JSON.parse(companyForm.value.configuration)
+    JSON.parse(localCompanyForm.value.servicesJson)
     return true
   } catch (error) {
     return false
   }
 })
 
-// ============================================================================
-// FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS
-// ============================================================================
-
-/**
- * Carga empresas enterprise - MIGRADO: loadEnterpriseCompanies() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const loadEnterpriseCompanies = async () => {
-  if (!hasValidApiKey.value) {
-    showNotification('Se requiere API key para acceder a funciones enterprise', 'warning')
-    return
-  }
-  
-  isLoading.value = true
+const isValidConfigJSON = computed(() => {
+  if (!localCompanyForm.value.configurationJson.trim()) return true
   
   try {
-    appStore.addToLog('Loading enterprise companies', 'info')
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/admin/companies', {
-      headers: {
-        'X-API-Key': appStore.adminApiKey
-      }
-    })
-    
-    companies.value = response.companies || []
-    lastSync.value = Date.now()
-    
-    appStore.addToLog(`Loaded ${companies.value.length} enterprise companies`, 'info')
-    showNotification(`${companies.value.length} empresas cargadas`, 'success')
-    
+    JSON.parse(localCompanyForm.value.configurationJson)
+    return true
   } catch (error) {
-    appStore.addToLog(`Error loading enterprise companies: ${error.message}`, 'error')
-    showNotification(`Error cargando empresas: ${error.message}`, 'error')
-    companies.value = []
-  } finally {
-    isLoading.value = false
+    return false
   }
-}
+})
 
-/**
- * Crea empresa enterprise - MIGRADO: createEnterpriseCompany() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const createEnterpriseCompany = async (companyData) => {
-  try {
-    appStore.addToLog('Creating enterprise company', 'info')
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/admin/companies', {
-      method: 'POST',
-      headers: {
-        'X-API-Key': appStore.adminApiKey
-      },
-      body: companyData
-    })
-    
-    // Agregar nueva empresa a la lista
-    companies.value.push(response.company)
-    
-    appStore.addToLog(`Enterprise company ${companyData.id} created successfully`, 'info')
-    showNotification('Empresa creada exitosamente', 'success')
-    
-    return response
-    
-  } catch (error) {
-    appStore.addToLog(`Error creating enterprise company: ${error.message}`, 'error')
-    showNotification(`Error creando empresa: ${error.message}`, 'error')
-    throw error
-  }
-}
-
-/**
- * Ve empresa enterprise - MIGRADO: viewEnterpriseCompany() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const viewEnterpriseCompany = async (companyId) => {
-  try {
-    appStore.addToLog(`Viewing enterprise company: ${companyId}`, 'info')
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/admin/companies/${companyId}`, {
-      headers: {
-        'X-API-Key': appStore.adminApiKey
-      }
-    })
-    
-    viewingCompany.value = response.company
-    
-  } catch (error) {
-    appStore.addToLog(`Error viewing enterprise company ${companyId}: ${error.message}`, 'error')
-    showNotification(`Error cargando detalles de empresa: ${error.message}`, 'error')
-  }
-}
-
-/**
- * Edita empresa enterprise - MIGRADO: editEnterpriseCompany() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const editEnterpriseCompany = async (companyId) => {
-  try {
-    // Cargar datos de la empresa
-    const response = await apiRequest(`/api/admin/companies/${companyId}`, {
-      headers: {
-        'X-API-Key': appStore.adminApiKey
-      }
-    })
-    
-    const company = response.company
-    
-    // Llenar formulario
-    companyForm.value = {
-      id: company.id || '',
-      name: company.name || '',
-      description: company.description || '',
-      api_base_url: company.api_base_url || '',
-      database_type: company.database_type || '',
-      environment: company.environment || 'development',
-      is_active: company.is_active !== false,
-      configuration: company.configuration ? 
-        (typeof company.configuration === 'string' ? company.configuration : JSON.stringify(company.configuration, null, 2)) : ''
-    }
-    
-    isEditMode.value = true
-    showCompanyModal.value = true
-    
-  } catch (error) {
-    showNotification(`Error cargando empresa para edición: ${error.message}`, 'error')
-  }
-}
-
-/**
- * Guarda empresa enterprise - MIGRADO: saveEnterpriseCompany() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const saveEnterpriseCompany = async () => {
-  if (!isValidJSON.value) {
-    showNotification('La configuración JSON no es válida', 'error')
-    return
-  }
-  
-  isSaving.value = true
-  
-  try {
-    const companyData = {
-      id: companyForm.value.id,
-      name: companyForm.value.name,
-      description: companyForm.value.description,
-      api_base_url: companyForm.value.api_base_url,
-      database_type: companyForm.value.database_type,
-      environment: companyForm.value.environment,
-      is_active: companyForm.value.is_active,
-      configuration: companyForm.value.configuration ? JSON.parse(companyForm.value.configuration) : {}
-    }
-    
-    if (isEditMode.value) {
-      // Actualizar empresa existente
-      const response = await apiRequest(`/api/admin/companies/${companyData.id}`, {
-        method: 'PUT',
-        headers: {
-          'X-API-Key': appStore.adminApiKey
-        },
-        body: companyData
-      })
-      
-      // Actualizar en la lista local
-      const index = companies.value.findIndex(c => c.id === companyData.id)
-      if (index !== -1) {
-        companies.value[index] = response.company
-      }
-      
-      showNotification('Empresa actualizada exitosamente', 'success')
-    } else {
-      // Crear nueva empresa
-      await createEnterpriseCompany(companyData)
-    }
-    
-    closeCompanyModal()
-    
-  } catch (error) {
-    // Error ya manejado en las funciones específicas
-  } finally {
-    isSaving.value = false
-  }
-}
-
-/**
- * Prueba empresa enterprise - MIGRADO: testEnterpriseCompany() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const testEnterpriseCompany = async (companyId) => {
-  try {
-    appStore.addToLog(`Testing enterprise company: ${companyId}`, 'info')
-    showNotification('Iniciando prueba de conexión...', 'info')
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest(`/api/admin/companies/${companyId}/test`, {
-      method: 'POST',
-      headers: {
-        'X-API-Key': appStore.adminApiKey
-      }
-    })
-    
-    if (response.success) {
-      showNotification('Prueba de conexión exitosa', 'success')
-    } else {
-      showNotification(`Prueba falló: ${response.message}`, 'warning')
-    }
-    
-    appStore.addToLog(`Enterprise company test ${companyId}: ${response.success ? 'success' : 'failed'}`, 'info')
-    
-    // Actualizar estado de la empresa en la lista
-    const companyIndex = companies.value.findIndex(c => c.id === companyId)
-    if (companyIndex !== -1) {
-      companies.value[companyIndex].status = response.success ? 'active' : 'error'
-      companies.value[companyIndex].last_test = Date.now()
-    }
-    
-  } catch (error) {
-    appStore.addToLog(`Error testing enterprise company ${companyId}: ${error.message}`, 'error')
-    showNotification(`Error en prueba de conexión: ${error.message}`, 'error')
-  }
-}
-
-/**
- * Migra empresas a PostgreSQL - MIGRADO: migrateCompaniesToPostgreSQL() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const migrateCompaniesToPostgreSQL = async () => {
-  isMigrating.value = true
-  
-  try {
-    appStore.addToLog('Starting companies migration to PostgreSQL', 'info')
-    showNotification('Iniciando migración a PostgreSQL...', 'info')
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO (asumiendo que existe)
-    const response = await apiRequest('/api/enterprise/companies/migrate', {
-      method: 'POST',
-      headers: {
-        'X-API-Key': appStore.adminApiKey
-      }
-    })
-    
-    appStore.addToLog('Companies migration to PostgreSQL completed', 'info')
-    showNotification('Migración a PostgreSQL completada', 'success')
-    
-    // Recargar empresas
-    await loadEnterpriseCompanies()
-    
-  } catch (error) {
-    appStore.addToLog(`Companies migration failed: ${error.message}`, 'error')
-    showNotification(`Error en migración: ${error.message}`, 'error')
-  } finally {
-    isMigrating.value = false
-  }
-}
+const isValidForm = computed(() => {
+  return localCompanyForm.value.company_id.trim() &&
+         localCompanyForm.value.company_name.trim() &&
+         isValidServicesJSON.value &&
+         isValidConfigJSON.value
+})
 
 // ============================================================================
-// FUNCIONES ADICIONALES
+// FUNCIONES DE UI (No lógica de negocio)
 // ============================================================================
-
 const showCreateCompanyModal = () => {
-  // Limpiar formulario
-  companyForm.value = {
-    id: '',
-    name: '',
-    description: '',
-    api_base_url: '',
-    database_type: '',
-    environment: 'development',
-    is_active: true,
-    configuration: ''
-  }
-  
+  clearLocalForm()
   isEditMode.value = false
   showCompanyModal.value = true
 }
@@ -788,24 +625,127 @@ const showCreateCompanyModal = () => {
 const closeCompanyModal = () => {
   showCompanyModal.value = false
   isEditMode.value = false
+  clearLocalForm()
 }
 
 const closeViewModal = () => {
-  viewingCompany.value = null
+  showViewModal.value = false
 }
 
+const clearLocalForm = () => {
+  localCompanyForm.value = {
+    company_id: '',
+    company_name: '',
+    description: '',
+    api_base_url: '',
+    database_type: '',
+    environment: 'development',
+    is_active: true,
+    servicesJson: '',
+    configurationJson: '',
+    notes: ''
+  }
+}
+
+const populateLocalForm = (company) => {
+  localCompanyForm.value = {
+    company_id: company.company_id || company.id || '',
+    company_name: company.company_name || company.name || '',
+    description: company.description || '',
+    api_base_url: company.api_base_url || '',
+    database_type: company.database_type || '',
+    environment: company.environment || 'development',
+    is_active: company.is_active !== false,
+    servicesJson: company.services ? JSON.stringify(company.services, null, 2) : '',
+    configurationJson: company.configuration ? 
+      (typeof company.configuration === 'string' ? 
+        company.configuration : JSON.stringify(company.configuration, null, 2)) : '',
+    notes: company.notes || ''
+  }
+}
+
+// ============================================================================
+// FUNCIONES BRIDGE (Conectan UI con composable)
+// ============================================================================
+const handleSaveCompany = async () => {
+  if (!isValidForm.value) return
+  
+  isSaving.value = true
+  
+  try {
+    // Convertir formulario local al formato esperado por el composable
+    const companyData = {
+      company_id: localCompanyForm.value.company_id,
+      company_name: localCompanyForm.value.company_name,
+      description: localCompanyForm.value.description,
+      api_base_url: localCompanyForm.value.api_base_url,
+      database_type: localCompanyForm.value.database_type,
+      environment: localCompanyForm.value.environment,
+      is_active: localCompanyForm.value.is_active,
+      services: localCompanyForm.value.servicesJson ? 
+        JSON.parse(localCompanyForm.value.servicesJson) : {},
+      configuration: localCompanyForm.value.configurationJson ? 
+        JSON.parse(localCompanyForm.value.configurationJson) : {},
+      notes: localCompanyForm.value.notes
+    }
+    
+    if (isEditMode.value) {
+      await saveEnterpriseCompany(companyData.company_id, companyData)
+    } else {
+      await createEnterpriseCompany(companyData)
+    }
+    
+    closeCompanyModal()
+    
+  } catch (error) {
+    // Error ya manejado en el composable
+  } finally {
+    isSaving.value = false
+  }
+}
+
+// Override de editEnterpriseCompany para manejar el modal
+const handleEditCompany = async (companyId) => {
+  try {
+    // Primero llamar al composable para cargar los datos
+    await viewEnterpriseCompany(companyId)
+    
+    if (selectedCompany.value) {
+      populateLocalForm(selectedCompany.value)
+      isEditMode.value = true
+      showCompanyModal.value = true
+      showViewModal.value = false
+    }
+  } catch (error) {
+    // Error ya manejado en el composable
+  }
+}
+
+// Override de viewEnterpriseCompany para manejar el modal
+const handleViewCompany = async (companyId) => {
+  try {
+    await viewEnterpriseCompany(companyId)
+    if (selectedCompany.value) {
+      showViewModal.value = true
+    }
+  } catch (error) {
+    // Error ya manejado en el composable
+  }
+}
+
+// ============================================================================
+// FUNCIONES AUXILIARES LOCALES
+// ============================================================================
 const syncAllCompanies = async () => {
   isSyncing.value = true
   
   try {
     showNotification('Sincronizando todas las empresas...', 'info')
     
-    // Aquí implementarías la lógica de sincronización
-    // Por ahora, simular el proceso
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    // Recargar empresas (simula sincronización)
+    await loadEnterpriseCompanies()
     
     showNotification('Sincronización completada', 'success')
-    await loadEnterpriseCompanies()
     
   } catch (error) {
     showNotification(`Error en sincronización: ${error.message}`, 'error')
@@ -815,23 +755,7 @@ const syncAllCompanies = async () => {
 }
 
 const exportCompaniesData = () => {
-  try {
-    const dataStr = JSON.stringify(companies.value, null, 2)
-    const dataBlob = new Blob([dataStr], { type: 'application/json' })
-    
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(dataBlob)
-    a.download = `enterprise_companies_${new Date().toISOString().slice(0, 10)}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    
-    URL.revokeObjectURL(a.href)
-    showNotification('Datos de empresas exportados exitosamente', 'success')
-    
-  } catch (error) {
-    showNotification('Error exportando datos', 'error')
-  }
+  exportCompanies('json')
 }
 
 const runHealthCheckAll = async () => {
@@ -840,11 +764,14 @@ const runHealthCheckAll = async () => {
   try {
     showNotification('Ejecutando health check en todas las empresas...', 'info')
     
-    // Simular health check
-    await new Promise(resolve => setTimeout(resolve, 3000))
+    // Simular health check en todas las empresas
+    const healthPromises = enterpriseCompanies.value.map(company => 
+      testEnterpriseCompany(company.company_id || company.id)
+    )
+    
+    await Promise.allSettled(healthPromises)
     
     showNotification('Health check completado', 'success')
-    await loadEnterpriseCompanies()
     
   } catch (error) {
     showNotification(`Error en health check: ${error.message}`, 'error')
@@ -854,14 +781,12 @@ const runHealthCheckAll = async () => {
 }
 
 const requestApiKey = () => {
-  // Trigger del modal de API key desde el componente padre
   window.dispatchEvent(new CustomEvent('show-api-key-modal'))
 }
 
 // ============================================================================
-// UTILIDADES
+// FUNCIONES DE FORMATO (UTILIDADES)
 // ============================================================================
-
 const getStatusClass = (status) => {
   switch (status) {
     case 'active':
@@ -921,24 +846,20 @@ const parseJSON = (jsonString) => {
 }
 
 // ============================================================================
-// LIFECYCLE
+// LIFECYCLE HOOKS
 // ============================================================================
-
 onMounted(async () => {
   appStore.addToLog('EnterpriseTab component mounted', 'info')
-  
-  // Verificar si hay API key válida
-  hasValidApiKey.value = !!appStore.adminApiKey
   
   if (hasValidApiKey.value) {
     await loadEnterpriseCompanies()
   }
   
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  // ✅ EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
   window.loadEnterpriseCompanies = loadEnterpriseCompanies
   window.createEnterpriseCompany = createEnterpriseCompany
-  window.viewEnterpriseCompany = viewEnterpriseCompany
-  window.editEnterpriseCompany = editEnterpriseCompany
+  window.viewEnterpriseCompany = handleViewCompany  // Usar versión con modal
+  window.editEnterpriseCompany = handleEditCompany  // Usar versión con modal
   window.saveEnterpriseCompany = saveEnterpriseCompany
   window.testEnterpriseCompany = testEnterpriseCompany
   window.migrateCompaniesToPostgreSQL = migrateCompaniesToPostgreSQL
@@ -959,19 +880,33 @@ onUnmounted(() => {
   appStore.addToLog('EnterpriseTab component unmounted', 'info')
 })
 
-// Watcher para API key changes
+// ============================================================================
+// WATCHERS
+// ============================================================================
 watch(() => appStore.adminApiKey, (newApiKey) => {
-  hasValidApiKey.value = !!newApiKey
-  
-  if (hasValidApiKey.value) {
+  if (newApiKey && hasValidApiKey.value) {
     loadEnterpriseCompanies()
   } else {
-    companies.value = []
+    // empresas se limpian automáticamente en el composable
   }
+})
+
+// ============================================================================
+// TEMPLATE REFS PARA FUNCIONES DE VIEW/EDIT
+// ============================================================================
+// Reemplazar las llamadas directas en el template
+const wrappedViewCompany = (companyId) => handleViewCompany(companyId)
+const wrappedEditCompany = (companyId) => handleEditCompany(companyId)
+
+// Exponer las funciones wrapeadas al template
+defineExpose({
+  viewEnterpriseCompany: wrappedViewCompany,
+  editEnterpriseCompany: wrappedEditCompany
 })
 </script>
 
 <style scoped>
+/* ✅ MANTENER TODOS LOS ESTILOS ORIGINALES */
 .enterprise-tab {
   padding: 20px;
   max-width: 1400px;
