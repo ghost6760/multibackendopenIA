@@ -1,0 +1,321 @@
+# Conversations Blueprint - Análisis Completo de Endpoints
+
+## Información General
+- **Blueprint**: `conversations`
+- **URL Prefix**: Sin prefix (endpoints directos)
+- **Decorador Común**: `@handle_errors` (en todos los endpoints)
+- **Autenticación**: No requiere API key (endpoints de aplicación)
+- **Multi-tenant**: Sí (extrae company_id de múltiples fuentes)
+
+---
+
+## Extracción de Company ID
+
+### Función Helper: `_get_company_id_from_request()`
+**Orden de Prioridad**:
+1. Header `X-Company-ID`
+2. Query parameter `company_id`
+3. JSON body `company_id`
+4. Default: `'benova'`
+
+**Uso en Headers**:
+```http
+X-Company-ID: spa_wellness
+```
+
+---
+
+## 1. GESTIÓN DE CONVERSACIONES
+
+### 1.1 Listar Conversaciones
+**Endpoint**: `GET /conversations`
+
+**Headers**:
+- `X-Company-ID: <company_id>` (opcional, usa 'benova' por defecto)
+
+**Parámetros de Query**:
+- `company_id` (string, opcional): ID de empresa (alternativo al header)
+- `page` (integer, opcional): Número de página (default: 1)
+- `page_size` (integer, opcional): Tamaño de página (default: 50, máximo: 100)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "conversations": [
+      {
+        "user_id": "string",
+        "last_message": "string",
+        "timestamp": "string",
+        "message_count": number,
+        "company_id": "string"
+      }
+    ],
+    "pagination": {
+      "page": number,
+      "page_size": number,
+      "total_conversations": number,
+      "total_pages": number
+    },
+    "company_id": "string"
+  }
+}
+```
+
+### 1.2 Obtener Conversación Específica
+**Endpoint**: `GET /conversations/<user_id>`
+
+**Headers**:
+- `X-Company-ID: <company_id>` (opcional)
+
+**Parámetros de URL**:
+- `user_id` (string, requerido): ID del usuario
+
+**Parámetros de Query**:
+- `company_id` (string, opcional): ID de empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "user_id": "string",
+    "company_id": "string",
+    "conversation_history": [
+      {
+        "timestamp": "string",
+        "user_message": "string",
+        "bot_response": "string",
+        "agent_used": "string",
+        "response_time": number
+      }
+    ],
+    "total_messages": number,
+    "first_interaction": "string",
+    "last_interaction": "string",
+    "conversation_summary": {
+      "status": "active|completed|abandoned",
+      "topics_discussed": ["string"],
+      "agents_used": ["string"]
+    }
+  }
+}
+```
+
+### 1.3 Eliminar Conversación
+**Endpoint**: `DELETE /conversations/<user_id>`
+
+**Headers**:
+- `X-Company-ID: <company_id>` (opcional)
+
+**Parámetros de URL**:
+- `user_id` (string, requerido): ID del usuario
+
+**Parámetros de Query**:
+- `company_id` (string, opcional): ID de empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "message": "Conversation {user_id} deleted"
+  }
+}
+```
+
+---
+
+## 2. TESTING Y DESARROLLO
+
+### 2.1 Probar Conversación
+**Endpoint**: `POST /conversations/<user_id>/test`
+
+**Headers**:
+- `Content-Type: application/json`
+- `X-Company-ID: <company_id>` (opcional)
+
+**Parámetros de URL**:
+- `user_id` (string, requerido): ID del usuario para testing
+
+**Body**:
+```json
+{
+  "message": "string (requerido)",
+  "company_id": "string (opcional, alternativo al header)"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "user_id": "string",
+    "user_message": "string",
+    "bot_response": "string",
+    "agent_used": "string",
+    "timestamp": number
+  }
+}
+```
+
+---
+
+## Características Especiales
+
+### **Multi-Tenant Support**
+- **Flexible Company ID**: Acepta company_id desde headers, query params o JSON body
+- **Validación de Empresa**: Verifica que company_id existe antes de procesar
+- **Aislamiento de Datos**: Cada empresa tiene sus propias conversaciones separadas
+- **Fallback por Defecto**: Usa 'benova' si no se especifica company_id
+
+### **Integración con Sistema Multi-Agente**
+- **ConversationManager**: Gestiona el historial de conversaciones por empresa
+- **Multi-Agent Factory**: Obtiene el orchestrator específico de cada empresa
+- **Prompt Service**: Integración con sistema de prompts PostgreSQL-first
+- **Logging Detallado**: Rastrea qué prompts y agentes se están usando
+
+### **Paginación y Performance**
+- **Paginación**: Sistema de páginas para listar conversaciones
+- **Límite de Tamaño**: Máximo 100 conversaciones por página
+- **Optimización**: Solo carga datos necesarios para cada request
+
+---
+
+## Patrones de Error Comunes
+
+**400 Bad Request** (Datos inválidos):
+```json
+{
+  "success": false,
+  "error": "Message is required",
+  "code": 400
+}
+```
+
+```json
+{
+  "success": false,
+  "error": "Invalid company_id: invalid_company",
+  "code": 400
+}
+```
+
+**404 Not Found** (Conversación no encontrada):
+```json
+{
+  "success": false,
+  "error": "Conversation not found for user user123 in company spa_wellness",
+  "code": 404
+}
+```
+
+**500 Internal Server Error**:
+```json
+{
+  "success": false,
+  "error": "Failed to test conversation",
+  "code": 500
+}
+```
+
+**503 Service Unavailable** (Sistema multi-agente no disponible):
+```json
+{
+  "success": false,
+  "error": "Multi-agent system not available for company: spa_wellness",
+  "code": 503
+}
+```
+
+---
+
+## Casos de Uso Típicos
+
+### **1. Listar Conversaciones de una Empresa**
+```http
+GET /conversations?company_id=spa_wellness&page=1&page_size=20
+```
+
+### **2. Ver Historial Completo de Usuario**
+```http
+GET /conversations/user123
+X-Company-ID: spa_wellness
+```
+
+### **3. Probar Bot con Mensaje Específico**
+```http
+POST /conversations/test_user/test
+Content-Type: application/json
+X-Company-ID: spa_wellness
+
+{
+  "message": "Hola, quiero información sobre tratamientos faciales"
+}
+```
+
+### **4. Limpiar Conversación de Usuario**
+```http
+DELETE /conversations/user123?company_id=spa_wellness
+```
+
+---
+
+## Integración con Otros Servicios
+
+### **ConversationManager**
+- Gestiona persistencia de conversaciones en Redis
+- Separa datos por empresa usando redis_prefix
+- Maneja paginación y búsqueda de conversaciones
+
+### **Multi-Agent Factory**
+- Obtiene orchestrator específico por empresa
+- Rutea mensajes al agente apropiado
+- Maneja respuestas contextuales
+
+### **Prompt Service**
+- Integración con sistema PostgreSQL-first de prompts
+- Logging de qué prompts se están usando
+- Fallback automático si PostgreSQL no está disponible
+
+### **Company Manager**
+- Validación de company_id antes de procesar requests
+- Configuración específica por empresa
+- Aislamiento de datos entre empresas
+
+---
+
+## Logging y Debugging
+
+### **Logs Detallados** (similares a preview de prompts):
+```
+🔍 [TESTER] Testing conversation for spa_wellness
+   → User: test_user
+   → Message: Hola, quiero información sobre...
+Getting prompts for company: spa_wellness
+Retrieved prompts for spa_wellness: 6 agents
+ConversationManager initialized for company: spa_wellness
+```
+
+### **Información de Debug**:
+- Company ID utilizado
+- Usuario involucrado
+- Mensaje enviado (truncado)
+- Agentes disponibles
+- Servicio de prompts consultado
+
+---
+
+## Notas de Implementación
+
+1. **Sin URL Prefix**: Los endpoints están directamente en la raíz (ej: `/conversations`, no `/api/conversations`)
+2. **Flexibilidad de Company ID**: Múltiples formas de especificar la empresa
+3. **Validación Consistente**: Todos los endpoints validan company_id antes de procesar
+4. **Error Handling**: Manejo robusto de errores con códigos HTTP apropiados
+5. **Testing Ready**: Endpoint específico para probar conversaciones sin afectar datos reales
+
+Este blueprint proporciona una API completa para la gestión de conversaciones en un entorno multi-tenant, con capacidades de testing y debugging integradas.
