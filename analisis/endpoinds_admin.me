@@ -1,0 +1,679 @@
+# Admin Blueprint - Análisis Completo de Endpoints
+
+## Información General
+- **Blueprint**: `admin`
+- **URL Prefix**: `/api/admin`
+- **Decoradores Comunes**: `@handle_errors`, `@require_api_key` (en algunos endpoints)
+
+---
+
+## 1. GESTIÓN DE PROMPTS
+
+### 1.1 Obtener Prompts de Empresa
+**Endpoint**: `GET /api/admin/prompts`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**:
+- `company_id` (query parameter, requerido): ID de la empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "agents": {
+      "agent_name": {
+        "current_prompt": "string",
+        "is_custom": boolean,
+        "source": "string",
+        "last_modified": "string"
+      }
+    },
+    "database_status": {
+      "postgresql_available": boolean,
+      "fallback_mode": "string"
+    },
+    "fallback_used": "string",
+    "total_agents": number,
+    "custom_prompts": number
+  }
+}
+```
+
+### 1.2 Actualizar Prompt de Agente
+**Endpoint**: `PUT /api/admin/prompts/<agent_name>`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body**:
+```json
+{
+  "company_id": "string (requerido)",
+  "prompt_template": "string (requerido)",
+  "modified_by": "string (opcional, default: 'admin')"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Prompt updated successfully for {agent_name}",
+    "company_id": "string",
+    "agent_name": "string",
+    "version": "string",
+    "database_status": object
+  }
+}
+```
+
+### 1.3 Restaurar Prompt a Default
+**Endpoint**: `DELETE /api/admin/prompts/<agent_name>`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**:
+- `company_id` (query parameter o JSON body, requerido)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Prompt reset to default for {agent_name}",
+    "company_id": "string",
+    "agent_name": "string"
+  }
+}
+```
+
+### 1.4 Reparar Prompts
+**Endpoint**: `POST /api/admin/prompts/repair`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body**:
+```json
+{
+  "company_id": "string (requerido)",
+  "agent_name": "string (opcional)"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Prompts reparados exitosamente desde repositorio",
+    "company_id": "string",
+    "agent_name": "string",
+    "repaired_items": array,
+    "total_repaired": number,
+    "total_attempted": number
+  }
+}
+```
+
+### 1.5 Vista Previa de Prompt
+**Endpoint**: `POST /api/admin/prompts/preview`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body**:
+```json
+{
+  "agent_name": "string (requerido)",
+  "company_id": "string (requerido)",
+  "prompt_template": "string (requerido)",
+  "message": "string (opcional)"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "preview": "string",
+    "agent_name": "string",
+    "agent_used": "string",
+    "company_id": "string",
+    "test_message": "string",
+    "prompt_preview": "string",
+    "method": "real_agent_system",
+    "timestamp": number,
+    "debug_info": {
+      "prompt_source": "string",
+      "agent_key": "string",
+      "response_length": number,
+      "temp_user_id": "string"
+    }
+  }
+}
+```
+
+### 1.6 Migrar Prompts a PostgreSQL
+**Endpoint**: `POST /api/admin/prompts/migrate`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body**:
+```json
+{
+  "force": boolean
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Migration completed successfully",
+    "statistics": object,
+    "database_status": object
+  }
+}
+```
+
+---
+
+## 2. GESTIÓN DE EMPRESAS (ENTERPRISE)
+
+### 2.1 Crear Nueva Empresa
+**Endpoint**: `POST /api/admin/companies/create`
+
+**Headers**:
+- `Content-Type: application/json`
+- `Authorization: Bearer <api_key>` (required)
+
+**Body**:
+```json
+{
+  "company_id": "string (requerido)",
+  "company_name": "string (requerido)",
+  "services": "string (requerido)",
+  "business_type": "string (opcional)",
+  "sales_agent_name": "string (opcional)",
+  "model_name": "string (opcional)",
+  "max_tokens": number,
+  "temperature": number,
+  "schedule_service_url": "string (opcional)",
+  "treatment_durations": object,
+  "timezone": "string (opcional)",
+  "language": "string (opcional)",
+  "currency": "string (opcional)",
+  "subscription_tier": "string (opcional)"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Enterprise company {company_id} created successfully",
+    "company_id": "string",
+    "company_name": "string",
+    "business_type": "string",
+    "architecture": "enterprise_postgresql",
+    "setup_status": {
+      "postgresql_config_saved": boolean,
+      "vectorstore_initialized": "string",
+      "prompts_configured": "string",
+      "company_manager_added": "string",
+      "orchestrator_initialized": "string",
+      "json_fallback_updated": "string"
+    },
+    "configuration": object,
+    "system_ready": boolean,
+    "endpoints_available": array,
+    "next_steps": array
+  }
+}
+```
+
+### 2.2 Obtener Configuración de Empresa
+**Endpoint**: `GET /api/admin/companies/<company_id>`
+
+**Headers**:
+- `Authorization: Bearer <api_key>` (required)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "configuration": object,
+    "metadata": {
+      "source": "string",
+      "version": "string",
+      "last_modified": "string",
+      "is_enterprise": boolean,
+      "db_status": "string"
+    }
+  }
+}
+```
+
+### 2.3 Actualizar Configuración de Empresa
+**Endpoint**: `PUT /api/admin/companies/<company_id>`
+
+**Headers**:
+- `Content-Type: application/json`
+- `Authorization: Bearer <api_key>` (required)
+
+**Body**: (Cualquier campo actualizable de la configuración de empresa)
+```json
+{
+  "company_name": "string",
+  "services": "string",
+  "sales_agent_name": "string",
+  "treatment_durations": object
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Company {company_id} updated successfully",
+    "company_id": "string",
+    "fields_updated": array,
+    "new_version": "string",
+    "configuration": object,
+    "cache_invalidated": boolean
+  }
+}
+```
+
+### 2.4 Listar Todas las Empresas
+**Endpoint**: `GET /api/admin/companies`
+
+**Headers**:
+- `Authorization: Bearer <api_key>` (required)
+
+**Parámetros**:
+- `active_only` (query parameter, opcional): "true" o "false"
+- `business_type` (query parameter, opcional): Filtro por tipo de negocio
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "total_companies": number,
+    "filters_applied": {
+      "active_only": boolean,
+      "business_type": "string"
+    },
+    "companies": [
+      {
+        "company_id": "string",
+        "company_name": "string",
+        "business_type": "string",
+        "services": "string",
+        "is_active": boolean,
+        "subscription_tier": "string",
+        "version": "string",
+        "created_by": "string",
+        "modified_by": "string"
+      }
+    ],
+    "source": "string",
+    "db_status": object
+  }
+}
+```
+
+### 2.5 Migrar Empresas desde JSON
+**Endpoint**: `POST /api/admin/companies/migrate-from-json`
+
+**Headers**:
+- `Authorization: Bearer <api_key>` (required)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Migration completed successfully",
+    "statistics": object,
+    "recommendation": "string"
+  }
+}
+```
+
+---
+
+## 3. ESTADO DEL SISTEMA
+
+### 3.1 Estado Administrativo
+**Endpoint**: `GET /api/admin/status`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "system_status": "operational",
+    "companies_configured": number,
+    "multi_tenant_mode": true,
+    "prompt_system": {
+      "postgresql_available": boolean,
+      "fallback_active": boolean,
+      "tables_status": boolean,
+      "total_custom_prompts": number,
+      "total_default_prompts": number
+    },
+    "companies": [
+      {
+        "company_id": "string",
+        "company_name": "string",
+        "status": "active"
+      }
+    ]
+  }
+}
+```
+
+### 3.2 Diagnósticos del Sistema
+**Endpoint**: `GET /api/admin/diagnostics`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**:
+- `company_id` (query parameter, opcional): ID de empresa específica
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "timestamp": number,
+    "company_id": "string",
+    "system_diagnostics": {
+      "redis_connection": boolean,
+      "openai_service": boolean,
+      "company_manager": boolean,
+      "multi_agent_factory": boolean
+    },
+    "companies_available": array,
+    "orchestrator_available": boolean,
+    "health_score": number
+  }
+}
+```
+
+---
+
+## 4. CONFIGURACIÓN
+
+### 4.1 Exportar Configuración de Empresas
+**Endpoint**: `GET /api/admin/companies/export`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**:
+- `export_all` (query parameter, opcional): "true" para exportar todas
+- `company_id` (query parameter, opcional): ID de empresa específica
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "export_type": "string",
+    "timestamp": number,
+    "total_companies": number,
+    "companies": object
+  }
+}
+```
+
+### 4.2 Actualizar Configuración Google Calendar
+**Endpoint**: `POST /api/admin/config/google-calendar`
+
+**Headers**:
+- `Content-Type: application/json`
+- `X-Company-ID: <company_id>` (opcional, alternativo al body)
+
+**Body**:
+```json
+{
+  "company_id": "string (requerido)",
+  "google_calendar_url": "string (requerido)"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Google Calendar configuration updated successfully",
+    "company_id": "string",
+    "google_calendar_url": "string"
+  }
+}
+```
+
+### 4.3 Recargar Configuración de Empresas
+**Endpoint**: `POST /api/admin/companies/reload-config`
+
+**Headers**:
+- `Authorization: Bearer <api_key>` (required)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Companies configuration reloaded successfully",
+    "companies_loaded": number,
+    "companies": array,
+    "timestamp": number
+  }
+}
+```
+
+---
+
+## 5. VECTORSTORE
+
+### 5.1 Forzar Recuperación de Vectorstore
+**Endpoint**: `POST /api/admin/vectorstore/force-recovery`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body** o **Parámetros**:
+- `company_id` (query parameter o JSON body, requerido)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "message": "Index recovery completed successfully for {company_id}",
+    "new_health": object
+  }
+}
+```
+
+### 5.2 Estado de Protección
+**Endpoint**: `GET /api/admin/vectorstore/protection-status`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**:
+- `company_id` (query parameter, requerido)
+
+**Formato de Respuesta**:
+```json
+{
+  "company_id": "string",
+  "auto_recovery_initialized": boolean,
+  "vectorstore_healthy": boolean,
+  "protection_active": boolean,
+  "system_type": "multi-tenant-with-recovery"
+}
+```
+
+### 5.3 Verificación de Salud del Vectorstore
+**Endpoint**: `GET /api/admin/vectorstore/health`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**:
+- `company_id` (query parameter, requerido)
+
+**Formato de Respuesta**:
+```json
+{
+  "status": "healthy|unhealthy|error",
+  "company_id": "string",
+  "details": object,
+  "auto_recovery_available": boolean,
+  "auto_recovery_enabled": boolean,
+  "recommendations": array,
+  "system_type": "multi-tenant-enhanced"
+}
+```
+
+---
+
+## 6. SISTEMA
+
+### 6.1 Reset del Sistema
+**Endpoint**: `POST /api/admin/system/reset`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body**:
+```json
+{
+  "reset_all": boolean,
+  "company_id": "string (opcional si reset_all=false)"
+}
+```
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "System reset completed for {scope}",
+    "company_id": "string",
+    "keys_cleared": number,
+    "timestamp": number,
+    "scope": "global|company-specific"
+  }
+}
+```
+
+---
+
+## 7. MULTIMEDIA
+
+### 7.1 Test de Integración Multimedia
+**Endpoint**: `POST /api/admin/multimedia/test`
+
+**Headers**:
+- `Content-Type: application/json`
+
+**Body** o **Parámetros**:
+- `company_id` (query parameter o JSON body, requerido)
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "multimedia_integration": {
+      "transcribe_audio_from_url": boolean,
+      "analyze_image_from_url": boolean,
+      "process_attachment": boolean,
+      "fully_integrated": boolean
+    },
+    "openai_service_available": boolean,
+    "voice_enabled": boolean,
+    "image_enabled": boolean,
+    "company_specific_config": boolean
+  }
+}
+```
+
+---
+
+## Patrones de Error Comunes
+
+Todos los endpoints pueden devolver estos códigos de error:
+
+**400 Bad Request**:
+```json
+{
+  "success": false,
+  "error": "Error message",
+  "code": 400
+}
+```
+
+**404 Not Found**:
+```json
+{
+  "success": false,
+  "error": "Resource not found",
+  "code": 404
+}
+```
+
+**500 Internal Server Error**:
+```json
+{
+  "success": false,
+  "error": "Internal server error message",
+  "code": 500
+}
+```
+
+**503 Service Unavailable**:
+```json
+{
+  "success": false,
+  "error": "Service unavailable message",
+  "code": 503
+}
+```
+
+---
+
+## Notas Importantes
+
+1. **Autenticación**: Los endpoints marcados con `@require_api_key` requieren un token de API válido
+2. **company_id**: Puede pasarse como query parameter, JSON body, o form data según el endpoint
+3. **Multi-tenant**: Todos los endpoints son conscientes de múltiples empresas
+4. **Fallbacks**: El sistema tiene mecanismos de respaldo para PostgreSQL y JSON
+5. **Versionado**: Las configuraciones de empresa incluyen control de versiones automático
