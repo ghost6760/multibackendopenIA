@@ -204,8 +204,8 @@ export const useApiRequest = () => {
   }
   
   /**
-   * 🔧 FUNCIÓN AGREGADA: apiRequestWithKey - CRÍTICA PARA ENTERPRISE
-   * Función helper para requests que requieren API key - MIGRADA DEL SCRIPT.JS
+   * 🔧 FUNCIÓN CRÍTICA CORREGIDA: apiRequestWithKey - MIGRADA EXACTA DEL SCRIPT.JS
+   * Función helper para requests que requieren API key - COMPORTAMIENTO IDÉNTICO
    */
   const apiRequestWithKey = async (endpoint, options = {}) => {
     // 🔧 CORRECCIÓN: Usar misma detección que script.js
@@ -429,14 +429,14 @@ export const useApiRequest = () => {
     // ✅ Función principal (debe mantener el mismo nombre y comportamiento)
     apiRequest,
     
-    // ✅ Funciones de API Key administrativa - NUEVAS
+    // ✅ Funciones de API Key administrativa - CRÍTICAS
     setAdminApiKey,
     getAdminApiKey,
     clearAdminApiKey,
     hasAdminApiKey,
     testApiKey,
     
-    // 🔧 FUNCIÓN CRÍTICA AGREGADA para enterprise
+    // 🔧 FUNCIÓN CRÍTICA CORREGIDA para enterprise
     apiRequestWithKey,
     
     // Wrappers de conveniencia
