@@ -1,0 +1,346 @@
+# Companies Blueprint - Análisis Completo de Endpoints
+
+## Información General
+- **Blueprint**: `companies`
+- **URL Prefix**: `/api/companies`
+- **Decorador Común**: `@handle_errors` (en todos los endpoints)
+- **Autenticación**: No requiere API key (endpoints públicos del sistema)
+
+---
+
+## 1. GESTIÓN DE EMPRESAS
+
+### 1.1 Listar Todas las Empresas
+**Endpoint**: `GET /api/companies`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**: Ninguno
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "companies": {
+      "company_id": {
+        "company_name": "string",
+        "business_type": "string",
+        "services": ["string"],
+        "agents": ["string"],
+        "status": "active|inactive|fallback",
+        "vectorstore_index": "string",
+        "redis_prefix": "string",
+        "statistics": {
+          "conversations": number,
+          "documents": number,
+          "active_sessions": number
+        },
+        "orchestrator_status": {
+          "available": boolean,
+          "agents_loaded": number,
+          "vectorstore_connected": boolean
+        }
+      }
+    },
+    "total_companies": number,
+    "system_statistics": {
+      "total_conversations": number,
+      "total_documents": number
+    },
+    "system_type": "multi-tenant-enhanced"
+  }
+}
+```
+
+### 1.2 Obtener Empresa Específica
+**Endpoint**: `GET /api/companies/<company_id>`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros de URL**:
+- `company_id` (string, requerido): ID de la empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "company": {
+      "company_name": "string",
+      "business_type": "string",
+      "services": ["string"],
+      "agents": ["string"],
+      "status": "string",
+      "vectorstore_index": "string",
+      "redis_prefix": "string",
+      "advanced_config": {
+        "vectorstore_index": "string",
+        "redis_prefix": "string",
+        "schedule_service_url": "string",
+        "business_specific_config": boolean
+      },
+      "system_health": {
+        "overall_healthy": boolean,
+        "agents_status": object,
+        "vectorstore_ready": boolean,
+        "last_health_check": number
+      }
+    }
+  }
+}
+```
+
+### 1.3 Estado de Empresa
+**Endpoint**: `GET /api/companies/<company_id>/status`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros de URL**:
+- `company_id` (string, requerido): ID de la empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "status": {
+      "company_id": "string",
+      "company_name": "string",
+      "business_type": "string",
+      "status": "string",
+      "services_count": number,
+      "agents_count": number,
+      "last_updated": "string (ISO timestamp)",
+      "health": {
+        "api": boolean,
+        "company_manager": boolean,
+        "multi_agent_factory": boolean,
+        "redis": boolean,
+        "vectorstore": boolean,
+        "openai": boolean
+      },
+      "health_score": number,
+      "metrics": {
+        "active_sessions": number,
+        "daily_requests": number,
+        "avg_response_time": "string",
+        "total_conversations": number,
+        "total_documents": number
+      },
+      "system_type": "multi-tenant-enhanced"
+    }
+  }
+}
+```
+
+---
+
+## 2. AGENTES DE EMPRESA
+
+### 2.1 Obtener Agentes de Empresa
+**Endpoint**: `GET /api/companies/<company_id>/agents`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros de URL**:
+- `company_id` (string, requerido): ID de la empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "agents": [
+      {
+        "name": "string",
+        "type": "string",
+        "status": "active|configured|unknown",
+        "description": "string",
+        "capabilities": ["string"],
+        "last_used": "string|null"
+      }
+    ],
+    "total_agents": number
+  }
+}
+```
+
+---
+
+## 3. MÉTRICAS Y MONITOREO
+
+### 3.1 Métricas de Empresa
+**Endpoint**: `GET /api/companies/<company_id>/metrics`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros de URL**:
+- `company_id` (string, requerido): ID de la empresa
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": "string",
+    "timestamp": number,
+    "basic_metrics": {
+      "conversations": number,
+      "documents": number,
+      "active_sessions": number,
+      "total_messages": number
+    },
+    "performance_metrics": {
+      "avg_response_time": "string",
+      "success_rate": "string",
+      "uptime": "string"
+    },
+    "agent_metrics": {
+      "most_used_agent": "string",
+      "agent_distribution": object
+    },
+    "error": "string (si hay errores)"
+  }
+}
+```
+
+### 3.2 Health Check del Servicio
+**Endpoint**: `GET /api/companies/health`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Parámetros**: Ninguno
+
+**Formato de Respuesta**:
+```json
+{
+  "status": "healthy|degraded|unhealthy",
+  "service": "companies",
+  "companies_loaded": number,
+  "service_health": {
+    "companies_loaded": boolean,
+    "company_manager": boolean,
+    "multi_agent_factory": boolean,
+    "redis": boolean
+  },
+  "health_score": number,
+  "message": "string",
+  "system_type": "multi-tenant-enhanced"
+}
+```
+
+**Códigos de Estado**:
+- `200 OK`: Servicio saludable
+- `500 Internal Server Error`: Servicio no saludable
+
+---
+
+## 4. CONFIGURACIÓN
+
+### 4.1 Recargar Configuración
+**Endpoint**: `POST /api/companies/reload-config`
+
+**Headers**:
+- Ningún header especial requerido
+
+**Body**: No requiere body
+
+**Formato de Respuesta**:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Advanced configuration reloaded successfully",
+    "method": "CompanyManager|Fallback",
+    "total_companies": number,
+    "companies": ["string"],
+    "features_available": [
+      "multi-agent-orchestrators",
+      "vectorstore-per-company",
+      "redis-isolation",
+      "auto-recovery"
+    ],
+    "warning": "string (solo si usa fallback)"
+  }
+}
+```
+
+---
+
+## Características Especiales
+
+### **Arquitectura Multi-Tenant Avanzada**
+- **Integración con CompanyManager**: Usa el sistema avanzado de gestión de empresas
+- **Fallback Automático**: Si CompanyManager falla, usa configuración JSON de respaldo
+- **Métricas en Tiempo Real**: Obtiene estadísticas desde Redis cuando está disponible
+- **Health Monitoring**: Verificación de estado para múltiples componentes
+
+### **Gestión de Errores**
+- **Fallbacks Múltiples**: Configuración básica → CompanyManager → JSON → Hardcoded
+- **Graceful Degradation**: Si servicios avanzados fallan, mantiene funcionalidad básica
+- **Logging Detallado**: Registra errores y warnings para diagnóstico
+
+### **Funcionalidades Avanzadas**
+- **Estadísticas por Empresa**: Contadores de conversaciones, documentos, sesiones activas
+- **Estado del Orchestrator**: Verificación de agentes cargados y vectorstore
+- **Health Scores**: Puntuación numérica de salud del sistema (0-100)
+- **Performance Metrics**: Tiempo de respuesta, tasa de éxito, uptime
+
+---
+
+## Patrones de Error Comunes
+
+**404 Not Found** (Empresa no encontrada):
+```json
+{
+  "success": false,
+  "error": "Company {company_id} not found",
+  "code": 404
+}
+```
+
+**500 Internal Server Error**:
+```json
+{
+  "success": false,
+  "error": "Error message",
+  "code": 500
+}
+```
+
+**500 con información adicional** (Health check fallido):
+```json
+{
+  "status": "unhealthy",
+  "service": "companies",
+  "error": "Error message"
+}
+```
+
+---
+
+## Notas de Integración
+
+1. **Compatibilidad**: Diseñado para trabajar con el sistema multi-tenant existente
+2. **Performance**: Usa caché Redis para estadísticas en tiempo real
+3. **Monitoreo**: Endpoints especializados para health checks y métricas
+4. **Frontend Ready**: Respuestas estructuradas para interfaces React/Vue
+5. **Escalabilidad**: Soporta múltiples empresas con aislamiento de datos
+
+### **Flujo de Datos Típico**:
+1. Frontend llama `GET /api/companies` para listar empresas
+2. Usuario selecciona empresa, frontend llama `GET /api/companies/{id}`
+3. Panel de admin usa `GET /api/companies/{id}/status` para monitoreo
+4. Métricas detalladas via `GET /api/companies/{id}/metrics`
+5. Health checks periódicos via `GET /api/companies/health`
+
+Este blueprint proporciona una API completa para la gestión visual de empresas en un sistema multi-tenant, con capacidades avanzadas de monitoreo y diagnóstico.
