@@ -1,6 +1,5 @@
 // stores/companies.js - Store de Empresas para Pinia
 // Migración de lógica de empresas desde script.js preservando funcionalidad exacta
-// 🔥 ACTUALIZADO: Con sincronización unificada Enterprise ↔ CompanySelector
 
 import { defineStore } from 'pinia'
 import { ref, computed, watchEffect } from 'vue'
@@ -29,10 +28,6 @@ export const useCompaniesStore = defineStore('companies', () => {
   const isLoadingEnterprise = ref(false)
   const enterpriseError = ref(null)
   
-  // 🔥 NUEVO: Estado para sincronización
-  const lastSyncTime = ref(null)
-  const pendingSyncs = ref(new Set())
-  
   // ============================================================================
   // COMPUTED PROPERTIES
   // ============================================================================
@@ -53,63 +48,22 @@ export const useCompaniesStore = defineStore('companies', () => {
     }))
   })
   
-  // 🔥 NUEVO: Computed para verificar si hay sincronizaciones pendientes
-  const hasPendingSyncs = computed(() => pendingSyncs.value.size > 0)
-  
   // ============================================================================
   // ACCIONES - PRESERVAR NOMBRES Y COMPORTAMIENTO EXACTO
   // ============================================================================
   
   /**
    * Cargar lista de empresas - MANTENER FUNCIÓN EXACTA DE script.js
-   * 🔥 ACTUALIZADO: Con soporte para diferentes fuentes
    */
-  const loadCompanies = async (source = 'general') => {
+  const loadCompanies = async () => {
     try {
       isLoadingCompanies.value = true
       companiesError.value = null
       
-      console.log(`🏢 Loading companies from source: ${source}`)
+      console.log('🏢 Loading companies...')
       
-      let endpoint = '/api/companies'
-      let headers = {}
-      
-      // Usar endpoint específico según la fuente
-      if (source === 'enterprise') {
-        endpoint = '/api/admin/companies'
-        if (appStore.adminApiKey) {
-          headers['X-API-Key'] = appStore.adminApiKey
-        }
-      }
-      
-      // ✅ LLAMADA API CON ENDPOINT DINÁMICO
-      const response = await apiRequest(endpoint, { headers })
-      
-      let companiesData = []
-      
-      // Normalizar respuesta según el endpoint
-      if (source === 'enterprise') {
-        companiesData = Array.isArray(response) ? response : 
-                       response.companies ? Object.values(response.companies) : []
-        
-        // Actualizar también la lista enterprise
-        enterpriseCompanies.value = companiesData
-      } else {
-        // Para endpoint general /api/companies
-        if (response.companies && typeof response.companies === 'object') {
-          companiesData = Object.keys(response.companies).map(companyId => ({
-            id: companyId,
-            company_id: companyId,
-            name: response.companies[companyId].company_name || companyId,
-            company_name: response.companies[companyId].company_name || companyId,
-            ...response.companies[companyId]
-          }))
-        } else if (Array.isArray(response)) {
-          companiesData = response
-        } else {
-          companiesData = response
-        }
-      }
+      // ✅ MANTENER LLAMADA API EXACTA
+      const companiesData = await apiRequest('/api/companies')
       
       companies.value = companiesData
       
@@ -117,213 +71,19 @@ export const useCompaniesStore = defineStore('companies', () => {
       appStore.cache.companies = companiesData
       appStore.cache.lastUpdate.companies = Date.now()
       
-      // 🔥 ACTUALIZAR TIEMPO DE SINCRONIZACIÓN
-      lastSyncTime.value = new Date().toISOString()
-      
       // ✅ MANTENER LOGGING EXACTO
-      appStore.addToLog(`Companies loaded successfully from ${source}`, 'info')
-      console.log(`✅ Companies loaded from ${source}:`, companiesData.length)
+      appStore.addToLog('Companies loaded successfully', 'info')
+      console.log('✅ Companies loaded:', companiesData.length)
       
       return companies.value
       
     } catch (error) {
       companiesError.value = error.message
-      appStore.addToLog(`Error loading companies from ${source}: ${error.message}`, 'error')
+      appStore.addToLog(`Error loading companies: ${error.message}`, 'error')
       appStore.showNotification('Error loading companies', 'error')
       throw error
     } finally {
       isLoadingCompanies.value = false
-    }
-  }
-  
-  /**
-   * 🔥 NUEVA FUNCIÓN: Actualizar empresa unificada (funciona para ambos módulos)
-   */
-  const updateCompany = async (companyId, companyData, source = 'general') => {
-    if (!companyId) {
-      throw new Error('Company ID is required')
-    }
-    
-    // Agregar a sincronizaciones pendientes
-    pendingSyncs.value.add(companyId)
-    
-    try {
-      console.log(`🔄 Updating company ${companyId} from ${source}`)
-      appStore.addToLog(`Updating company ${companyId} from ${source}`, 'info')
-      
-      let endpoint = `/api/companies/${companyId}`
-      let headers = { 'Content-Type': 'application/json' }
-      
-      // Usar endpoint y headers específicos según la fuente  
-      if (source === 'enterprise') {
-        endpoint = `/api/admin/companies/${encodeURIComponent(companyId)}`
-        
-        // Agregar headers de admin
-        if (appStore.adminApiKey) {
-          headers['X-API-Key'] = appStore.adminApiKey
-        }
-      }
-      
-      const response = await apiRequest(endpoint, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(companyData)
-      })
-      
-      // 🔥 ACTUALIZAR EN AMBAS LISTAS (companies y enterpriseCompanies)
-      const updateCompanyInList = (list, data) => {
-        const index = list.findIndex(c => 
-          (c.id || c.company_id) === companyId
-        )
-        
-        if (index !== -1) {
-          list[index] = { 
-            ...list[index], 
-            ...companyData,
-            ...data 
-          }
-          return list[index]
-        }
-        return null
-      }
-      
-      // Actualizar en lista general
-      const updatedCompany = updateCompanyInList(companies.value, response)
-      
-      // Actualizar en lista enterprise si existe
-      if (enterpriseCompanies.value.length > 0) {
-        updateCompanyInList(enterpriseCompanies.value, response)
-      }
-      
-      // 🔥 INVALIDAR CACHE PARA FORZAR RECARGA COMPLETA
-      appStore.cache.companies = null
-      delete appStore.cache.lastUpdate.companies
-      
-      // 🔥 EMITIR EVENTO GLOBAL PARA NOTIFICAR A TODOS LOS COMPONENTES
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('companyUpdatedGlobal', {
-          detail: { 
-            companyId, 
-            updatedData: companyData, 
-            updatedCompany,
-            source,
-            timestamp: Date.now()
-          }
-        }))
-        
-        // También emitir el evento original para compatibilidad
-        window.dispatchEvent(new CustomEvent('companyUpdated', {
-          detail: { 
-            companyId, 
-            updatedData: companyData, 
-            source
-          }
-        }))
-      }
-      
-      // 🔥 NOTIFICAR SINCRONIZACIÓN A OTROS COMPONENTES
-      await notifyComponentsOfUpdate(companyId, companyData, source)
-      
-      console.log(`✅ Company ${companyId} updated successfully from ${source}`)
-      appStore.addToLog(`Company ${companyId} updated successfully from ${source}`, 'success')
-      appStore.showNotification('✅ Empresa actualizada exitosamente', 'success')
-      
-      return response
-      
-    } catch (error) {
-      console.error(`Error updating company from ${source}:`, error)
-      appStore.addToLog(`Error updating company from ${source}: ${error.message}`, 'error')
-      appStore.showNotification(`Error actualizando empresa: ${error.message}`, 'error')
-      throw error
-    } finally {
-      // Remover de sincronizaciones pendientes
-      pendingSyncs.value.delete(companyId)
-    }
-  }
-  
-  /**
-   * 🔥 NUEVA FUNCIÓN: Notificar a componentes específicos del update
-   */
-  const notifyComponentsOfUpdate = async (companyId, companyData, source) => {
-    try {
-      // Notificar al CompanySelector si viene de Enterprise
-      if (source === 'enterprise' && window.refreshCompanies) {
-        setTimeout(async () => {
-          try {
-            await window.refreshCompanies()
-            console.log('✅ CompanySelector refreshed after enterprise update')
-          } catch (error) {
-            console.error('Error refreshing CompanySelector:', error)
-          }
-        }, 100)
-      }
-      
-      // Notificar al Enterprise module si viene de general
-      if (source === 'general' && window.refreshEnterpriseCompanies) {
-        setTimeout(async () => {
-          try {
-            await window.refreshEnterpriseCompanies()
-            console.log('✅ Enterprise module refreshed after general update')
-          } catch (error) {
-            console.error('Error refreshing Enterprise module:', error)
-          }
-        }, 100)
-      }
-      
-      // Mostrar notificación de sincronización
-      setTimeout(() => {
-        appStore.showNotification('🔄 Todos los componentes sincronizados', 'success', 2000)
-      }, 500)
-      
-    } catch (error) {
-      console.error('Error notifying components:', error)
-    }
-  }
-  
-  /**
-   * 🔥 NUEVA FUNCIÓN: Refrescar desde fuente específica
-   */
-  const refreshFromSource = async (source = 'general') => {
-    try {
-      console.log(`🔄 Refreshing companies from ${source}`)
-      
-      // Limpiar cache
-      appStore.cache.companies = null
-      delete appStore.cache.lastUpdate.companies
-      
-      // Recargar desde la fuente especificada
-      await loadCompanies(source)
-      
-      appStore.showNotification('✅ Lista de empresas actualizada', 'success')
-      appStore.addToLog(`Companies refreshed from ${source}`, 'success')
-      
-      return companies.value
-      
-    } catch (error) {
-      appStore.addToLog(`Error refreshing from ${source}: ${error.message}`, 'error')
-      throw error
-    }
-  }
-  
-  /**
-   * 🔥 NUEVA FUNCIÓN: Sincronizar ambas listas
-   */
-  const syncAllLists = async () => {
-    try {
-      console.log('🔄 Syncing all company lists...')
-      
-      // Cargar desde ambas fuentes
-      await Promise.allSettled([
-        loadCompanies('general'),
-        loadCompanies('enterprise')
-      ])
-      
-      lastSyncTime.value = new Date().toISOString()
-      appStore.addToLog('All company lists synchronized', 'success')
-      
-    } catch (error) {
-      appStore.addToLog(`Error syncing lists: ${error.message}`, 'error')
-      throw error
     }
   }
   
@@ -448,7 +208,6 @@ export const useCompaniesStore = defineStore('companies', () => {
   
   /**
    * Cargar empresas enterprise - CON API KEY
-   * 🔥 ACTUALIZADO: Con sincronización automática
    */
   const loadEnterpriseCompanies = async () => {
     try {
@@ -468,14 +227,6 @@ export const useCompaniesStore = defineStore('companies', () => {
       })
       
       enterpriseCompanies.value = response.companies || []
-      
-      // 🔥 SINCRONIZAR CON LISTA GENERAL SI NO ESTÁ CARGADA
-      if (companies.value.length === 0) {
-        companies.value = enterpriseCompanies.value
-        appStore.cache.companies = enterpriseCompanies.value
-        appStore.cache.lastUpdate.companies = Date.now()
-      }
-      
       appStore.addToLog('Enterprise companies loaded', 'info')
       
       return enterpriseCompanies.value
@@ -491,7 +242,6 @@ export const useCompaniesStore = defineStore('companies', () => {
   
   /**
    * Crear nueva empresa enterprise
-   * 🔥 ACTUALIZADO: Con sincronización automática
    */
   const createEnterpriseCompany = async (companyData) => {
     try {
@@ -508,63 +258,13 @@ export const useCompaniesStore = defineStore('companies', () => {
       })
       
       appStore.showNotification('Enterprise company created successfully', 'success')
-      
-      // 🔥 RECARGAR AMBAS LISTAS DESPUÉS DE CREAR
-      await Promise.allSettled([
-        loadEnterpriseCompanies(),
-        loadCompanies('general')
-      ])
+      await loadEnterpriseCompanies() // Recargar lista
       
       return response
       
     } catch (error) {
       appStore.showNotification(`Error creating company: ${error.message}`, 'error')
       throw error
-    }
-  }
-  
-  // ============================================================================
-  // 🔥 NUEVAS FUNCIONES DE UTILIDAD
-  // ============================================================================
-  
-  /**
-   * Encontrar empresa por ID en cualquier lista
-   */
-  const findCompanyById = (companyId) => {
-    // Buscar primero en la lista general
-    let company = companies.value.find(c => 
-      (c.id || c.company_id) === companyId
-    )
-    
-    // Si no se encuentra, buscar en la lista enterprise
-    if (!company && enterpriseCompanies.value.length > 0) {
-      company = enterpriseCompanies.value.find(c => 
-        (c.id || c.company_id) === companyId
-      )
-    }
-    
-    return company
-  }
-  
-  /**
-   * Validar si el cache es válido
-   */
-  const isCacheValid = (maxAge = 300000) => { // 5 minutos por defecto
-    return appStore.cache.companies && 
-           appStore.cache.lastUpdate.companies && 
-           (Date.now() - appStore.cache.lastUpdate.companies) < maxAge
-  }
-  
-  /**
-   * Obtener estadísticas de sincronización
-   */
-  const getSyncStats = () => {
-    return {
-      lastSyncTime: lastSyncTime.value,
-      pendingSyncs: Array.from(pendingSyncs.value),
-      generalCount: companies.value.length,
-      enterpriseCount: enterpriseCompanies.value.length,
-      cacheValid: isCacheValid()
     }
   }
   
@@ -578,11 +278,6 @@ export const useCompaniesStore = defineStore('companies', () => {
       window.companiesData = companies.value
       window.companiesStatus = companiesStatus.value
       window.enterpriseCompanies = enterpriseCompanies.value
-      
-      // 🔥 EXPONER NUEVAS FUNCIONES GLOBALES
-      window.updateCompanyUnified = updateCompany
-      window.refreshFromSource = refreshFromSource
-      window.syncAllCompanyLists = syncAllLists
     }
   })
   
@@ -591,7 +286,7 @@ export const useCompaniesStore = defineStore('companies', () => {
   // ============================================================================
   
   return {
-    // Estado original
+    // Estado
     companies,
     isLoadingCompanies,
     companiesError,
@@ -601,34 +296,18 @@ export const useCompaniesStore = defineStore('companies', () => {
     isLoadingEnterprise,
     enterpriseError,
     
-    // 🔥 NUEVO: Estado de sincronización
-    lastSyncTime,
-    pendingSyncs,
-    hasPendingSyncs,
-    
-    // Computed originales
+    // Computed
     availableCompanies,
     currentCompany,
     companiesWithStatus,
     
-    // Acciones originales
+    // Acciones públicas
     loadCompanies,
     handleCompanyChange,
     validateCompanySelection,
     loadCompaniesStatus,
     reloadCompaniesConfig,
     loadEnterpriseCompanies,
-    createEnterpriseCompany,
-    
-    // 🔥 NUEVAS ACCIONES DE SINCRONIZACIÓN
-    updateCompany,
-    refreshFromSource,
-    syncAllLists,
-    notifyComponentsOfUpdate,
-    
-    // 🔥 NUEVAS UTILIDADES
-    findCompanyById,
-    isCacheValid,
-    getSyncStats
+    createEnterpriseCompany
   }
 })
