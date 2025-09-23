@@ -8,7 +8,7 @@
       </p>
     </div>
 
-    <!-- ✅ API Key Check - MISMO COMPORTAMIENTO QUE script.js -->
+    <!-- ✅ API KEY CHECK - MISMO COMPORTAMIENTO QUE script.js -->
     <div v-if="!hasValidApiKey" class="api-key-required">
       <div class="warning-card">
         <div class="warning-icon">🔑</div>
@@ -26,53 +26,57 @@
     <!-- ✅ CONTENIDO PRINCIPAL (cuando hay API key válida) -->
     <div v-else class="enterprise-content">
       
-      <!-- ✅ PANEL DE ESTADO - Información como script.js -->
-      <div class="enterprise-status">
-        <div class="status-cards">
-          <div class="status-card">
-            <div class="card-icon">🏢</div>
-            <div class="card-content">
-              <h4>Total Empresas</h4>
-              <div class="card-value">{{ companiesCount }}</div>
+      <!-- ✅ ESTADÍSTICAS - Información como script.js -->
+      <div class="enterprise-stats">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">🏢</div>
+            <div class="stat-content">
+              <div class="stat-value">{{ companiesCount }}</div>
+              <div class="stat-label">Total Empresas</div>
             </div>
           </div>
           
-          <div class="status-card">
-            <div class="card-icon">✅</div>
-            <div class="card-content">
-              <h4>Empresas Activas</h4>
-              <div class="card-value success">{{ activeCompaniesCount }}</div>
+          <div class="stat-card success">
+            <div class="stat-icon">✅</div>
+            <div class="stat-content">
+              <div class="stat-value">{{ activeCompaniesCount }}</div>
+              <div class="stat-label">Activas</div>
             </div>
           </div>
           
-          <div class="status-card">
-            <div class="card-icon">⚠️</div>
-            <div class="card-content">
-              <h4>Con Problemas</h4>
-              <div class="card-value warning">{{ companiesWithIssues }}</div>
+          <div class="stat-card warning">
+            <div class="stat-icon">⚠️</div>
+            <div class="stat-content">
+              <div class="stat-value">{{ companiesWithIssues }}</div>
+              <div class="stat-label">Con Problemas</div>
             </div>
           </div>
           
-          <div class="status-card">
-            <div class="card-icon">🔄</div>
-            <div class="card-content">
-              <h4>Última Actualización</h4>
-              <div class="card-value">{{ formatDateTime(lastUpdateTime) }}</div>
+          <div class="stat-card info">
+            <div class="stat-icon">🔄</div>
+            <div class="stat-content">
+              <div class="stat-value">{{ formatDateTime(lastUpdateTime) || 'N/A' }}</div>
+              <div class="stat-label">Última Sync</div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- ✅ HERRAMIENTAS ENTERPRISE - EXACTAS como script.js -->
+      <!-- ✅ HERRAMIENTAS PRINCIPALES -->
       <div class="enterprise-tools">
         <div class="tools-header">
           <h3>🛠️ Herramientas Enterprise</h3>
           <div class="tools-actions">
-            <button @click="refreshCompanies" class="btn btn-secondary" :disabled="isLoading">
+            <button 
+              @click="refreshCompanies" 
+              class="btn btn-info" 
+              :disabled="isAnyProcessing"
+            >
               <span v-if="isLoading">⏳ Cargando...</span>
-              <span v-else>🔄 Actualizar</span>
+              <span v-else>🔄 Recargar</span>
             </button>
-            <button @click="showCreateModal" class="btn btn-primary">
+            <button @click="toggleCreateForm" class="btn btn-primary">
               ➕ Nueva Empresa
             </button>
           </div>
@@ -87,40 +91,44 @@
             <div class="tool-icon">🔄</div>
             <div class="tool-content">
               <div class="tool-title">Migrar desde JSON</div>
-              <div class="tool-description">Migrar empresas del archivo JSON a PostgreSQL</div>
+              <div class="tool-description">PostgreSQL ← archivo JSON</div>
             </div>
             <div v-if="isMigrating" class="tool-loading">⏳</div>
           </button>
           
-          <button @click="exportCompaniesData" class="tool-button">
+          <button @click="exportData" class="tool-button">
             <div class="tool-icon">📤</div>
             <div class="tool-content">
-              <div class="tool-title">Exportar Datos</div>
-              <div class="tool-description">Exportar configuraciones en JSON/CSV</div>
+              <div class="tool-title">Exportar</div>
+              <div class="tool-description">Descargar JSON/CSV</div>
             </div>
           </button>
           
-          <button @click="runHealthCheckAll" class="tool-button" :disabled="isRunningHealthCheck">
+          <button @click="runHealthCheck" class="tool-button" :disabled="isRunningHealthCheck">
             <div class="tool-icon">🏥</div>
             <div class="tool-content">
-              <div class="tool-title">Health Check Global</div>
-              <div class="tool-description">Verificar estado de todas las empresas</div>
+              <div class="tool-title">Health Check</div>
+              <div class="tool-description">Verificar todas</div>
             </div>
             <div v-if="isRunningHealthCheck" class="tool-loading">⏳</div>
           </button>
           
-          <button @click="testApiKeyConnection" class="tool-button">
+          <button @click="testApiConnection" class="tool-button">
             <div class="tool-icon">🔧</div>
             <div class="tool-content">
               <div class="tool-title">Test API Key</div>
-              <div class="tool-description">Verificar conexión administrativa</div>
+              <div class="tool-description">Verificar conexión</div>
             </div>
           </button>
         </div>
       </div>
 
-      <!-- ✅ FORMULARIO DE CREACIÓN - Solo usar el componente -->
+      <!-- ✅ FORMULARIO DE CREACIÓN (Toggleable) -->
       <div v-if="showCreateForm" class="create-section">
+        <div class="section-header">
+          <h3>➕ Crear Nueva Empresa Enterprise</h3>
+          <button @click="hideCreateForm" class="btn btn-outline btn-sm">✖️ Cerrar</button>
+        </div>
         <EnterpriseCompanyForm
           :is-edit-mode="false"
           :is-saving="isCreating"
@@ -129,14 +137,14 @@
         />
       </div>
 
-      <!-- ✅ LISTA DE EMPRESAS - Usar componente sin duplicar lógica -->
+      <!-- ✅ LISTA DE EMPRESAS (Siempre visible) -->
       <div class="companies-section">
         <EnterpriseCompanyList
           :companies="enterpriseCompanies"
           :is-loading="isLoading"
           :last-sync="lastUpdateTime"
           @refresh="refreshCompanies"
-          @create="showCreateModal"
+          @create="toggleCreateForm"
           @view="handleViewCompany"
           @edit="handleEditCompany"
           @test="handleTestCompany"
@@ -146,8 +154,9 @@
       </div>
     </div>
 
-    <!-- ✅ MODAL DE VISTA DETALLADA -->
-    <div v-if="selectedCompany && showViewModal" class="company-modal" @click="closeViewModal">
+    <!-- ✅ MODALES -->
+    <!-- Modal de Vista -->
+    <div v-if="selectedCompany && showViewModal" class="modal-overlay" @click="closeViewModal">
       <div class="modal-content large" @click.stop>
         <EnterpriseCompanyDetail
           :company="selectedCompany"
@@ -157,13 +166,18 @@
           @test="handleTestFromDetail"
           @close="closeViewModal"
           @refresh="refreshSelectedCompany"
+          @toggle-status="handleToggleStatus"
         />
       </div>
     </div>
 
-    <!-- ✅ MODAL DE EDICIÓN -->
-    <div v-if="selectedCompany && showEditModal" class="company-modal" @click="closeEditModal">
+    <!-- Modal de Edición -->
+    <div v-if="selectedCompany && showEditModal" class="modal-overlay" @click="closeEditModal">
       <div class="modal-content large" @click.stop>
+        <div class="modal-header">
+          <h3>✏️ Editar {{ selectedCompany.company_name || selectedCompany.company_id }}</h3>
+          <button @click="closeEditModal" class="modal-close">✖️</button>
+        </div>
         <EnterpriseCompanyForm
           :is-edit-mode="true"
           :initial-data="selectedCompany"
@@ -174,9 +188,8 @@
       </div>
     </div>
 
-    <!-- ✅ CONTENEDORES DE COMPATIBILIDAD (para funciones de script.js) -->
+    <!-- ✅ CONTENEDOR DE RESULTADOS (compatibilidad con script.js) -->
     <div id="enterpriseResults" class="results-container"></div>
-    <div id="enterpriseCompaniesTable" class="compatibility-container"></div>
   </div>
 </template>
 
@@ -190,24 +203,14 @@ import EnterpriseCompanyList from './EnterpriseCompanyList.vue'
 import EnterpriseCompanyDetail from './EnterpriseCompanyDetail.vue'
 
 // ============================================================================
-// PROPS
-// ============================================================================
-const props = defineProps({
-  isActive: {
-    type: Boolean,
-    default: false
-  }
-})
-
-// ============================================================================
-// STORES & COMPOSABLES
+// STORES & COMPOSABLES - ✅ SIN DUPLICACIÓN DE LÓGICA
 // ============================================================================
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
 
-// ✅ USAR COMPOSABLE - NO DUPLICAR LÓGICA
+// ✅ USAR COMPOSABLE COMPLETO - Toda la lógica de negocio viene del composable
 const {
-  // Estado reactivo del composable
+  // Estado del composable
   enterpriseCompanies,
   selectedCompany,
   isLoading,
@@ -223,22 +226,19 @@ const {
   activeCompanies,
   isAnyProcessing,
 
-  // Funciones principales del composable
+  // Funciones del composable
   loadEnterpriseCompanies,
   createEnterpriseCompany,
   viewEnterpriseCompany,
   saveEnterpriseCompany,
   testEnterpriseCompany,
   migrateCompaniesToPostgreSQL,
-
-  // Funciones auxiliares del composable
   getCompanyById,
-  exportCompanies,
-  clearCompanyForm
+  exportCompanies
 } = useEnterprise()
 
 // ============================================================================
-// ESTADO LOCAL (Solo UI, no lógica de negocio)
+// ESTADO LOCAL (Solo para UI, no lógica de negocio)
 // ============================================================================
 const showCreateForm = ref(false)
 const showViewModal = ref(false)
@@ -246,14 +246,12 @@ const showEditModal = ref(false)
 const isRunningHealthCheck = ref(false)
 
 // ============================================================================
-// COMPUTED PROPERTIES LOCALES
+// COMPUTED LOCALES (Solo para UI)
 // ============================================================================
 const hasValidApiKey = computed(() => !!appStore.adminApiKey)
 
 const activeCompaniesCount = computed(() => {
-  return enterpriseCompanies.value.filter(company => 
-    company.is_active !== false && company.status !== 'inactive'
-  ).length
+  return activeCompanies.value.length
 })
 
 const companiesWithIssues = computed(() => {
@@ -263,21 +261,23 @@ const companiesWithIssues = computed(() => {
 })
 
 // ============================================================================
-// FUNCIONES DE UI (NO DUPLICAR LÓGICA DE NEGOCIO)
+// MÉTODOS DE UI (Sin duplicar lógica de negocio)
 // ============================================================================
 
 /**
- * ✅ MOSTRAR/OCULTAR MODALES
+ * ✅ GESTIÓN DE FORMULARIOS
  */
-const showCreateModal = () => {
-  clearCompanyForm()
-  showCreateForm.value = true
+const toggleCreateForm = () => {
+  showCreateForm.value = !showCreateForm.value
 }
 
 const hideCreateForm = () => {
   showCreateForm.value = false
 }
 
+/**
+ * ✅ GESTIÓN DE MODALES
+ */
 const closeViewModal = () => {
   showViewModal.value = false
   selectedCompany.value = null
@@ -289,7 +289,7 @@ const closeEditModal = () => {
 }
 
 /**
- * ✅ REFRESCAR EMPRESAS - Delegar al composable
+ * ✅ OPERACIONES PRINCIPALES (Delegando al composable)
  */
 const refreshCompanies = async () => {
   try {
@@ -299,57 +299,19 @@ const refreshCompanies = async () => {
   }
 }
 
-/**
- * ✅ CREAR EMPRESA - Delegar al composable
- */
 const handleCreateCompany = async (companyData) => {
   try {
     const result = await createEnterpriseCompany(companyData)
     
     if (result) {
       hideCreateForm()
-      
-      // ✅ MOSTRAR RESULTADO COMO script.js en contenedor de compatibilidad
-      const resultsContainer = document.getElementById('enterpriseResults')
-      if (resultsContainer && result.data) {
-        const data = result.data
-        resultsContainer.innerHTML = `
-          <div class="result-container result-success">
-            <h4>✅ Empresa Enterprise Creada</h4>
-            <p><strong>ID:</strong> ${data.company_id}</p>
-            <p><strong>Nombre:</strong> ${data.company_name}</p>
-            <p><strong>Arquitectura:</strong> ${data.architecture || 'enterprise_postgresql'}</p>
-            
-            ${data.setup_status ? `
-              <h5>Estado de Configuración:</h5>
-              <div class="setup-status">
-                ${Object.entries(data.setup_status).map(([key, value]) => `
-                  <div class="status-item">
-                    <span class="status-indicator ${typeof value === 'boolean' ? (value ? 'success' : 'error') : 'info'}"></span>
-                    ${key}: ${typeof value === 'boolean' ? (value ? '✅' : '❌') : value}
-                  </div>
-                `).join('')}
-              </div>
-            ` : ''}
-            
-            ${data.next_steps ? `
-              <h5>Próximos Pasos:</h5>
-              <ol style="margin-left: 20px;">
-                ${data.next_steps.map(step => `<li>${step}</li>`).join('')}
-              </ol>
-            ` : ''}
-          </div>
-        `
-      }
+      showResultInContainer(result)
     }
   } catch (error) {
     // Error ya manejado en el composable
   }
 }
 
-/**
- * ✅ VER EMPRESA - Delegar al composable y mostrar modal
- */
 const handleViewCompany = async (companyId) => {
   try {
     await viewEnterpriseCompany(companyId)
@@ -361,9 +323,6 @@ const handleViewCompany = async (companyId) => {
   }
 }
 
-/**
- * ✅ EDITAR EMPRESA - Delegar al composable y mostrar modal
- */
 const handleEditCompany = async (companyId) => {
   try {
     await viewEnterpriseCompany(companyId)
@@ -375,9 +334,6 @@ const handleEditCompany = async (companyId) => {
   }
 }
 
-/**
- * ✅ ACTUALIZAR EMPRESA - Delegar al composable
- */
 const handleUpdateCompany = async (companyData) => {
   if (!selectedCompany.value) return
   
@@ -393,9 +349,6 @@ const handleUpdateCompany = async (companyData) => {
   }
 }
 
-/**
- * ✅ PROBAR EMPRESA - Delegar al composable
- */
 const handleTestCompany = async (companyId) => {
   try {
     const testMessage = prompt('Mensaje de prueba:', '¿Cuáles son sus servicios disponibles?')
@@ -404,39 +357,89 @@ const handleTestCompany = async (companyId) => {
     const result = await testEnterpriseCompany(companyId, testMessage)
     
     if (result) {
-      // ✅ MOSTRAR RESULTADO COMO script.js
-      const resultsContainer = document.getElementById('enterpriseResults')
-      if (resultsContainer) {
-        resultsContainer.innerHTML = `
-          <div class="result-container result-success">
-            <h4>🧪 Test Empresa: ${companyId}</h4>
-            <div class="test-section">
-              <h5>📤 Mensaje enviado:</h5>
-              <div class="message-box user">${testMessage}</div>
-            </div>
-            <div class="test-section">
-              <h5>🤖 Respuesta del bot:</h5>
-              <div class="message-box bot">${result.bot_response || result.response || 'Sin respuesta'}</div>
-            </div>
-            <div class="test-section">
-              <h5>ℹ️ Información técnica:</h5>
-              <div class="tech-info">
-                <p><strong>Agente usado:</strong> ${result.agent_used || 'Desconocido'}</p>
-                <p><strong>Empresa:</strong> ${result.company_id || companyId}</p>
-                ${result.processing_time ? `<p><strong>Tiempo:</strong> ${result.processing_time}ms</p>` : ''}
-              </div>
-            </div>
-          </div>
-        `
-      }
+      showTestResultInContainer(companyId, testMessage, result)
     }
   } catch (error) {
     // Error ya manejado en el composable
   }
 }
 
+const handleToggleStatus = async (companyId, newStatus) => {
+  try {
+    const company = getCompanyById(companyId)
+    if (!company) return
+    
+    const updatedData = { ...company, is_active: newStatus }
+    await saveEnterpriseCompany(companyId, updatedData)
+    await refreshCompanies()
+    
+    showNotification(`Empresa ${newStatus ? 'activada' : 'desactivada'} exitosamente`, 'success')
+  } catch (error) {
+    showNotification(`Error al cambiar estado: ${error.message}`, 'error')
+  }
+}
+
+const handleMigrateCompanies = async () => {
+  try {
+    await migrateCompaniesToPostgreSQL()
+  } catch (error) {
+    // Error ya manejado en el composable
+  }
+}
+
 /**
- * ✅ FUNCIONES DESDE DETAIL MODAL
+ * ✅ HERRAMIENTAS ADICIONALES
+ */
+const exportData = () => {
+  exportCompanies('json')
+}
+
+const runHealthCheck = async () => {
+  if (enterpriseCompanies.value.length === 0) {
+    showNotification('No hay empresas para verificar', 'warning')
+    return
+  }
+  
+  isRunningHealthCheck.value = true
+  
+  try {
+    showNotification('Ejecutando health check...', 'info')
+    
+    let successCount = 0
+    let errorCount = 0
+    
+    for (const company of enterpriseCompanies.value) {
+      try {
+        await testEnterpriseCompany(company.company_id, '¿Están funcionando correctamente?')
+        successCount++
+      } catch (error) {
+        errorCount++
+      }
+    }
+    
+    showNotification(
+      `Health check: ${successCount} exitosos, ${errorCount} con errores`, 
+      errorCount === 0 ? 'success' : 'warning'
+    )
+    
+  } catch (error) {
+    showNotification(`Error en health check: ${error.message}`, 'error')
+  } finally {
+    isRunningHealthCheck.value = false
+  }
+}
+
+const testApiConnection = async () => {
+  try {
+    await loadEnterpriseCompanies()
+    showNotification('✅ Conexión API key válida', 'success')
+  } catch (error) {
+    showNotification(`❌ Error de conexión: ${error.message}`, 'error')
+  }
+}
+
+/**
+ * ✅ OPERACIONES DESDE MODALES
  */
 const handleEditFromDetail = (companyId) => {
   closeViewModal()
@@ -456,115 +459,88 @@ const refreshSelectedCompany = async () => {
 }
 
 /**
- * ✅ TOGGLE STATUS EMPRESA
+ * ✅ MOSTRAR RESULTADOS (compatible con script.js)
  */
-const handleToggleStatus = async (companyId, newStatus) => {
-  try {
-    const company = getCompanyById(companyId)
-    if (!company) return
-    
-    const updatedData = { ...company, is_active: newStatus }
-    await saveEnterpriseCompany(companyId, updatedData)
-    await refreshCompanies()
-    
-    showNotification(`Empresa ${newStatus ? 'activada' : 'desactivada'} exitosamente`, 'success')
-  } catch (error) {
-    showNotification(`Error al cambiar estado: ${error.message}`, 'error')
+const showResultInContainer = (result) => {
+  const resultsContainer = document.getElementById('enterpriseResults')
+  if (resultsContainer && result.data) {
+    const data = result.data
+    resultsContainer.innerHTML = `
+      <div class="result-container result-success">
+        <h4>✅ Empresa Enterprise Creada</h4>
+        <p><strong>ID:</strong> ${data.company_id}</p>
+        <p><strong>Nombre:</strong> ${data.company_name}</p>
+        <p><strong>Arquitectura:</strong> ${data.architecture || 'enterprise_postgresql'}</p>
+        
+        ${data.setup_status ? `
+          <h5>Estado de Configuración:</h5>
+          <div class="setup-status">
+            ${Object.entries(data.setup_status).map(([key, value]) => `
+              <div class="status-item">
+                <span class="status-indicator ${typeof value === 'boolean' ? (value ? 'success' : 'error') : 'info'}"></span>
+                ${key}: ${typeof value === 'boolean' ? (value ? '✅' : '❌') : value}
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        
+        ${data.next_steps ? `
+          <h5>Próximos Pasos:</h5>
+          <ol>
+            ${data.next_steps.map(step => `<li>${step}</li>`).join('')}
+          </ol>
+        ` : ''}
+      </div>
+    `
+  }
+}
+
+const showTestResultInContainer = (companyId, testMessage, result) => {
+  const resultsContainer = document.getElementById('enterpriseResults')
+  if (resultsContainer) {
+    resultsContainer.innerHTML = `
+      <div class="result-container result-success">
+        <h4>🧪 Test Empresa: ${companyId}</h4>
+        <div class="test-section">
+          <h5>📤 Mensaje enviado:</h5>
+          <div class="message-box user">${testMessage}</div>
+        </div>
+        <div class="test-section">
+          <h5>🤖 Respuesta del bot:</h5>
+          <div class="message-box bot">${result.bot_response || result.response || 'Sin respuesta'}</div>
+        </div>
+        <div class="test-section">
+          <h5>ℹ️ Información técnica:</h5>
+          <div class="tech-info">
+            <p><strong>Agente usado:</strong> ${result.agent_used || 'Desconocido'}</p>
+            <p><strong>Empresa:</strong> ${result.company_id || companyId}</p>
+            ${result.processing_time ? `<p><strong>Tiempo:</strong> ${result.processing_time}ms</p>` : ''}
+          </div>
+        </div>
+      </div>
+    `
   }
 }
 
 /**
- * ✅ MIGRAR EMPRESAS - Delegar al composable
- */
-const handleMigrateCompanies = async () => {
-  try {
-    await migrateCompaniesToPostgreSQL()
-  } catch (error) {
-    // Error ya manejado en el composable
-  }
-}
-
-/**
- * ✅ EXPORTAR DATOS - Delegar al composable
- */
-const exportCompaniesData = () => {
-  exportCompanies('json')
-}
-
-/**
- * ✅ HEALTH CHECK GLOBAL
- */
-const runHealthCheckAll = async () => {
-  if (enterpriseCompanies.value.length === 0) {
-    showNotification('No hay empresas para verificar', 'warning')
-    return
-  }
-  
-  isRunningHealthCheck.value = true
-  
-  try {
-    showNotification('Ejecutando health check en todas las empresas...', 'info')
-    
-    let successCount = 0
-    let errorCount = 0
-    
-    for (const company of enterpriseCompanies.value) {
-      try {
-        await testEnterpriseCompany(company.company_id, '¿Están funcionando correctamente?')
-        successCount++
-      } catch (error) {
-        errorCount++
-      }
-    }
-    
-    showNotification(
-      `Health check completado: ${successCount} exitosos, ${errorCount} con errores`, 
-      errorCount === 0 ? 'success' : 'warning'
-    )
-    
-  } catch (error) {
-    showNotification(`Error en health check: ${error.message}`, 'error')
-  } finally {
-    isRunningHealthCheck.value = false
-  }
-}
-
-/**
- * ✅ TEST API KEY CONNECTION
- */
-const testApiKeyConnection = async () => {
-  try {
-    await loadEnterpriseCompanies()
-    showNotification('✅ Conexión API key válida', 'success')
-  } catch (error) {
-    showNotification(`❌ Error de conexión: ${error.message}`, 'error')
-  }
-}
-
-/**
- * ✅ MOSTRAR MODAL API KEY
+ * ✅ UTILIDADES
  */
 const showApiKeyModal = () => {
-  // Emitir evento global para el modal de API key
   window.dispatchEvent(new CustomEvent('show-api-key-modal'))
 }
 
-// ============================================================================
-// FUNCIONES DE FORMATO
-// ============================================================================
 const formatDateTime = (dateTime) => {
-  if (!dateTime) return 'N/A'
-  
+  if (!dateTime) return null
   try {
     const date = typeof dateTime === 'number' ? new Date(dateTime) : new Date(dateTime)
-    return date.toLocaleString()
+    return date.toLocaleTimeString()
   } catch (error) {
-    return 'Fecha inválida'
+    return null
   }
 }
 
 // ============================================================================
-// LIFECYCLE HOOKS
+// LIFECYCLE
 // ============================================================================
 onMounted(async () => {
   appStore.addToLog('EnterpriseTab component mounted', 'info')
@@ -594,8 +570,6 @@ onUnmounted(() => {
     delete window.testEnterpriseCompany
     delete window.migrateCompaniesToPostgreSQL
   }
-  
-  appStore.addToLog('EnterpriseTab component unmounted', 'info')
 })
 
 // ============================================================================
@@ -609,7 +583,7 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 </script>
 
 <style scoped>
-/* ✅ MANTENER TODOS LOS ESTILOS ORIGINALES */
+/* ✅ ESTILOS OPTIMIZADOS - Diseño limpio y moderno */
 .enterprise-tab {
   padding: 20px;
   max-width: 1400px;
@@ -623,12 +597,12 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 
 .tab-title {
   font-size: 2rem;
-  color: var(--text-primary);
+  color: #333;
   margin-bottom: 8px;
 }
 
 .tab-subtitle {
-  color: var(--text-secondary);
+  color: #6c757d;
   font-size: 1.1rem;
 }
 
@@ -640,13 +614,13 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 }
 
 .warning-card {
-  background: var(--bg-primary);
-  border: 2px solid var(--warning-color);
-  border-radius: var(--radius-lg);
+  background: white;
+  border: 2px solid #ffc107;
+  border-radius: 12px;
   padding: 40px;
   text-align: center;
   max-width: 500px;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 }
 
 .warning-icon {
@@ -655,12 +629,12 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 }
 
 .warning-card h3 {
-  color: var(--text-primary);
+  color: #333;
   margin-bottom: 15px;
 }
 
 .warning-card p {
-  color: var(--text-secondary);
+  color: #6c757d;
   line-height: 1.6;
   margin-bottom: 25px;
 }
@@ -671,63 +645,72 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
   gap: 30px;
 }
 
-.enterprise-status {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  box-shadow: var(--shadow-sm);
+/* Estadísticas */
+.enterprise-stats {
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.status-cards {
+.stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 15px;
+  gap: 20px;
 }
 
-.status-card {
+.stat-card {
   display: flex;
   align-items: center;
   gap: 15px;
-  padding: 15px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-light);
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+  transition: transform 0.2s ease;
 }
 
-.card-icon {
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.stat-card.success {
+  border-left: 4px solid #28a745;
+}
+
+.stat-card.warning {
+  border-left: 4px solid #ffc107;
+}
+
+.stat-card.info {
+  border-left: 4px solid #17a2b8;
+}
+
+.stat-icon {
   font-size: 2rem;
-  width: 50px;
+  width: 60px;
   text-align: center;
 }
 
-.card-content h4 {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  margin: 0 0 5px 0;
-  font-weight: 500;
-}
-
-.card-value {
-  color: var(--text-primary);
-  font-size: 1.5rem;
+.stat-value {
+  font-size: 1.8rem;
   font-weight: 600;
+  color: #333;
 }
 
-.card-value.success {
-  color: var(--success-color);
+.stat-label {
+  color: #6c757d;
+  font-size: 0.9rem;
+  margin-top: 4px;
 }
 
-.card-value.warning {
-  color: var(--warning-color);
-}
-
+/* Herramientas */
 .enterprise-tools {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  box-shadow: var(--shadow-sm);
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .tools-header {
@@ -735,10 +718,12 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
 }
 
 .tools-header h3 {
-  color: var(--text-primary);
+  color: #333;
   margin: 0;
 }
 
@@ -749,7 +734,7 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 
 .tools-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 15px;
 }
 
@@ -758,18 +743,18 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
   align-items: center;
   gap: 15px;
   padding: 15px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
   cursor: pointer;
-  transition: var(--transition-normal);
+  transition: all 0.2s ease;
   text-align: left;
 }
 
 .tool-button:hover:not(:disabled) {
-  background: var(--bg-tertiary);
+  background: #e9ecef;
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .tool-button:disabled {
@@ -788,37 +773,44 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 }
 
 .tool-title {
-  font-weight: 500;
-  color: var(--text-primary);
+  font-weight: 600;
+  color: #333;
   margin-bottom: 4px;
 }
 
 .tool-description {
   font-size: 0.9rem;
-  color: var(--text-secondary);
+  color: #6c757d;
 }
 
 .tool-loading {
   font-size: 1.2rem;
 }
 
-.create-section {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
+/* Secciones */
+.create-section, .companies-section {
+  background: white;
+  border-radius: 12px;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.companies-section {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 25px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
 }
 
-.company-modal {
+.section-header h3 {
+  margin: 0;
+  color: #333;
+}
+
+/* Modales */
+.modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -832,28 +824,46 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
 }
 
 .modal-content {
-  background: var(--bg-primary);
-  border-radius: var(--radius-lg);
+  background: white;
+  border-radius: 12px;
   max-width: 800px;
   max-height: 90vh;
   width: 90%;
   overflow-y: auto;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
 }
 
 .modal-content.large {
   max-width: 1000px;
 }
 
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 25px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #333;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 5px;
+}
+
+/* Resultados */
 .results-container {
   margin-top: 20px;
 }
 
-.compatibility-container {
-  display: none;
-}
-
-/* Estilos para resultados compatibles con script.js */
 .result-container {
   padding: 20px;
   border-radius: 8px;
@@ -924,31 +934,44 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
   font-size: 0.9em;
 }
 
+/* Botones */
 .btn {
   padding: 8px 16px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 6px;
   font-weight: 500;
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: all 0.2s ease;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  text-decoration: none;
 }
 
 .btn-primary {
-  background: var(--primary-color);
+  background: #007bff;
   color: white;
 }
 
-.btn-secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+.btn-info {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-outline {
+  background: transparent;
+  color: #6c757d;
+  border: 1px solid #ced4da;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 0.85em;
 }
 
 .btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .btn:disabled {
@@ -956,10 +979,11 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
   cursor: not-allowed;
 }
 
+/* Responsive */
 @media (max-width: 768px) {
   .tools-header {
     flex-direction: column;
-    gap: 15px;
+    align-items: stretch;
   }
   
   .tools-actions {
@@ -971,7 +995,7 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
     grid-template-columns: 1fr;
   }
   
-  .status-cards {
+  .stats-grid {
     grid-template-columns: 1fr;
   }
   
