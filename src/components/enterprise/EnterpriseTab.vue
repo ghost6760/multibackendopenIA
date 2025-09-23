@@ -67,11 +67,11 @@
         <div class="tools-header">
           <h3>🔧 Herramientas Enterprise</h3>
           <div class="tools-actions">
-            <button @click="handleRefresh" class="btn btn-secondary" :disabled="isAnyProcessing">
+            <button @click="loadEnterpriseCompanies" class="btn btn-secondary" :disabled="isLoading">
               <span v-if="isLoading">⏳ Cargando...</span>
-              <span v-else>🔄 Actualizar</span>
+              <span v-else">🔄 Actualizar</span>
             </button>
-            <button @click="showCreateModal" class="btn btn-primary">
+            <button @click="showCreateCompanyModal" class="btn btn-primary">
               ➕ Nueva Empresa
             </button>
           </div>
@@ -79,7 +79,7 @@
         
         <div class="tools-grid">
           <button 
-            @click="handleMigration"
+            @click="migrateCompaniesToPostgreSQL"
             class="tool-button"
             :disabled="isMigrating"
           >
@@ -91,7 +91,7 @@
             <div v-if="isMigrating" class="tool-loading">⏳</div>
           </button>
           
-          <button @click="handleSyncAll" class="tool-button" :disabled="isSyncing">
+          <button @click="syncAllCompanies" class="tool-button" :disabled="isSyncing">
             <div class="tool-icon">🔄</div>
             <div class="tool-content">
               <div class="tool-title">Sincronizar Todo</div>
@@ -100,7 +100,7 @@
             <div v-if="isSyncing" class="tool-loading">⏳</div>
           </button>
           
-          <button @click="handleExport" class="tool-button">
+          <button @click="exportCompaniesData" class="tool-button">
             <div class="tool-icon">📤</div>
             <div class="tool-content">
               <div class="tool-title">Exportar Datos</div>
@@ -108,7 +108,7 @@
             </div>
           </button>
           
-          <button @click="handleHealthCheckAll" class="tool-button" :disabled="isRunningHealthCheck">
+          <button @click="runHealthCheckAll" class="tool-button" :disabled="isRunningHealthCheck">
             <div class="tool-icon">🏥</div>
             <div class="tool-content">
               <div class="tool-title">Health Check Global</div>
@@ -120,23 +120,100 @@
       </div>
 
       <!-- Lista de empresas -->
-      <EnterpriseCompanyList
-        :companies="enterpriseCompanies"
-        :isLoading="isLoading"
-        :error="error"
-        :lastSync="lastUpdateTime"
-        @refresh="handleRefresh"
-        @create="showCreateModal"
-        @view="handleViewCompany"
-        @edit="handleEditCompany"
-        @test="handleTestCompany"
-        @toggle-status="handleToggleStatus"
-        @migrate="handleMigration"
-        @export="handleExport"
-      />
+      <div class="companies-section">
+        <div class="section-header">
+          <h3>📋 Empresas Enterprise</h3>
+          <div class="search-filters">
+            <input
+              type="text"
+              v-model="searchQuery"
+              placeholder="Buscar empresas..."
+              class="search-input"
+            />
+            <select v-model="statusFilter" class="filter-select">
+              <option value="">Todos los estados</option>
+              <option value="active">Activas</option>
+              <option value="inactive">Inactivas</option>
+              <option value="error">Con errores</option>
+            </select>
+          </div>
+        </div>
+        
+        <div v-if="filteredCompanies.length === 0" class="empty-state">
+          <div class="empty-icon">🏢</div>
+          <h4>No se encontraron empresas</h4>
+          <p>No hay empresas que coincidan con los filtros seleccionados.</p>
+        </div>
+        
+        <div v-else class="companies-grid">
+          <div 
+            v-for="company in filteredCompanies"
+            :key="company.company_id || company.id"
+            class="company-card"
+            :class="{ 
+              'company-inactive': !company.is_active,
+              'company-error': company.status === 'error'
+            }"
+          >
+            <div class="company-header">
+              <div class="company-info">
+                <h4>{{ company.company_name || company.name || company.company_id || company.id }}</h4>
+                <div class="company-badges">
+                  <span :class="['badge', 'badge-status', getStatusClass(company.status)]">
+                    {{ getStatusText(company.status) }}
+                  </span>
+                  <span v-if="company.environment" class="badge badge-env">
+                    {{ company.environment }}
+                  </span>
+                </div>
+              </div>
+              
+              <div class="company-actions">
+                <button @click="viewEnterpriseCompany(company.company_id || company.id)" class="btn btn-xs btn-info">
+                  👁️ Ver
+                </button>
+                <button @click="editEnterpriseCompany(company.company_id || company.id)" class="btn btn-xs btn-primary">
+                  ✏️ Editar
+                </button>
+                <button @click="testEnterpriseCompany(company.company_id || company.id)" class="btn btn-xs btn-success">
+                  🧪 Test
+                </button>
+              </div>
+            </div>
+            
+            <div class="company-content">
+              <div class="company-description">
+                {{ company.description || 'Sin descripción disponible' }}
+              </div>
+              
+              <div class="company-config">
+                <div class="config-item">
+                  <span class="config-label">API Base:</span>
+                  <span class="config-value">{{ company.api_base_url || 'N/A' }}</span>
+                </div>
+                <div class="config-item">
+                  <span class="config-label">Base de datos:</span>
+                  <span class="config-value">{{ company.database_type || 'N/A' }}</span>
+                </div>
+                <div class="config-item">
+                  <span class="config-label">Última actividad:</span>
+                  <span class="config-value">{{ formatDateTime(company.last_activity || company.last_modified) }}</span>
+                </div>
+              </div>
+              
+              <div v-if="company.health_status" class="health-summary">
+                <div class="health-item" v-for="(status, service) in company.health_status" :key="service">
+                  <span class="service-name">{{ service }}:</span>
+                  <span :class="['health-status', status.toLowerCase()]">{{ status }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Modal de creación/edición -->
+    <!-- Modal de creación/edición de empresa -->
     <div v-if="showCompanyModal" class="company-modal" @click="closeCompanyModal">
       <div class="modal-content large" @click.stop>
         <div class="modal-header">
@@ -145,90 +222,232 @@
         </div>
         
         <div class="modal-body">
-          <EnterpriseCompanyForm
-            ref="companyFormRef"
-            :isEditMode="isEditMode"
-            :initialData="selectedCompanyForEdit"
-            :isSaving="isCreating || isUpdating"
-            @submit="handleSaveCompany"
-            @cancel="closeCompanyModal"
-          />
+          <form @submit.prevent="handleSaveCompany" class="company-form">
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="companyId">ID de la empresa *:</label>
+                <input
+                  id="companyId"
+                  type="text"
+                  v-model="localCompanyForm.company_id"
+                  :disabled="isEditMode"
+                  required
+                  placeholder="ej: mi-empresa"
+                />
+              </div>
+              
+              <div class="form-group">
+                <label for="companyName">Nombre *:</label>
+                <input
+                  id="companyName"
+                  type="text"
+                  v-model="localCompanyForm.company_name"
+                  required
+                  placeholder="Nombre de la empresa"
+                />
+              </div>
+              
+              <div class="form-group full-width">
+                <label for="companyDescription">Descripción:</label>
+                <textarea
+                  id="companyDescription"
+                  v-model="localCompanyForm.description"
+                  placeholder="Descripción de la empresa"
+                  rows="3"
+                ></textarea>
+              </div>
+              
+              <div class="form-group">
+                <label for="apiBaseUrl">API Base URL:</label>
+                <input
+                  id="apiBaseUrl"
+                  type="url"
+                  v-model="localCompanyForm.api_base_url"
+                  placeholder="https://api.empresa.com"
+                />
+              </div>
+              
+              <div class="form-group">
+                <label for="databaseType">Tipo de base de datos:</label>
+                <select id="databaseType" v-model="localCompanyForm.database_type">
+                  <option value="">Seleccionar...</option>
+                  <option value="postgresql">PostgreSQL</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="sqlite">SQLite</option>
+                  <option value="mongodb">MongoDB</option>
+                </select>
+              </div>
+              
+              <div class="form-group">
+                <label for="environment">Entorno:</label>
+                <select id="environment" v-model="localCompanyForm.environment">
+                  <option value="development">Desarrollo</option>
+                  <option value="staging">Staging</option>
+                  <option value="production">Producción</option>
+                </select>
+              </div>
+              
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="localCompanyForm.is_active" />
+                  Empresa activa
+                </label>
+              </div>
+              
+              <div class="form-group full-width">
+                <label for="services">Servicios JSON:</label>
+                <textarea
+                  id="services"
+                  v-model="localCompanyForm.servicesJson"
+                  placeholder='{"service1": {"enabled": true}, "service2": {"enabled": false}}'
+                  rows="6"
+                  class="json-textarea"
+                ></textarea>
+                <div class="textarea-footer">
+                  <span :class="['json-status', isValidServicesJSON ? 'valid' : 'invalid']">
+                    {{ isValidServicesJSON ? '✅ JSON válido' : '❌ JSON inválido' }}
+                  </span>
+                </div>
+              </div>
+              
+              <div class="form-group full-width">
+                <label for="configuration">Configuración JSON:</label>
+                <textarea
+                  id="configuration"
+                  v-model="localCompanyForm.configurationJson"
+                  placeholder='{"key": "value"}'
+                  rows="8"
+                  class="json-textarea"
+                ></textarea>
+                <div class="textarea-footer">
+                  <span :class="['json-status', isValidConfigJSON ? 'valid' : 'invalid']">
+                    {{ isValidConfigJSON ? '✅ JSON válido' : '❌ JSON inválido' }}
+                  </span>
+                </div>
+              </div>
+              
+              <div class="form-group full-width">
+                <label for="notes">Notas:</label>
+                <textarea
+                  id="notes"
+                  v-model="localCompanyForm.notes"
+                  placeholder="Notas adicionales sobre la empresa"
+                  rows="3"
+                ></textarea>
+              </div>
+            </div>
+          </form>
+        </div>
+        
+        <div class="modal-footer">
+          <div class="modal-actions">
+            <button 
+              type="submit" 
+              @click="handleSaveCompany" 
+              class="btn btn-primary" 
+              :disabled="isSaving || !isValidForm"
+            >
+              <span v-if="isSaving">⏳ Guardando...</span>
+              <span v-else>💾 {{ isEditMode ? 'Actualizar' : 'Crear' }} Empresa</span>
+            </button>
+            <button @click="closeCompanyModal" class="btn btn-secondary">
+              ❌ Cancelar
+            </button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Modal de vista detallada -->
-    <div v-if="showViewModal" class="company-modal" @click="closeViewModal">
+    <div v-if="selectedCompany && showViewModal" class="company-modal" @click="closeViewModal">
       <div class="modal-content large" @click.stop>
         <div class="modal-header">
-          <h4>👁️ Detalles de Empresa</h4>
+          <h4>👁️ Detalles: {{ selectedCompany.company_name || selectedCompany.name || selectedCompany.company_id || selectedCompany.id }}</h4>
           <button @click="closeViewModal" class="close-button">✕</button>
         </div>
         
         <div class="modal-body">
-          <EnterpriseCompanyDetail
-            ref="companyDetailRef"
-            :company="selectedCompany"
-            :isLoading="isLoadingDetails"
-            :error="detailError"
-            :lastSync="lastUpdateTime"
-            @edit="handleEditFromDetail"
-            @close="closeViewModal"
-            @test="handleTestCompany"
-            @toggle-status="handleToggleStatus"
-            @refresh="handleRefreshCompany"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- Modal de confirmación -->
-    <div v-if="showConfirmModal" class="confirm-modal" @click="closeConfirmModal">
-      <div class="confirm-content" @click.stop>
-        <div class="confirm-header">
-          <h4>{{ confirmModal.title }}</h4>
-        </div>
-        <div class="confirm-body">
-          <p>{{ confirmModal.message }}</p>
-          <div v-if="confirmModal.details" class="confirm-details">
-            <ul>
-              <li v-for="detail in confirmModal.details" :key="detail">{{ detail }}</li>
-            </ul>
+          <div class="company-details">
+            <div class="details-section">
+              <h5>📊 Información General</h5>
+              <div class="details-grid">
+                <div class="detail-item">
+                  <strong>ID:</strong> {{ selectedCompany.company_id || selectedCompany.id }}
+                </div>
+                <div class="detail-item">
+                  <strong>Nombre:</strong> {{ selectedCompany.company_name || selectedCompany.name }}
+                </div>
+                <div class="detail-item">
+                  <strong>Estado:</strong> 
+                  <span :class="['status-badge', getStatusClass(selectedCompany.status)]">
+                    {{ getStatusText(selectedCompany.status) }}
+                  </span>
+                </div>
+                <div class="detail-item">
+                  <strong>Entorno:</strong> {{ selectedCompany.environment || 'N/A' }}
+                </div>
+                <div class="detail-item">
+                  <strong>Creado:</strong> {{ formatDateTime(selectedCompany.created_at) }}
+                </div>
+                <div class="detail-item">
+                  <strong>Actualizado:</strong> {{ formatDateTime(selectedCompany.updated_at || selectedCompany.last_modified) }}
+                </div>
+              </div>
+            </div>
+            
+            <div v-if="selectedCompany.services" class="details-section">
+              <h5>⚙️ Servicios</h5>
+              <pre class="config-json">{{ formatJSON(selectedCompany.services) }}</pre>
+            </div>
+            
+            <div v-if="selectedCompany.configuration" class="details-section">
+              <h5>🔧 Configuración</h5>
+              <pre class="config-json">{{ formatJSON(parseJSON(selectedCompany.configuration)) }}</pre>
+            </div>
+            
+            <div v-if="selectedCompany.health_status" class="details-section">
+              <h5>🏥 Estado de Salud</h5>
+              <div class="health-grid">
+                <div 
+                  v-for="(status, service) in selectedCompany.health_status" 
+                  :key="service"
+                  class="health-item-detailed"
+                >
+                  <div class="health-service">{{ service }}</div>
+                  <div :class="['health-status-detailed', status.toLowerCase()]">{{ status }}</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="confirm-actions">
-          <button @click="confirmModal.onConfirm" class="btn btn-primary" :disabled="confirmModal.isProcessing">
-            <span v-if="confirmModal.isProcessing">⏳</span>
-            <span v-else>{{ confirmModal.confirmText || 'Confirmar' }}</span>
-          </button>
-          <button @click="closeConfirmModal" class="btn btn-secondary" :disabled="confirmModal.isProcessing">
-            Cancelar
-          </button>
+        
+        <div class="modal-footer">
+          <div class="modal-actions">
+            <button @click="editEnterpriseCompany(selectedCompany.company_id || selectedCompany.id)" class="btn btn-primary">
+              ✏️ Editar
+            </button>
+            <button @click="testEnterpriseCompany(selectedCompany.company_id || selectedCompany.id)" class="btn btn-success">
+              🧪 Probar Conexión
+            </button>
+            <button @click="closeViewModal" class="btn btn-secondary">
+              ❌ Cerrar
+            </button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Contenedor de resultados (para compatibilidad) -->
-    <div id="enterpriseResults" v-if="operationResult" class="operation-results">
-      <div :class="`result-container result-${operationResult.type}`">
-        <h4>{{ operationResult.title }}</h4>
-        <p>{{ operationResult.message }}</p>
-        <div v-if="operationResult.details" class="result-details">
-          <pre>{{ operationResult.details }}</pre>
-        </div>
-      </div>
-    </div>
+    <!-- Contenedor de resultados (para compatibilidad con useEnterprise) -->
+    <div id="enterpriseResults" style="margin-top: 20px;"></div>
+    <div id="enterpriseCompaniesTable" style="margin-top: 20px;"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useEnterprise } from '@/composables/useEnterprise'
+import { useEnterprise } from '@/composables/useEnterprise' // ✅ IMPORTAR EL COMPOSABLE
 import { useNotifications } from '@/composables/useNotifications'
-import EnterpriseCompanyList from './EnterpriseCompanyList.vue'
-import EnterpriseCompanyForm from './EnterpriseCompanyForm.vue'
-import EnterpriseCompanyDetail from './EnterpriseCompanyDetail.vue'
 
 // ============================================================================
 // PROPS
@@ -246,9 +465,9 @@ const props = defineProps({
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
 
-// Usar el composable useEnterprise
+// ✅ USAR EL COMPOSABLE useEnterprise EN LUGAR DE REIMPLEMENTAR
 const {
-  // Estado reactivo
+  // Estado reactivo del composable
   enterpriseCompanies,
   selectedCompany,
   isLoading,
@@ -256,25 +475,29 @@ const {
   isUpdating,
   isTesting,
   isMigrating,
+  companyForm,
+  testResults,
+  migrationResults,
   lastUpdateTime,
 
-  // Computed properties
+  // Computed properties del composable
   companiesCount,
   hasCompanies,
   activeCompanies,
-  activeCompaniesCount,
-  companiesWithIssues,
+  companyOptions,
+  isFormValid,
   isAnyProcessing,
 
-  // Funciones principales
+  // Funciones principales del composable
   loadEnterpriseCompanies,
   createEnterpriseCompany,
   viewEnterpriseCompany,
+  editEnterpriseCompany,
   saveEnterpriseCompany,
   testEnterpriseCompany,
   migrateCompaniesToPostgreSQL,
 
-  // Funciones auxiliares
+  // Funciones auxiliares del composable
   getCompanyById,
   exportCompanies,
   clearCompanyForm,
@@ -282,377 +505,343 @@ const {
 } = useEnterprise()
 
 // ============================================================================
-// ESTADO LOCAL ADICIONAL (Solo UI)
+// ESTADO LOCAL ADICIONAL (Solo UI, no lógica de negocio)
 // ============================================================================
 const showCompanyModal = ref(false)
 const showViewModal = ref(false)
-const showConfirmModal = ref(false)
 const isEditMode = ref(false)
-const selectedCompanyForEdit = ref(null)
-const isLoadingDetails = ref(false)
-const detailError = ref(null)
-const error = ref(null)
-const operationResult = ref(null)
-
-// Estados adicionales
+const isSaving = ref(false)
 const isSyncing = ref(false)
 const isRunningHealthCheck = ref(false)
 
-// Modal de confirmación
-const confirmModal = ref({
-  title: '',
-  message: '',
-  details: null,
-  confirmText: 'Confirmar',
-  isProcessing: false,
-  onConfirm: null
-})
+// Filtros de UI
+const searchQuery = ref('')
+const statusFilter = ref('')
 
-// Referencias a componentes
-const companyFormRef = ref(null)
-const companyDetailRef = ref(null)
+// Formulario local para el modal (mapea a companyForm del composable)
+const localCompanyForm = ref({
+  company_id: '',
+  company_name: '',
+  description: '',
+  api_base_url: '',
+  database_type: '',
+  environment: 'development',
+  is_active: true,
+  servicesJson: '',
+  configurationJson: '',
+  notes: ''
+})
 
 // ============================================================================
 // COMPUTED PROPERTIES LOCALES
 // ============================================================================
 const hasValidApiKey = computed(() => !!appStore.adminApiKey)
 
-// ============================================================================
-// MÉTODOS PRINCIPALES
-// ============================================================================
+const activeCompaniesCount = computed(() => {
+  return enterpriseCompanies.value.filter(company => 
+    company.is_active !== false && company.status !== 'inactive'
+  ).length
+})
 
-/**
- * Refrescar datos
- */
-const handleRefresh = async () => {
-  try {
-    error.value = null
-    await loadEnterpriseCompanies()
-  } catch (err) {
-    error.value = err.message
+const companiesWithIssues = computed(() => {
+  return enterpriseCompanies.value.filter(company => 
+    company.status === 'error' || company.status === 'warning'
+  ).length
+})
+
+const filteredCompanies = computed(() => {
+  let filtered = [...enterpriseCompanies.value]
+  
+  // Filtro de búsqueda
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    filtered = filtered.filter(company =>
+      (company.company_name || company.name || '').toLowerCase().includes(query) ||
+      (company.company_id || company.id || '').toLowerCase().includes(query) ||
+      (company.description || '').toLowerCase().includes(query)
+    )
   }
-}
+  
+  // Filtro de estado
+  if (statusFilter.value) {
+    switch (statusFilter.value) {
+      case 'active':
+        filtered = filtered.filter(company => company.is_active !== false)
+        break
+      case 'inactive':
+        filtered = filtered.filter(company => company.is_active === false)
+        break
+      case 'error':
+        filtered = filtered.filter(company => company.status === 'error')
+        break
+    }
+  }
+  
+  return filtered.sort((a, b) => 
+    (a.company_name || a.name || a.company_id || a.id).localeCompare(
+      b.company_name || b.name || b.company_id || b.id
+    )
+  )
+})
 
-/**
- * Mostrar modal de creación
- */
-const showCreateModal = () => {
-  selectedCompanyForEdit.value = null
+const isValidServicesJSON = computed(() => {
+  if (!localCompanyForm.value.servicesJson.trim()) return true
+  
+  try {
+    JSON.parse(localCompanyForm.value.servicesJson)
+    return true
+  } catch (error) {
+    return false
+  }
+})
+
+const isValidConfigJSON = computed(() => {
+  if (!localCompanyForm.value.configurationJson.trim()) return true
+  
+  try {
+    JSON.parse(localCompanyForm.value.configurationJson)
+    return true
+  } catch (error) {
+    return false
+  }
+})
+
+const isValidForm = computed(() => {
+  return localCompanyForm.value.company_id.trim() &&
+         localCompanyForm.value.company_name.trim() &&
+         isValidServicesJSON.value &&
+         isValidConfigJSON.value
+})
+
+// ============================================================================
+// FUNCIONES DE UI (No lógica de negocio)
+// ============================================================================
+const showCreateCompanyModal = () => {
+  clearLocalForm()
   isEditMode.value = false
   showCompanyModal.value = true
 }
-
-/**
- * Ver detalles de empresa
- */
-const handleViewCompany = async (companyId) => {
-  try {
-    isLoadingDetails.value = true
-    detailError.value = null
-    
-    const company = await viewEnterpriseCompany(companyId)
-    if (company) {
-      showViewModal.value = true
-    }
-  } catch (err) {
-    detailError.value = err.message
-    showNotification('Error cargando detalles: ' + err.message, 'error')
-  } finally {
-    isLoadingDetails.value = false
-  }
-}
-
-/**
- * Editar empresa
- */
-const handleEditCompany = async (companyId) => {
-  try {
-    isLoadingDetails.value = true
-    
-    const company = await viewEnterpriseCompany(companyId)
-    if (company) {
-      selectedCompanyForEdit.value = company
-      isEditMode.value = true
-      showCompanyModal.value = true
-      showViewModal.value = false
-    }
-  } catch (err) {
-    showNotification('Error cargando empresa para edición: ' + err.message, 'error')
-  } finally {
-    isLoadingDetails.value = false
-  }
-}
-
-/**
- * Editar desde vista detallada
- */
-const handleEditFromDetail = (companyId) => {
-  selectedCompanyForEdit.value = selectedCompany.value
-  isEditMode.value = true
-  showCompanyModal.value = true
-  showViewModal.value = false
-}
-
-/**
- * Guardar empresa (crear o actualizar)
- */
-const handleSaveCompany = async (companyData) => {
-  try {
-    if (isEditMode.value) {
-      await saveEnterpriseCompany(companyData.company_id, companyData)
-      showNotification('Empresa actualizada exitosamente', 'success')
-    } else {
-      await createEnterpriseCompany(companyData)
-      showNotification('Empresa creada exitosamente', 'success')
-    }
-    
-    closeCompanyModal()
-    await handleRefresh()
-    
-  } catch (err) {
-    // Error ya manejado en el composable
-  }
-}
-
-/**
- * Probar empresa
- */
-const handleTestCompany = async (companyId, testMessage = '¿Cuáles son sus servicios disponibles?') => {
-  try {
-    const result = await testEnterpriseCompany(companyId, testMessage)
-    
-    if (result && companyDetailRef.value) {
-      // Mostrar resultado en el componente de detalle si está abierto
-      const isSuccess = result.bot_response || result.response
-      companyDetailRef.value.showTestResult(
-        isSuccess ? 'success' : 'warning',
-        isSuccess ? '✅ Test Exitoso' : '⚠️ Test Completado',
-        'Test de conexión completado',
-        result.bot_response || result.response || 'Sin respuesta del bot',
-        {
-          company_id: result.company_id || companyId,
-          agent_used: result.agent_used,
-          processing_time: result.processing_time
-        }
-      )
-    }
-    
-    return result
-    
-  } catch (err) {
-    if (companyDetailRef.value) {
-      companyDetailRef.value.showTestResult(
-        'error',
-        '❌ Error en Test',
-        err.message
-      )
-    }
-  }
-}
-
-/**
- * Cambiar estado de empresa
- */
-const handleToggleStatus = async (companyId, newStatus) => {
-  const company = getCompanyById(companyId)
-  if (!company) return
-  
-  const action = newStatus ? 'activar' : 'desactivar'
-  
-  showConfirmDialog(
-    `${action.charAt(0).toUpperCase() + action.slice(1)} Empresa`,
-    `¿Estás seguro de ${action} la empresa "${company.company_name || companyId}"?`,
-    [`La empresa será ${newStatus ? 'activada' : 'desactivada'}`, 'Esta acción se puede revertir en cualquier momento'],
-    action.charAt(0).toUpperCase() + action.slice(1),
-    async () => {
-      try {
-        const updatedData = { ...company, is_active: newStatus }
-        await saveEnterpriseCompany(companyId, updatedData)
-        showNotification(`Empresa ${newStatus ? 'activada' : 'desactivada'} exitosamente`, 'success')
-        await handleRefresh()
-      } catch (err) {
-        // Error ya manejado en el composable
-      }
-    }
-  )
-}
-
-/**
- * Migración a PostgreSQL
- */
-const handleMigration = () => {
-  showConfirmDialog(
-    'Migrar a PostgreSQL',
-    '¿Migrar todas las empresas de JSON a PostgreSQL?',
-    [
-      'Esta operación migrará todas las empresas del archivo JSON a la base de datos PostgreSQL',
-      'La operación puede tomar varios minutos',
-      'Se recomienda hacer una copia de seguridad antes de continuar'
-    ],
-    'Iniciar Migración',
-    async () => {
-      try {
-        confirmModal.value.isProcessing = true
-        const result = await migrateCompaniesToPostgreSQL()
-        
-        if (result?.statistics) {
-          showOperationResult('success', 'Migración Completada', 
-            `${result.statistics.companies_migrated} empresas migradas exitosamente`, 
-            result.statistics)
-        }
-        
-        closeConfirmModal()
-        await handleRefresh()
-        
-      } catch (err) {
-        // Error ya manejado en el composable
-      } finally {
-        confirmModal.value.isProcessing = false
-      }
-    }
-  )
-}
-
-/**
- * Sincronizar todas las empresas
- */
-const handleSyncAll = async () => {
-  isSyncing.value = true
-  
-  try {
-    showNotification('Sincronizando todas las empresas...', 'info')
-    await handleRefresh() // Simular sincronización con refresh
-    showNotification('Sincronización completada', 'success')
-    
-  } catch (err) {
-    showNotification(`Error en sincronización: ${err.message}`, 'error')
-  } finally {
-    isSyncing.value = false
-  }
-}
-
-/**
- * Exportar datos
- */
-const handleExport = (format = 'json') => {
-  exportCompanies(format)
-}
-
-/**
- * Health check global
- */
-const handleHealthCheckAll = async () => {
-  isRunningHealthCheck.value = true
-  
-  try {
-    showNotification('Ejecutando health check en todas las empresas...', 'info')
-    
-    // Ejecutar tests en paralelo para todas las empresas
-    const healthPromises = enterpriseCompanies.value.map(company => 
-      testEnterpriseCompany(company.company_id).catch(err => ({
-        company_id: company.company_id,
-        error: err.message
-      }))
-    )
-    
-    const results = await Promise.allSettled(healthPromises)
-    
-    const successful = results.filter(r => r.status === 'fulfilled' && !r.value?.error).length
-    const total = results.length
-    
-    showOperationResult(
-      successful === total ? 'success' : 'warning',
-      'Health Check Completado',
-      `${successful}/${total} empresas pasaron el health check`,
-      { successful, total, timestamp: new Date().toISOString() }
-    )
-    
-  } catch (err) {
-    showNotification(`Error en health check: ${err.message}`, 'error')
-  } finally {
-    isRunningHealthCheck.value = false
-  }
-}
-
-/**
- * Refrescar empresa específica
- */
-const handleRefreshCompany = async () => {
-  if (selectedCompany.value) {
-    await handleViewCompany(selectedCompany.value.company_id)
-  }
-}
-
-// ============================================================================
-// FUNCIONES DE UI
-// ============================================================================
 
 const closeCompanyModal = () => {
   showCompanyModal.value = false
   isEditMode.value = false
-  selectedCompanyForEdit.value = null
+  clearLocalForm()
 }
 
 const closeViewModal = () => {
   showViewModal.value = false
 }
 
+const clearLocalForm = () => {
+  localCompanyForm.value = {
+    company_id: '',
+    company_name: '',
+    description: '',
+    api_base_url: '',
+    database_type: '',
+    environment: 'development',
+    is_active: true,
+    servicesJson: '',
+    configurationJson: '',
+    notes: ''
+  }
+}
+
+const populateLocalForm = (company) => {
+  localCompanyForm.value = {
+    company_id: company.company_id || company.id || '',
+    company_name: company.company_name || company.name || '',
+    description: company.description || '',
+    api_base_url: company.api_base_url || '',
+    database_type: company.database_type || '',
+    environment: company.environment || 'development',
+    is_active: company.is_active !== false,
+    servicesJson: company.services ? JSON.stringify(company.services, null, 2) : '',
+    configurationJson: company.configuration ? 
+      (typeof company.configuration === 'string' ? 
+        company.configuration : JSON.stringify(company.configuration, null, 2)) : '',
+    notes: company.notes || ''
+  }
+}
+
+// ============================================================================
+// FUNCIONES BRIDGE (Conectan UI con composable)
+// ============================================================================
+const handleSaveCompany = async () => {
+  if (!isValidForm.value) return
+  
+  isSaving.value = true
+  
+  try {
+    // Convertir formulario local al formato esperado por el composable
+    const companyData = {
+      company_id: localCompanyForm.value.company_id,
+      company_name: localCompanyForm.value.company_name,
+      description: localCompanyForm.value.description,
+      api_base_url: localCompanyForm.value.api_base_url,
+      database_type: localCompanyForm.value.database_type,
+      environment: localCompanyForm.value.environment,
+      is_active: localCompanyForm.value.is_active,
+      services: localCompanyForm.value.servicesJson ? 
+        JSON.parse(localCompanyForm.value.servicesJson) : {},
+      configuration: localCompanyForm.value.configurationJson ? 
+        JSON.parse(localCompanyForm.value.configurationJson) : {},
+      notes: localCompanyForm.value.notes
+    }
+    
+    if (isEditMode.value) {
+      await saveEnterpriseCompany(companyData.company_id, companyData)
+    } else {
+      await createEnterpriseCompany(companyData)
+    }
+    
+    closeCompanyModal()
+    
+  } catch (error) {
+    // Error ya manejado en el composable
+  } finally {
+    isSaving.value = false
+  }
+}
+
+// Override de editEnterpriseCompany para manejar el modal
+const handleEditCompany = async (companyId) => {
+  try {
+    // Primero llamar al composable para cargar los datos
+    await viewEnterpriseCompany(companyId)
+    
+    if (selectedCompany.value) {
+      populateLocalForm(selectedCompany.value)
+      isEditMode.value = true
+      showCompanyModal.value = true
+      showViewModal.value = false
+    }
+  } catch (error) {
+    // Error ya manejado en el composable
+  }
+}
+
+// Override de viewEnterpriseCompany para manejar el modal
+const handleViewCompany = async (companyId) => {
+  try {
+    await viewEnterpriseCompany(companyId)
+    if (selectedCompany.value) {
+      showViewModal.value = true
+    }
+  } catch (error) {
+    // Error ya manejado en el composable
+  }
+}
+
+// ============================================================================
+// FUNCIONES AUXILIARES LOCALES
+// ============================================================================
+const syncAllCompanies = async () => {
+  isSyncing.value = true
+  
+  try {
+    showNotification('Sincronizando todas las empresas...', 'info')
+    
+    // Recargar empresas (simula sincronización)
+    await loadEnterpriseCompanies()
+    
+    showNotification('Sincronización completada', 'success')
+    
+  } catch (error) {
+    showNotification(`Error en sincronización: ${error.message}`, 'error')
+  } finally {
+    isSyncing.value = false
+  }
+}
+
+const exportCompaniesData = () => {
+  exportCompanies('json')
+}
+
+const runHealthCheckAll = async () => {
+  isRunningHealthCheck.value = true
+  
+  try {
+    showNotification('Ejecutando health check en todas las empresas...', 'info')
+    
+    // Simular health check en todas las empresas
+    const healthPromises = enterpriseCompanies.value.map(company => 
+      testEnterpriseCompany(company.company_id || company.id)
+    )
+    
+    await Promise.allSettled(healthPromises)
+    
+    showNotification('Health check completado', 'success')
+    
+  } catch (error) {
+    showNotification(`Error en health check: ${error.message}`, 'error')
+  } finally {
+    isRunningHealthCheck.value = false
+  }
+}
+
 const requestApiKey = () => {
-  // Emitir evento para mostrar modal de API key
   window.dispatchEvent(new CustomEvent('show-api-key-modal'))
 }
 
-const showConfirmDialog = (title, message, details, confirmText, onConfirm) => {
-  confirmModal.value = {
-    title,
-    message,
-    details,
-    confirmText,
-    isProcessing: false,
-    onConfirm
-  }
-  showConfirmModal.value = true
-}
-
-const closeConfirmModal = () => {
-  showConfirmModal.value = false
-  confirmModal.value = {
-    title: '',
-    message: '',
-    details: null,
-    confirmText: 'Confirmar',
-    isProcessing: false,
-    onConfirm: null
+// ============================================================================
+// FUNCIONES DE FORMATO (UTILIDADES)
+// ============================================================================
+const getStatusClass = (status) => {
+  switch (status) {
+    case 'active':
+    case 'online':
+    case 'success':
+      return 'status-success'
+    case 'inactive':
+    case 'offline':
+      return 'status-inactive'
+    case 'error':
+    case 'failed':
+      return 'status-error'
+    case 'warning':
+      return 'status-warning'
+    default:
+      return 'status-unknown'
   }
 }
 
-const showOperationResult = (type, title, message, details = null) => {
-  operationResult.value = {
-    type,
-    title,
-    message,
-    details
+const getStatusText = (status) => {
+  switch (status) {
+    case 'active': return 'Activa'
+    case 'inactive': return 'Inactiva'
+    case 'error': return 'Error'
+    case 'warning': return 'Advertencia'
+    case 'online': return 'En línea'
+    case 'offline': return 'Fuera de línea'
+    default: return status || 'Desconocido'
   }
-  
-  // Auto-ocultar después de 10 segundos
-  setTimeout(() => {
-    operationResult.value = null
-  }, 10000)
 }
 
-const formatDateTime = (timestamp) => {
-  if (!timestamp) return 'N/A'
+const formatDateTime = (dateTime) => {
+  if (!dateTime) return 'N/A'
   
   try {
-    const date = typeof timestamp === 'number' ? new Date(timestamp) : new Date(timestamp)
-    return date.toLocaleString('es-ES', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    const date = typeof dateTime === 'number' ? new Date(dateTime) : new Date(dateTime)
+    return date.toLocaleString()
   } catch (error) {
-    return 'N/A'
+    return 'Fecha inválida'
+  }
+}
+
+const formatJSON = (obj) => {
+  try {
+    return JSON.stringify(obj, null, 2)
+  } catch (error) {
+    return 'Error formatting JSON: ' + error.message
+  }
+}
+
+const parseJSON = (jsonString) => {
+  try {
+    return typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString
+  } catch (error) {
+    return jsonString
   }
 }
 
@@ -663,11 +852,31 @@ onMounted(async () => {
   appStore.addToLog('EnterpriseTab component mounted', 'info')
   
   if (hasValidApiKey.value) {
-    await handleRefresh()
+    await loadEnterpriseCompanies()
   }
+  
+  // ✅ EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  window.loadEnterpriseCompanies = loadEnterpriseCompanies
+  window.createEnterpriseCompany = createEnterpriseCompany
+  window.viewEnterpriseCompany = handleViewCompany  // Usar versión con modal
+  window.editEnterpriseCompany = handleEditCompany  // Usar versión con modal
+  window.saveEnterpriseCompany = saveEnterpriseCompany
+  window.testEnterpriseCompany = testEnterpriseCompany
+  window.migrateCompaniesToPostgreSQL = migrateCompaniesToPostgreSQL
 })
 
 onUnmounted(() => {
+  // Limpiar funciones globales
+  if (typeof window !== 'undefined') {
+    delete window.loadEnterpriseCompanies
+    delete window.createEnterpriseCompany
+    delete window.viewEnterpriseCompany
+    delete window.editEnterpriseCompany
+    delete window.saveEnterpriseCompany
+    delete window.testEnterpriseCompany
+    delete window.migrateCompaniesToPostgreSQL
+  }
+  
   appStore.addToLog('EnterpriseTab component unmounted', 'info')
 })
 
@@ -676,18 +885,28 @@ onUnmounted(() => {
 // ============================================================================
 watch(() => appStore.adminApiKey, (newApiKey) => {
   if (newApiKey && hasValidApiKey.value) {
-    handleRefresh()
+    loadEnterpriseCompanies()
+  } else {
+    // empresas se limpian automáticamente en el composable
   }
 })
 
-watch(() => props.isActive, (isActive) => {
-  if (isActive && hasValidApiKey.value && enterpriseCompanies.value.length === 0) {
-    handleRefresh()
-  }
+// ============================================================================
+// TEMPLATE REFS PARA FUNCIONES DE VIEW/EDIT
+// ============================================================================
+// Reemplazar las llamadas directas en el template
+const wrappedViewCompany = (companyId) => handleViewCompany(companyId)
+const wrappedEditCompany = (companyId) => handleEditCompany(companyId)
+
+// Exponer las funciones wrapeadas al template
+defineExpose({
+  viewEnterpriseCompany: wrappedViewCompany,
+  editEnterpriseCompany: wrappedEditCompany
 })
 </script>
 
 <style scoped>
+/* ✅ MANTENER TODOS LOS ESTILOS ORIGINALES */
 .enterprise-tab {
   padding: 20px;
   max-width: 1400px;
@@ -880,7 +1099,230 @@ watch(() => props.isActive, (isActive) => {
   font-size: 1.2rem;
 }
 
-.company-modal, .confirm-modal {
+.companies-section {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.section-header h3 {
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.search-filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.search-input {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-width: 200px;
+}
+
+.filter-select {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px;
+  color: var(--text-secondary);
+}
+
+.empty-icon {
+  font-size: 4rem;
+  margin-bottom: 15px;
+  opacity: 0.6;
+}
+
+.companies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 20px;
+}
+
+.company-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: var(--transition-normal);
+  box-shadow: var(--shadow-sm);
+}
+
+.company-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.company-card.company-inactive {
+  opacity: 0.7;
+  border-left: 4px solid var(--text-muted);
+}
+
+.company-card.company-error {
+  border-left: 4px solid var(--error-color);
+}
+
+.company-header {
+  padding: 15px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.company-info h4 {
+  color: var(--text-primary);
+  margin: 0 0 8px 0;
+  font-size: 1.1rem;
+}
+
+.company-badges {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.badge-status {
+  font-weight: 600;
+}
+
+.badge-env {
+  background: var(--info-color);
+  color: white;
+}
+
+.company-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.company-content {
+  padding: 15px;
+}
+
+.company-description {
+  color: var(--text-secondary);
+  margin-bottom: 15px;
+  font-style: italic;
+}
+
+.company-config {
+  margin-bottom: 15px;
+}
+
+.config-item {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.config-label {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.config-value {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.health-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.health-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+}
+
+.service-name {
+  color: var(--text-secondary);
+}
+
+.health-status {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.health-status.active,
+.health-status.online,
+.health-status.success {
+  background: var(--success-color);
+  color: white;
+}
+
+.health-status.error,
+.health-status.failed {
+  background: var(--error-color);
+  color: white;
+}
+
+.health-status.warning {
+  background: var(--warning-color);
+  color: white;
+}
+
+.status-success {
+  background: var(--success-color);
+  color: white;
+}
+
+.status-error {
+  background: var(--error-color);
+  color: white;
+}
+
+.status-warning {
+  background: var(--warning-color);
+  color: white;
+}
+
+.status-inactive {
+  background: var(--text-muted);
+  color: white;
+}
+
+.status-unknown {
+  background: var(--text-secondary);
+  color: white;
+}
+
+.company-modal {
   position: fixed;
   top: 0;
   left: 0;
@@ -936,109 +1378,178 @@ watch(() => props.isActive, (isActive) => {
 
 .modal-body {
   flex: 1;
+  padding: 20px;
   overflow-y: auto;
 }
 
-.confirm-content {
-  background: var(--bg-primary);
-  border-radius: var(--radius-lg);
-  max-width: 500px;
-  width: 90%;
-  overflow: hidden;
+.company-form {
+  width: 100%;
 }
 
-.confirm-header {
-  padding: 20px;
-  border-bottom: 1px solid var(--border-color);
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
 }
 
-.confirm-header h4 {
-  margin: 0;
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-group.full-width {
+  grid-column: 1 / -1;
+}
+
+.form-group label {
+  font-weight: 500;
   color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.confirm-body {
-  padding: 20px;
-}
-
-.confirm-body p {
-  margin: 0 0 15px 0;
-  color: var(--text-primary);
-}
-
-.confirm-details {
-  background: var(--bg-secondary);
-  padding: 15px;
+.form-group input,
+.form-group textarea,
+.form-group select {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  border-left: 4px solid var(--info-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
-.confirm-details ul {
-  margin: 0;
-  padding-left: 20px;
+.json-textarea {
+  font-family: monospace;
+  resize: vertical;
+  min-height: 120px;
 }
 
-.confirm-details li {
-  color: var(--text-secondary);
-  margin-bottom: 5px;
+.textarea-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 5px;
 }
 
-.confirm-actions {
+.json-status {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.json-status.valid {
+  color: var(--success-color);
+}
+
+.json-status.invalid {
+  color: var(--error-color);
+}
+
+.modal-footer {
   padding: 20px;
   border-top: 1px solid var(--border-color);
+}
+
+.modal-actions {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
 }
 
-.operation-results {
-  margin-top: 20px;
+.company-details {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
 }
 
-.result-container {
-  padding: 20px;
-  border-radius: var(--radius-md);
-  border-left: 4px solid;
+.details-section h5 {
+  color: var(--text-primary);
+  margin-bottom: 15px;
+  font-size: 1.1rem;
 }
 
-.result-success {
-  background: var(--success-bg);
-  border-left-color: var(--success-color);
-  color: var(--success-text);
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
 }
 
-.result-error {
-  background: var(--error-bg);
-  border-left-color: var(--error-color);
-  color: var(--error-text);
-}
-
-.result-warning {
-  background: var(--warning-bg);
-  border-left-color: var(--warning-color);
-  color: var(--warning-text);
-}
-
-.result-info {
-  background: var(--info-bg);
-  border-left-color: var(--info-color);
-  color: var(--info-text);
-}
-
-.result-container h4 {
-  margin: 0 0 10px 0;
-}
-
-.result-container p {
-  margin: 0 0 15px 0;
-}
-
-.result-details pre {
-  background: rgba(255, 255, 255, 0.7);
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   padding: 10px;
+  background: var(--bg-secondary);
   border-radius: var(--radius-sm);
+}
+
+.detail-item strong {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.status-badge {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: inline-block;
+  margin-top: 2px;
+}
+
+.config-json {
+  background: var(--bg-secondary);
+  padding: 15px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   overflow-x: auto;
   font-size: 0.9rem;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.health-item-detailed {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.health-service {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.health-status-detailed {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.health-status-detailed.active,
+.health-status-detailed.online,
+.health-status-detailed.success {
+  background: var(--success-color);
+  color: white;
+}
+
+.health-status-detailed.error,
+.health-status-detailed.failed {
+  background: var(--error-color);
+  color: white;
+}
+
+.health-status-detailed.warning {
+  background: var(--warning-color);
+  color: white;
 }
 
 .btn {
@@ -1053,18 +1564,9 @@ watch(() => props.isActive, (isActive) => {
   gap: 5px;
 }
 
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .btn-primary {
   background: var(--primary-color);
   color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--primary-dark);
 }
 
 .btn-secondary {
@@ -1072,19 +1574,47 @@ watch(() => props.isActive, (isActive) => {
   color: var(--text-primary);
 }
 
-.btn-secondary:hover:not(:disabled) {
-  background: var(--bg-quaternary);
+.btn-info {
+  background: var(--info-color);
+  color: white;
+}
+
+.btn-success {
+  background: var(--success-color);
+  color: white;
+}
+
+.btn-xs {
+  padding: 4px 8px;
+  font-size: 0.8rem;
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 @media (max-width: 768px) {
-  .tools-header {
+  .section-header {
     flex-direction: column;
     align-items: stretch;
-    gap: 15px;
   }
   
-  .tools-actions {
-    justify-content: center;
+  .search-filters {
+    flex-direction: column;
+  }
+  
+  .search-input {
+    min-width: auto;
+  }
+  
+  .companies-grid {
+    grid-template-columns: 1fr;
   }
   
   .tools-grid {
@@ -1095,13 +1625,29 @@ watch(() => props.isActive, (isActive) => {
     grid-template-columns: 1fr;
   }
   
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  
   .modal-content {
     margin: 10px;
     width: auto;
     max-height: calc(100vh - 20px);
   }
   
-  .confirm-actions {
+  .modal-actions {
+    flex-direction: column;
+  }
+  
+  .details-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .health-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .tools-actions {
     flex-direction: column;
   }
 }
