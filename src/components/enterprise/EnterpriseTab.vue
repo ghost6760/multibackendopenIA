@@ -8,6 +8,7 @@
       </p>
     </div>
 
+    
     <!-- ✅ API KEY CHECK - MISMO COMPORTAMIENTO QUE script.js -->
     <div v-if="!hasValidApiKey" class="api-key-required">
       <div class="warning-card">
