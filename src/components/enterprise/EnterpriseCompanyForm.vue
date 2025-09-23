@@ -6,14 +6,14 @@
         {{ isEditMode ? '✏️ Editar Empresa Enterprise' : '➕ Crear Nueva Empresa Enterprise' }}
       </h4>
       <p class="form-description">
-        {{ isEditMode ? 'Modifica los datos de la empresa enterprise' : 'Complete los datos para crear una nueva empresa enterprise' }}
+        {{ isEditMode ? 'Modifica los datos de la empresa enterprise' : 'Complete los datos básicos para crear una nueva empresa enterprise' }}
       </p>
     </div>
 
-    <!-- Formulario principal -->
+    <!-- Formulario principal - ✅ CAMPOS EXACTOS DE script.js -->
     <form @submit.prevent="handleSubmit" class="enterprise-form">
       
-      <!-- ✅ SECCIÓN 1: Información básica (EXACTA como script.js) -->
+      <!-- ✅ SECCIÓN BÁSICA - CAMPOS OBLIGATORIOS EXACTOS como script.js -->
       <div class="form-section">
         <h5>📋 Información Básica</h5>
         
@@ -29,8 +29,10 @@
             title="Solo letras minúsculas, números y guiones bajos"
             placeholder="ej: spa_wellness"
             class="form-control"
+            :class="{ 'form-error': errors.company_id }"
           />
-          <small class="form-hint">
+          <small v-if="errors.company_id" class="form-error-text">{{ errors.company_id }}</small>
+          <small v-else class="form-hint">
             {{ isEditMode ? 'El ID no se puede modificar' : 'Identificador único (solo letras minúsculas, números, _)' }}
           </small>
         </div>
@@ -44,7 +46,9 @@
             required
             placeholder="ej: Wellness Spa & Relax"
             class="form-control"
+            :class="{ 'form-error': errors.company_name }"
           />
+          <small v-if="errors.company_name" class="form-error-text">{{ errors.company_name }}</small>
         </div>
 
         <div class="form-group">
@@ -54,14 +58,15 @@
             id="businessType"
             required
             class="form-control"
+            :class="{ 'form-error': errors.business_type }"
           >
             <option value="">Seleccionar tipo</option>
             <option value="healthcare">Salud</option>
             <option value="beauty">Belleza</option>
             <option value="dental">Dental</option>
-            <option value="spa">SPA & Wellness</option>
             <option value="general">General</option>
           </select>
+          <small v-if="errors.business_type" class="form-error-text">{{ errors.business_type }}</small>
         </div>
 
         <div class="form-group full-width">
@@ -73,14 +78,11 @@
             rows="3"
             placeholder="relajación, bienestar y terapias holísticas"
             class="form-control"
+            :class="{ 'form-error': errors.services }"
           ></textarea>
+          <small v-if="errors.services" class="form-error-text">{{ errors.services }}</small>
         </div>
-      </div>
 
-      <!-- ✅ SECCIÓN 2: Configuración de Agente (EXACTA como script.js) -->
-      <div class="form-section">
-        <h5>🤖 Configuración de Agente</h5>
-        
         <div class="form-group">
           <label for="agentName">Nombre del agente de ventas:</label>
           <input 
@@ -90,55 +92,15 @@
             required
             placeholder="ej: Ana, terapeuta especialista de Wellness Spa"
             class="form-control"
+            :class="{ 'form-error': errors.sales_agent_name }"
           />
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label for="modelName">Modelo:</label>
-            <select 
-              v-model="formData.model_name"
-              id="modelName"
-              class="form-control"
-            >
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-            </select>
-          </div>
-          
-          <div class="form-group">
-            <label for="maxTokens">Max Tokens:</label>
-            <input 
-              v-model.number="formData.max_tokens"
-              type="number" 
-              id="maxTokens"
-              min="50"
-              max="500"
-              placeholder="150"
-              class="form-control"
-            />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="temperature">Temperature (0.0 - 1.0):</label>
-          <input 
-            v-model.number="formData.temperature"
-            type="range" 
-            id="temperature"
-            min="0"
-            max="1"
-            step="0.1"
-            class="form-control"
-          />
-          <small class="form-hint">Actual: {{ formData.temperature }}</small>
+          <small v-if="errors.sales_agent_name" class="form-error-text">{{ errors.sales_agent_name }}</small>
         </div>
       </div>
 
-      <!-- ✅ SECCIÓN 3: Integración de Agenda (EXACTA como script.js) -->
+      <!-- ✅ SECCIÓN DE CONFIGURACIÓN - EXACTA como script.js -->
       <div class="form-section">
-        <h5>🔗 Integración de Agenda</h5>
+        <h5>⚙️ Configuración</h5>
         
         <div class="form-group">
           <label for="scheduleUrl">URL del servicio de programación:</label>
@@ -149,30 +111,9 @@
             placeholder="http://127.0.0.1:4043"
             class="form-control"
           />
-          <small class="form-hint">URL del servicio de agendamiento externo</small>
+          <small class="form-hint">URL del servicio de agendamiento (opcional)</small>
         </div>
 
-        <div class="form-group">
-          <label>Duraciones de tratamiento (JSON):</label>
-          <textarea 
-            v-model="formData.treatment_durations_json"
-            rows="4"
-            placeholder='{"masaje_relajante": 60, "facial_hidratante": 45, "terapia_corporal": 90}'
-            class="form-control json-editor"
-            :class="{ 'json-invalid': !isValidTreatmentDurationsJSON }"
-          ></textarea>
-          <div class="json-validation">
-            <span v-if="isValidTreatmentDurationsJSON" class="json-valid">✅ JSON válido</span>
-            <span v-else-if="formData.treatment_durations_json" class="json-invalid">❌ JSON inválido</span>
-            <span v-else class="json-empty">💡 Configuración opcional</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ✅ SECCIÓN 4: Configuración Regional (EXACTA como script.js) -->
-      <div class="form-section">
-        <h5>🌍 Configuración Regional</h5>
-        
         <div class="form-row">
           <div class="form-group">
             <label for="timezone">Zona horaria:</label>
@@ -186,25 +127,9 @@
               <option value="America/Mexico_City">America/Mexico_City</option>
               <option value="America/Lima">America/Lima</option>
               <option value="America/New_York">America/New_York</option>
-              <option value="Europe/Madrid">Europe/Madrid</option>
             </select>
           </div>
 
-          <div class="form-group">
-            <label for="language">Idioma:</label>
-            <select 
-              v-model="formData.language"
-              id="language"
-              class="form-control"
-            >
-              <option value="es">Español</option>
-              <option value="en">English</option>
-              <option value="pt">Português</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-row">
           <div class="form-group">
             <label for="currency">Moneda:</label>
             <select 
@@ -213,114 +138,35 @@
               required
               class="form-control"
             >
-              <option value="COP">COP - Peso Colombiano</option>
-              <option value="USD">USD - Dólar Americano</option>
-              <option value="EUR">EUR - Euro</option>
-              <option value="MXN">MXN - Peso Mexicano</option>
-              <option value="PEN">PEN - Nuevo Sol</option>
+              <option value="COP">COP</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="MXN">MXN</option>
             </select>
           </div>
+        </div>
 
-          <div class="form-group">
-            <label for="subscriptionTier">Plan de suscripción:</label>
-            <select 
-              v-model="formData.subscription_tier"
-              id="subscriptionTier"
-              required
-              class="form-control"
-            >
-              <option value="basic">Basic</option>
-              <option value="premium">Premium</option>
-              <option value="enterprise">Enterprise</option>
-            </select>
-          </div>
+        <div class="form-group">
+          <label for="subscriptionTier">Plan de suscripción:</label>
+          <select 
+            v-model="formData.subscription_tier"
+            id="subscriptionTier"
+            required
+            class="form-control"
+          >
+            <option value="basic">Basic</option>
+            <option value="premium">Premium</option>
+            <option value="enterprise">Enterprise</option>
+          </select>
         </div>
       </div>
 
-      <!-- ✅ SECCIÓN 5: Configuración Técnica Adicional (Para completitud) -->
-      <div class="form-section">
-        <h5>⚙️ Configuración Técnica</h5>
-        
-        <div class="form-row">
-          <div class="form-group">
-            <label for="environment">Entorno:</label>
-            <select 
-              v-model="formData.environment"
-              id="environment"
-              class="form-control"
-            >
-              <option value="development">Development</option>
-              <option value="staging">Staging</option>
-              <option value="production">Production</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label for="databaseType">Tipo de base de datos:</label>
-            <select 
-              v-model="formData.database_type"
-              id="databaseType"
-              class="form-control"
-            >
-              <option value="">Seleccionar...</option>
-              <option value="postgresql">PostgreSQL</option>
-              <option value="mysql">MySQL</option>
-              <option value="sqlite">SQLite</option>
-              <option value="mongodb">MongoDB</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="apiBaseUrl">API Base URL:</label>
-          <input 
-            v-model="formData.api_base_url"
-            type="url" 
-            id="apiBaseUrl"
-            placeholder="https://api.empresa.com"
-            class="form-control"
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input 
-              v-model="formData.is_active"
-              type="checkbox" 
-              id="isActive"
-            />
-            <span class="checkmark"></span>
-            Empresa activa
-          </label>
-          <small class="form-hint">Solo las empresas activas pueden procesar solicitudes</small>
-        </div>
-      </div>
-
-      <!-- ✅ SECCIÓN 6: Notas adicionales -->
-      <div class="form-section">
-        <h5>📝 Información Adicional</h5>
-        
-        <div class="form-group">
-          <label for="description">Descripción:</label>
-          <textarea 
-            v-model="formData.description"
-            id="description"
-            rows="3"
-            placeholder="Descripción de la empresa..."
-            class="form-control"
-          ></textarea>
-        </div>
-
-        <div class="form-group">
-          <label for="notes">Notas:</label>
-          <textarea 
-            v-model="formData.notes"
-            id="notes"
-            rows="3"
-            placeholder="Notas adicionales sobre la empresa"
-            class="form-control"
-          ></textarea>
-        </div>
+      <!-- Indicador de validación en tiempo real -->
+      <div v-if="Object.keys(errors).length > 0" class="validation-summary">
+        <h6>⚠️ Errores de validación:</h6>
+        <ul>
+          <li v-for="(error, field) in errors" :key="field">{{ error }}</li>
+        </ul>
       </div>
 
       <!-- Botones de acción -->
@@ -414,243 +260,157 @@ const props = defineProps({
 
 const emit = defineEmits([
   'submit',
-  'cancel',
-  'update:formData'
+  'cancel'
 ])
 
 // ============================================================================
-// REACTIVE DATA - ESTRUCTURA EXACTA COMO script.js
+// REACTIVE DATA - ✅ ESTRUCTURA EXACTA COMO script.js
 // ============================================================================
 const formData = ref({
-  // ✅ CAMPOS BÁSICOS (obligatorios en script.js)
   company_id: '',
   company_name: '',
   business_type: '',
   services: '',
-  
-  // ✅ CONFIGURACIÓN DE AGENTE (como script.js)
   sales_agent_name: '',
-  model_name: 'gpt-4o-mini',
-  max_tokens: 150,
-  temperature: 0.7,
-  
-  // ✅ INTEGRACIÓN DE AGENDA (como script.js)
   schedule_service_url: '',
-  treatment_durations: {},
-  treatment_durations_json: '',
-  
-  // ✅ CONFIGURACIÓN REGIONAL (como script.js)
   timezone: 'America/Bogota',
-  language: 'es',
   currency: 'COP',
-  subscription_tier: 'basic',
-  
-  // ✅ TÉCNICO ADICIONAL
-  environment: 'development',
-  database_type: '',
-  api_base_url: '',
-  is_active: true,
-  description: '',
-  notes: ''
+  subscription_tier: 'basic'
 })
 
+const errors = ref({})
 const operationResult = ref(null)
 
 // ============================================================================
-// COMPUTED PROPERTIES
+// COMPUTED PROPERTIES - ✅ VALIDACIONES EXACTAS COMO script.js
 // ============================================================================
+const isFormValid = computed(() => {
+  // ✅ Validaciones obligatorias exactas de script.js
+  return formData.value.company_id?.toString().trim() &&
+         formData.value.company_name?.toString().trim() &&
+         formData.value.services?.toString().trim() &&
+         formData.value.business_type &&
+         formData.value.sales_agent_name?.toString().trim() &&
+         Object.keys(errors.value).length === 0
+})
 
-/**
- * ✅ VALIDACIÓN EXACTA COMO script.js
- */
-const isValidTreatmentDurationsJSON = computed(() => {
-  if (!formData.value.treatment_durations_json || !formData.value.treatment_durations_json.toString().trim()) return true
-  try {
-    const parsed = JSON.parse(formData.value.treatment_durations_json)
-    // Parsed must be an object (not array) and values positive numbers
-    if (typeof parsed !== 'object' || Array.isArray(parsed)) return false
-    for (const val of Object.values(parsed)) {
-      if (typeof val !== 'number' || !isFinite(val) || val <= 0) return false
-    }
-    return true
-  } catch (error) {
-    return false
+// ============================================================================
+// WATCHERS - VALIDACIÓN EN TIEMPO REAL
+// ============================================================================
+watch(() => formData.value.company_id, (newVal) => {
+  if (newVal && !/^[a-z0-9_]*$/.test(newVal)) {
+    errors.value.company_id = 'Solo letras minúsculas, números y guiones bajos'
+  } else if (newVal && newVal.trim() === '') {
+    errors.value.company_id = 'El ID de empresa es obligatorio'
+  } else {
+    delete errors.value.company_id
   }
 })
 
-const isFormValid = computed(() => {
-  // Validaciones obligatorias del script.js
-  if (!formData.value.company_id || !formData.value.company_id.toString().trim()) return false
-  if (!formData.value.company_name || !formData.value.company_name.toString().trim()) return false
-  if (!formData.value.services || !formData.value.services.toString().trim()) return false
-  if (!formData.value.business_type) return false
-  if (!formData.value.sales_agent_name || !formData.value.sales_agent_name.toString().trim()) return false
-  
-  // Validar formato de company_id como script.js
-  if (!/^[a-z0-9_]+$/.test(formData.value.company_id)) return false
-  
-  // Validar JSON si se proporciona
-  if (!isValidTreatmentDurationsJSON.value) return false
-  
-  return true
+watch(() => formData.value.company_name, (newVal) => {
+  if (!newVal || !newVal.toString().trim()) {
+    errors.value.company_name = 'El nombre de empresa es obligatorio'
+  } else {
+    delete errors.value.company_name
+  }
 })
 
-// ============================================================================
-// WATCHERS
-// ============================================================================
+watch(() => formData.value.services, (newVal) => {
+  if (!newVal || !newVal.toString().trim()) {
+    errors.value.services = 'Los servicios son obligatorios'
+  } else {
+    delete errors.value.services
+  }
+})
 
-// Cargar datos iniciales cuando cambia la prop (inmediato)
+watch(() => formData.value.business_type, (newVal) => {
+  if (!newVal) {
+    errors.value.business_type = 'El tipo de negocio es obligatorio'
+  } else {
+    delete errors.value.business_type
+  }
+})
+
+watch(() => formData.value.sales_agent_name, (newVal) => {
+  if (!newVal || !newVal.toString().trim()) {
+    errors.value.sales_agent_name = 'El nombre del agente es obligatorio'
+  } else {
+    delete errors.value.sales_agent_name
+  }
+})
+
+// Cargar datos iniciales
 watch(() => props.initialData, (newData) => {
   if (newData && Object.keys(newData).length > 0) {
     loadInitialData(newData)
   }
 }, { immediate: true })
 
-// Emitir cambios del formulario al padre
-watch(formData, (newData) => {
-  emit('update:formData', newData)
-}, { deep: true })
-
-// Sincronizar JSON de treatment_durations con el objeto treatment_durations real
-watch(() => formData.value.treatment_durations_json, (newJson) => {
-  if (!newJson || !newJson.toString().trim()) {
-    formData.value.treatment_durations = {}
-    return
-  }
-  try {
-    const parsed = JSON.parse(newJson)
-    // solo asignar si es objeto
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      formData.value.treatment_durations = parsed
-    }
-  } catch (e) {
-    // leave treatment_durations unchanged (invalid JSON)
-  }
-})
-
 // ============================================================================
-// METHODS
+// METHODS - ✅ COMPATIBLES CON script.js
 // ============================================================================
-
-/**
- * ✅ CARGA DATOS INICIALES - Compatible con estructura de script.js
- */
 const loadInitialData = (data) => {
+  // ✅ Solo cargar campos que usa script.js
   formData.value = {
     company_id: data.company_id || data.id || '',
     company_name: data.company_name || data.name || '',
     business_type: data.business_type || '',
     services: data.services || '',
     sales_agent_name: data.sales_agent_name || '',
-    model_name: data.model_name || 'gpt-4o-mini',
-    max_tokens: data.max_tokens || 150,
-    temperature: data.temperature || 0.7,
     schedule_service_url: data.schedule_service_url || '',
-    treatment_durations: data.treatment_durations || {},
-    treatment_durations_json: data.treatment_durations ? 
-      JSON.stringify(data.treatment_durations, null, 2) : '',
     timezone: data.timezone || 'America/Bogota',
-    language: data.language || 'es',
     currency: data.currency || 'COP',
-    subscription_tier: data.subscription_tier || 'basic',
-    environment: data.environment || 'development',
-    database_type: data.database_type || '',
-    api_base_url: data.api_base_url || '',
-    is_active: data.is_active !== false,
-    description: data.description || '',
-    notes: data.notes || ''
+    subscription_tier: data.subscription_tier || 'basic'
   }
+  // Limpiar errores al cargar datos
+  errors.value = {}
 }
 
-/**
- * ✅ MANEJO DE ENVÍO - Preparar datos como script.js
- */
 const handleSubmit = () => {
+  // ✅ Validación final exacta como script.js
   if (!isFormValid.value) {
     showError('Por favor complete todos los campos requeridos correctamente')
     return
   }
 
-  // PREPARAR DATOS EXACTO COMO script.js
-  let treatmentDurations = {}
-  if (formData.value.treatment_durations_json && formData.value.treatment_durations_json.toString().trim()) {
-    try {
-      treatmentDurations = JSON.parse(formData.value.treatment_durations_json)
-    } catch (e) {
-      showError('JSON de treatment_durations inválido')
-      return
-    }
-  } else {
-    treatmentDurations = formData.value.treatment_durations || {}
-  }
-
+  // ✅ Preparar datos exacto como script.js (estructura idéntica)
   const submitData = {
     company_id: formData.value.company_id.toString().trim(),
     company_name: formData.value.company_name.toString().trim(),
     business_type: formData.value.business_type,
     services: formData.value.services.toString().trim(),
     sales_agent_name: formData.value.sales_agent_name.toString().trim(),
-    model_name: formData.value.model_name,
-    max_tokens: formData.value.max_tokens,
-    temperature: formData.value.temperature,
-    schedule_service_url: formData.value.schedule_service_url || '',
-    treatment_durations: treatmentDurations,
+    schedule_service_url: formData.value.schedule_service_url?.toString().trim() || '',
     timezone: formData.value.timezone,
-    language: formData.value.language,
     currency: formData.value.currency,
-    subscription_tier: formData.value.subscription_tier,
-    environment: formData.value.environment,
-    database_type: formData.value.database_type,
-    api_base_url: formData.value.api_base_url,
-    is_active: !!formData.value.is_active,
-    description: formData.value.description,
-    notes: formData.value.notes
+    subscription_tier: formData.value.subscription_tier
   }
 
   emit('submit', submitData)
 }
 
-/**
- * ✅ CANCELAR
- */
 const handleCancel = () => {
   operationResult.value = null
   emit('cancel')
 }
 
-/**
- * ✅ RESETEAR FORMULARIO
- */
 const resetForm = () => {
+  // ✅ Reset exacto como script.js
   formData.value = {
     company_id: '',
     company_name: '',
     business_type: '',
     services: '',
     sales_agent_name: '',
-    model_name: 'gpt-4o-mini',
-    max_tokens: 150,
-    temperature: 0.7,
     schedule_service_url: '',
-    treatment_durations: {},
-    treatment_durations_json: '',
     timezone: 'America/Bogota',
-    language: 'es',
     currency: 'COP',
-    subscription_tier: 'basic',
-    environment: 'development',
-    database_type: '',
-    api_base_url: '',
-    is_active: true,
-    description: '',
-    notes: ''
+    subscription_tier: 'basic'
   }
+  errors.value = {}
   operationResult.value = null
 }
 
-/**
- * ✅ MOSTRAR RESULTADO - Compatible con respuesta de script.js
- */
 const showResult = (type, title, message, details = null) => {
   operationResult.value = {
     type,
@@ -661,24 +421,21 @@ const showResult = (type, title, message, details = null) => {
   }
 }
 
-/**
- * ✅ MOSTRAR ERROR
- */
 const showError = (message) => {
   showResult('error', '❌ Error', message)
 }
 
-/**
- * ✅ HELPERS PARA DISPLAY
- */
+// ============================================================================
+// HELPERS PARA DISPLAY - ✅ COMPATIBLES CON script.js
+// ============================================================================
 const getStatusClass = (value) => {
   if (typeof value === 'boolean') {
     return value ? 'success' : 'error'
   }
   if (typeof value === 'string') {
     const v = value.toLowerCase()
-    if (v.includes('success') || v.includes('ok') || v.includes('true') || v.includes('✅')) return 'success'
-    if (v.includes('error') || v.includes('fail') || v.includes('false') || v.includes('❌')) return 'error'
+    if (v.includes('success') || v.includes('ok') || v.includes('✅')) return 'success'
+    if (v.includes('error') || v.includes('fail') || v.includes('❌')) return 'error'
   }
   return 'info'
 }
@@ -696,7 +453,7 @@ const formatSetupValue = (value) => {
 }
 
 // ============================================================================
-// EXPOSE METHODS (Para uso desde componente padre)
+// EXPOSE METHODS
 // ============================================================================
 defineExpose({
   resetForm,
@@ -705,7 +462,7 @@ defineExpose({
   loadInitialData
 })
 
-// onMounted: si initialData ya existe (protección adicional)
+// onMounted - protección adicional
 onMounted(() => {
   if (props.initialData && Object.keys(props.initialData).length > 0) {
     loadInitialData(props.initialData)
@@ -714,7 +471,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Mantener todos los estilos del formulario original */
+/* ✅ ESTILOS OPTIMIZADOS - Diseño limpio y consistente */
 .enterprise-company-form {
   background: white;
   border-radius: 8px;
@@ -799,46 +556,9 @@ onMounted(() => {
   opacity: 1;
 }
 
-.json-editor {
-  font-family: 'Courier New', monospace;
-  font-size: 0.9em;
-}
-
-.json-invalid {
-  border-color: #dc3545 !important;
-  box-shadow: 0 0 0 0.2rem rgba(220,53,69,.25) !important;
-}
-
-.json-validation {
-  margin-top: 6px;
-  font-size: 0.85em;
-}
-
-.json-valid {
-  color: #28a745;
-  font-weight: 600;
-}
-
-.json-invalid {
-  color: #dc3545;
-  font-weight: 600;
-}
-
-.json-empty {
-  color: #6c757d;
-}
-
-.checkbox-label {
-  display: flex !important;
-  align-items: center;
-  cursor: pointer;
-  margin-bottom: 0 !important;
-  font-weight: normal !important;
-}
-
-.checkbox-label input[type="checkbox"] {
-  margin-right: 10px;
-  transform: scale(1.2);
+.form-control.form-error {
+  border-color: #dc3545;
+  box-shadow: 0 0 0 0.2rem rgba(220,53,69,.25);
 }
 
 .form-hint {
@@ -846,6 +566,36 @@ onMounted(() => {
   margin-top: 4px;
   color: #6c757d;
   font-size: 0.85em;
+}
+
+.form-error-text {
+  display: block;
+  margin-top: 4px;
+  color: #dc3545;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.validation-summary {
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  padding: 15px;
+  margin: 20px 0;
+  color: #721c24;
+}
+
+.validation-summary h6 {
+  margin: 0 0 10px 0;
+}
+
+.validation-summary ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.validation-summary li {
+  margin-bottom: 5px;
 }
 
 .form-actions {
@@ -884,6 +634,7 @@ onMounted(() => {
 
 .btn-primary:hover:not(:disabled) {
   background: #0056b3;
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
