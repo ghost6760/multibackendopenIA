@@ -70,7 +70,7 @@
           <div class="tools-actions">
             <button @click="refreshCompanies" class="btn btn-secondary" :disabled="isLoading">
               <span v-if="isLoading">⏳ Cargando...</span>
-              <span v-else">🔄 Recargar</span>
+              <span v-else>🔄 Actualizar</span>
             </button>
             <button @click="showCreateModal" class="btn btn-primary">
               ➕ Nueva Empresa
