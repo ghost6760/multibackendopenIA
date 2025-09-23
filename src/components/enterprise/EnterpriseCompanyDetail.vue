@@ -2,7 +2,7 @@
   <div class="enterprise-company-detail">
     <!-- Estado de carga -->
     <div v-if="isLoading" class="loading-state">
-      <div class="loading-spinner">🔄</div>
+      <div class="loading-spinner"></div>
       <p>Cargando detalles de la empresa...</p>
     </div>
 
@@ -24,35 +24,24 @@
         <div class="header-info">
           <h3>
             <span class="company-icon">🏢</span>
-            {{ company.company_name || company.company_id }}
+            {{ company.name || company.company_id }}
           </h3>
           <div class="company-meta">
             <span 
               class="status-badge"
-              :class="getStatusClass(company.is_active, company.status)"
+              :class="company.is_active ? 'status-success' : 'status-error'"
             >
-              {{ getStatusText(company.is_active, company.status) }}
+              {{ company.is_active ? '✅ Activa' : '❌ Inactiva' }}
             </span>
-            <span 
-              v-if="company.business_type"
-              class="business-type-badge" 
-              :class="`business-${company.business_type}`"
-            >
-              {{ formatBusinessType(company.business_type) }}
-            </span>
-            <span 
-              v-if="company.environment" 
-              class="environment-badge" 
-              :class="`env-${company.environment}`"
-            >
-              {{ company.environment.toUpperCase() }}
+            <span class="environment-badge" :class="`env-${company.environment || 'development'}`">
+              {{ (company.environment || 'development').toUpperCase() }}
             </span>
           </div>
         </div>
 
         <div class="header-actions">
           <button 
-            @click="$emit('edit', company.company_id)"
+            @click="$emit('edit', company.company_id || company.id)"
             class="btn btn-secondary"
           >
             ✏️ Editar
@@ -81,17 +70,17 @@
         <div class="info-grid">
           <div class="info-item">
             <strong>ID de Empresa:</strong>
-            <span class="value company-id">{{ company.company_id }}</span>
+            <span class="value">{{ company.company_id || company.id }}</span>
           </div>
           
           <div class="info-item">
             <strong>Nombre:</strong>
-            <span class="value">{{ company.company_name || 'N/A' }}</span>
+            <span class="value">{{ company.name || 'N/A' }}</span>
           </div>
           
           <div class="info-item">
             <strong>Tipo de Negocio:</strong>
-            <span class="value">{{ formatBusinessType(company.business_type) || 'N/A' }}</span>
+            <span class="value">{{ company.business_type || 'N/A' }}</span>
           </div>
           
           <div class="info-item">
@@ -105,38 +94,10 @@
             <strong>Descripción:</strong>
             <span class="value">{{ company.description }}</span>
           </div>
-        </div>
-      </div>
-
-      <!-- Servicios -->
-      <div v-if="company.services" class="detail-section">
-        <h4>⚙️ Servicios Ofrecidos</h4>
-        <div class="services-content">
-          <p class="services-text">{{ company.services }}</p>
-        </div>
-      </div>
-
-      <!-- Configuración del agente -->
-      <div class="detail-section">
-        <h4>🤖 Configuración del Agente</h4>
-        <div class="info-grid">
-          <div class="info-item">
-            <strong>Agente de Ventas:</strong>
-            <span class="value">{{ company.sales_agent_name || 'No configurado' }}</span>
-          </div>
           
-          <div class="info-item">
-            <strong>Modelo IA:</strong>
-            <span class="value">{{ company.model_name || 'Por defecto' }}</span>
-          </div>
-          
-          <div class="info-item full-width" v-if="company.schedule_service_url">
-            <strong>Servicio de Agenda:</strong>
-            <span class="value url-value">
-              <a :href="company.schedule_service_url" target="_blank" rel="noopener noreferrer">
-                {{ company.schedule_service_url }}
-              </a>
-            </span>
+          <div class="info-item full-width" v-if="company.services">
+            <strong>Servicios:</strong>
+            <span class="value">{{ company.services }}</span>
           </div>
         </div>
       </div>
@@ -145,18 +106,14 @@
       <div class="detail-section">
         <h4>⚙️ Configuración Técnica</h4>
         <div class="info-grid">
-          <div class="info-item" v-if="company.api_base_url">
+          <div class="info-item">
             <strong>URL Base API:</strong>
-            <span class="value url-value">
-              <a :href="company.api_base_url" target="_blank" rel="noopener noreferrer">
-                {{ company.api_base_url }}
-              </a>
-            </span>
+            <span class="value url-value">{{ company.api_base_url || 'No configurada' }}</span>
           </div>
           
           <div class="info-item">
             <strong>Base de Datos:</strong>
-            <span class="value">{{ company.database_type ? company.database_type.toUpperCase() : 'No especificada' }}</span>
+            <span class="value">{{ company.database_type || 'No especificada' }}</span>
           </div>
           
           <div class="info-item">
@@ -177,24 +134,8 @@
         </div>
       </div>
 
-      <!-- Configuración regional -->
-      <div class="detail-section">
-        <h4>🌍 Configuración Regional</h4>
-        <div class="info-grid">
-          <div class="info-item">
-            <strong>Zona Horaria:</strong>
-            <span class="value">{{ company.timezone || 'No configurada' }}</span>
-          </div>
-          
-          <div class="info-item">
-            <strong>Moneda:</strong>
-            <span class="value currency-badge">{{ company.currency || 'N/A' }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Configuración JSON avanzada -->
-      <div v-if="company.configuration && Object.keys(company.configuration).length > 0" class="detail-section">
+      <!-- Configuración JSON -->
+      <div v-if="company.configuration" class="detail-section">
         <h4>🔧 Configuración Avanzada</h4>
         <div class="configuration-container">
           <div class="config-header">
@@ -211,14 +152,6 @@
         </div>
       </div>
 
-      <!-- Notas -->
-      <div v-if="company.notes" class="detail-section">
-        <h4>📝 Notas</h4>
-        <div class="notes-content">
-          <p class="notes-text">{{ company.notes }}</p>
-        </div>
-      </div>
-
       <!-- Resultado de la prueba -->
       <div v-if="testResult" class="detail-section">
         <h4>🧪 Resultado de Prueba de Conexión</h4>
@@ -228,29 +161,33 @@
         >
           <div class="test-header">
             <h5>{{ testResult.title }}</h5>
-            <span class="test-timestamp">{{ formatDateTime(testResult.timestamp) }}</span>
+            <span class="test-timestamp">{{ formatDate(testResult.timestamp) }}</span>
           </div>
           
-          <div class="test-content">
-            <div class="test-section">
-              <h6>📤 Mensaje de Prueba:</h6>
-              <div class="test-message">{{ testResult.testMessage }}</div>
-            </div>
-            
-            <div v-if="testResult.response" class="test-section">
-              <h6>🤖 Respuesta del Bot:</h6>
-              <div class="test-response">{{ testResult.response }}</div>
-            </div>
-            
-            <div v-if="testResult.details" class="test-section">
-              <h6>ℹ️ Detalles Técnicos:</h6>
-              <div class="test-details">
-                <div v-for="(value, key) in testResult.details" :key="key" class="detail-item">
-                  <strong>{{ formatKey(key) }}:</strong>
-                  <span>{{ formatDetailValue(value) }}</span>
-                </div>
+          <p>{{ testResult.message }}</p>
+          
+          <!-- Detalles del test -->
+          <div v-if="testResult.details" class="test-details">
+            <h6>Detalles:</h6>
+            <div class="details-grid">
+              <div 
+                v-for="(value, key) in testResult.details" 
+                :key="key"
+                class="detail-item"
+              >
+                <span class="status-indicator" :class="`status-${getStatusClass(value)}`"></span>
+                <strong>{{ formatKey(key) }}:</strong>
+                <span>{{ formatDetailValue(value) }}</span>
               </div>
             </div>
+          </div>
+          
+          <!-- Próximos pasos -->
+          <div v-if="testResult.nextSteps" class="next-steps">
+            <h6>Próximos Pasos:</h6>
+            <ol>
+              <li v-for="step in testResult.nextSteps" :key="step">{{ step }}</li>
+            </ol>
           </div>
         </div>
       </div>
@@ -261,27 +198,27 @@
         <div class="system-info">
           <div class="info-item">
             <strong>Fecha de creación:</strong>
-            <span class="value">{{ formatDateTime(company.created_at) || 'No disponible' }}</span>
+            <span class="value">{{ formatDate(company.created_at) || 'No disponible' }}</span>
           </div>
           
           <div class="info-item">
             <strong>Última actualización:</strong>
-            <span class="value">{{ formatDateTime(company.updated_at || company.last_modified) || 'No disponible' }}</span>
+            <span class="value">{{ formatDate(company.updated_at) || 'No disponible' }}</span>
           </div>
           
           <div class="info-item">
             <strong>Última sincronización:</strong>
-            <span class="value">{{ formatDateTime(lastSync) || 'No disponible' }}</span>
+            <span class="value">{{ formatDate(lastSync) || 'No disponible' }}</span>
           </div>
         </div>
       </div>
 
-      <!-- Acciones disponibles -->
+      <!-- Acciones adicionales -->
       <div class="detail-section">
         <h4>🛠️ Acciones Disponibles</h4>
         <div class="actions-grid">
           <button 
-            @click="$emit('edit', company.company_id)"
+            @click="$emit('edit', company.company_id || company.id)"
             class="action-card"
           >
             <div class="action-icon">✏️</div>
@@ -304,7 +241,7 @@
           </button>
           
           <button 
-            @click="$emit('toggle-status', company.company_id, !company.is_active)"
+            @click="$emit('toggle-status', company.company_id || company.id, !company.is_active)"
             class="action-card"
           >
             <div class="action-icon">{{ company.is_active ? '⏸️' : '▶️' }}</div>
@@ -322,29 +259,6 @@
             <div class="action-content">
               <strong>Actualizar</strong>
               <small>Recargar información</small>
-            </div>
-          </button>
-
-          <button 
-            @click="handleExport"
-            class="action-card"
-          >
-            <div class="action-icon">📤</div>
-            <div class="action-content">
-              <strong>Exportar</strong>
-              <small>Descargar configuración</small>
-            </div>
-          </button>
-
-          <button 
-            v-if="company.api_base_url || company.schedule_service_url"
-            @click="handleOpenExternal"
-            class="action-card"
-          >
-            <div class="action-icon">🔗</div>
-            <div class="action-content">
-              <strong>Abrir Servicios</strong>
-              <small>Acceder a servicios externos</small>
             </div>
           </button>
         </div>
@@ -399,7 +313,8 @@ const testResult = ref(null)
 // ============================================================================
 
 /**
- * Maneja el test de conexión
+ * Maneja el test de conexión - MIGRADO: testEnterpriseCompany() de script.js
+ * PRESERVAR: Comportamiento exacto de la función original
  */
 const handleTest = async () => {
   if (!props.company) return
@@ -409,10 +324,10 @@ const handleTest = async () => {
   
   try {
     // Emitir evento al componente padre para manejar la prueba
-    const result = await emit('test', props.company.company_id)
+    emit('test', props.company.company_id || props.company.id)
     
-    // El resultado será manejado por el componente padre
-    // Este es un placeholder para mostrar que se está probando
+    // Simular resultado de prueba (el componente padre manejará el resultado real)
+    // Este es solo para mostrar el estado de carga
     
   } catch (error) {
     showTestResult('error', '❌ Error en la Prueba', error.message)
@@ -424,14 +339,13 @@ const handleTest = async () => {
 /**
  * Muestra resultado de prueba
  */
-const showTestResult = (type, title, message, response = null, details = null) => {
+const showTestResult = (type, title, message, details = null, nextSteps = null) => {
   testResult.value = {
     type,
     title,
     message,
-    response,
     details,
-    testMessage: '¿Cuáles son sus servicios disponibles?',
+    nextSteps,
     timestamp: Date.now()
   }
   isTesting.value = false
@@ -443,49 +357,6 @@ const showTestResult = (type, title, message, response = null, details = null) =
 const handleRefresh = () => {
   testResult.value = null
   emit('refresh')
-}
-
-/**
- * Maneja la exportación de datos de la empresa
- */
-const handleExport = () => {
-  if (!props.company) return
-  
-  try {
-    const exportData = {
-      export_timestamp: new Date().toISOString(),
-      company: props.company
-    }
-    
-    const content = JSON.stringify(exportData, null, 2)
-    const blob = new Blob([content], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `enterprise_company_${props.company.company_id}_${new Date().toISOString().split('T')[0]}.json`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-    
-  } catch (error) {
-    console.error('Error exporting company data:', error)
-  }
-}
-
-/**
- * Abre servicios externos
- */
-const handleOpenExternal = () => {
-  if (!props.company) return
-  
-  const urls = []
-  if (props.company.api_base_url) urls.push(props.company.api_base_url)
-  if (props.company.schedule_service_url) urls.push(props.company.schedule_service_url)
-  
-  urls.forEach(url => {
-    window.open(url, '_blank', 'noopener,noreferrer')
-  })
 }
 
 /**
@@ -511,24 +382,27 @@ const formatConfiguration = (config) => {
   
   try {
     if (typeof config === 'string') {
+      // Si ya es string, intentar parsearlo y reformatearlo
       const parsed = JSON.parse(config)
       return JSON.stringify(parsed, null, 2)
     } else {
+      // Si es objeto, convertirlo a JSON formateado
       return JSON.stringify(config, null, 2)
     }
   } catch (error) {
+    // Si hay error en el parsing, devolver como string
     return config.toString()
   }
 }
 
 /**
- * Formatea fecha para mostrar
+ * Formatea fecha para mostrar - PRESERVAR formato del script.js
  */
-const formatDateTime = (timestamp) => {
+const formatDate = (timestamp) => {
   if (!timestamp) return null
   
   try {
-    const date = typeof timestamp === 'number' ? new Date(timestamp) : new Date(timestamp)
+    const date = new Date(timestamp)
     return date.toLocaleString('es-ES', {
       year: 'numeric',
       month: '2-digit',
@@ -543,51 +417,22 @@ const formatDateTime = (timestamp) => {
 }
 
 /**
- * Obtiene clase de status
+ * Obtiene clase de status para indicadores
  */
-const getStatusClass = (isActive, status) => {
-  if (status === 'error') return 'status-error'
-  if (isActive === false) return 'status-inactive'
-  return 'status-success'
-}
-
-/**
- * Obtiene texto de status
- */
-const getStatusText = (isActive, status) => {
-  if (status === 'error') return '❌ Error'
-  if (isActive === false) return '⏸️ Inactiva'
-  return '✅ Activa'
-}
-
-/**
- * Formatea tipo de negocio
- */
-const formatBusinessType = (type) => {
-  if (!type) return ''
-  
-  const types = {
-    spa: 'SPA & Wellness',
-    healthcare: 'Salud', 
-    beauty: 'Belleza',
-    dental: 'Dental',
-    retail: 'Retail',
-    technology: 'Tecnología',
-    consulting: 'Consultoría',
-    general: 'General'
+const getStatusClass = (value) => {
+  if (typeof value === 'boolean') {
+    return value ? 'success' : 'error'
   }
-  return types[type] || type.charAt(0).toUpperCase() + type.slice(1)
-}
-
-/**
- * Formatea clave para mostrar más amigable
- */
-const formatKey = (key) => {
-  return key
-    .replace(/_/g, ' ')
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
+  if (typeof value === 'string') {
+    const lower = value.toLowerCase()
+    if (lower.includes('success') || lower.includes('ok') || lower.includes('active')) {
+      return 'success'
+    }
+    if (lower.includes('error') || lower.includes('fail') || lower.includes('inactive')) {
+      return 'error'
+    }
+  }
+  return 'info'
 }
 
 /**
@@ -603,6 +448,17 @@ const formatDetailValue = (value) => {
   return value
 }
 
+/**
+ * Formatea clave para mostrar más amigable
+ */
+const formatKey = (key) => {
+  return key
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
 // ============================================================================
 // EXPOSE METHODS (Para uso desde componente padre)
 // ============================================================================
@@ -614,6 +470,10 @@ defineExpose({
 </script>
 
 <style scoped>
+/* ============================================================================ */
+/* ESTILOS DEL COMPONENTE DETAIL - Siguiendo el estilo del proyecto */
+/* ============================================================================ */
+
 .enterprise-company-detail {
   background: white;
   border-radius: 8px;
@@ -628,14 +488,18 @@ defineExpose({
 }
 
 .loading-spinner {
-  font-size: 2em;
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #007bff;
+  border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin-bottom: 15px;
+  margin: 0 auto 20px;
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* Header del detalle */
@@ -668,7 +532,7 @@ defineExpose({
   flex-wrap: wrap;
 }
 
-.status-badge, .business-type-badge, .environment-badge {
+.status-badge, .environment-badge {
   padding: 4px 12px;
   border-radius: 15px;
   font-size: 0.85em;
@@ -681,19 +545,13 @@ defineExpose({
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.status-inactive {
-  background: rgba(255, 193, 7, 0.2);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
 .status-error {
   background: rgba(220, 53, 69, 0.2);
   color: #ffffff;
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.business-type-badge, .environment-badge {
+.environment-badge {
   background: rgba(255, 255, 255, 0.2);
   color: #ffffff;
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -765,7 +623,7 @@ defineExpose({
   word-break: break-word;
 }
 
-.company-id {
+.url-value {
   font-family: 'Courier New', monospace;
   background: #f8f9fa;
   padding: 6px 10px;
@@ -773,22 +631,7 @@ defineExpose({
   font-size: 0.9em !important;
 }
 
-.url-value a {
-  color: #007bff;
-  text-decoration: none;
-  font-family: 'Courier New', monospace;
-  background: #f8f9fa;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 0.9em;
-  display: inline-block;
-}
-
-.url-value a:hover {
-  text-decoration: underline;
-}
-
-.plan-badge, .currency-badge {
+.plan-badge {
   display: inline-block;
   padding: 4px 12px;
   border-radius: 12px;
@@ -810,11 +653,6 @@ defineExpose({
 .plan-enterprise {
   background: #d4edda;
   color: #155724;
-}
-
-.currency-badge {
-  background: #e9ecef;
-  color: #495057;
 }
 
 .environment-value {
@@ -848,20 +686,6 @@ defineExpose({
 .status-inactive {
   color: #dc3545;
   font-weight: bold;
-}
-
-/* Contenido de servicios y notas */
-.services-content, .notes-content {
-  background: #f8f9fa;
-  padding: 15px;
-  border-radius: 6px;
-  border-left: 4px solid #007bff;
-}
-
-.services-text, .notes-text {
-  margin: 0;
-  line-height: 1.6;
-  color: #333;
 }
 
 /* Configuración JSON */
@@ -924,34 +748,63 @@ defineExpose({
   opacity: 0.8;
 }
 
-.test-content {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.test-section h6 {
-  margin: 0 0 8px 0;
-  font-size: 1em;
-  color: #495057;
-}
-
-.test-message, .test-response {
-  background: rgba(255, 255, 255, 0.7);
-  padding: 10px;
-  border-radius: 4px;
-  border-left: 3px solid currentColor;
-  font-style: italic;
-}
-
 .test-details {
+  margin: 15px 0;
+}
+
+.test-details h6 {
+  margin: 0 0 10px 0;
+  font-size: 1em;
+}
+
+.details-grid {
   display: grid;
   gap: 8px;
 }
 
 .detail-item {
   display: flex;
+  align-items: center;
   gap: 8px;
+  font-size: 0.9em;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-success {
+  background: #28a745;
+}
+
+.status-error {
+  background: #dc3545;
+}
+
+.status-info {
+  background: #17a2b8;
+}
+
+/* Próximos pasos */
+.next-steps {
+  margin-top: 15px;
+}
+
+.next-steps h6 {
+  margin: 0 0 8px 0;
+  font-size: 1em;
+}
+
+.next-steps ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.next-steps li {
+  margin-bottom: 4px;
   font-size: 0.9em;
 }
 
@@ -1014,77 +867,6 @@ defineExpose({
   gap: 15px;
 }
 
-/* Botones generales */
-.btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  font-size: 0.9em;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: #007bff;
-  color: white;
-}
-
-.btn-secondary {
-  background: #6c757d;
-  color: white;
-}
-
-.btn-info {
-  background: #17a2b8;
-  color: white;
-}
-
-.btn-outline {
-  background: transparent;
-  color: #6c757d;
-  border: 1px solid #6c757d;
-}
-
-.btn-outline:hover:not(:disabled) {
-  background: #6c757d;
-  color: white;
-}
-
-/* Result containers */
-.result-container {
-  padding: 20px;
-  border-radius: 6px;
-  border-left: 4px solid;
-}
-
-.result-success {
-  background: #d4edda;
-  border-left-color: #28a745;
-  color: #155724;
-}
-
-.result-error {
-  background: #f8d7da;
-  border-left-color: #dc3545;
-  color: #721c24;
-}
-
-.result-info {
-  background: #d1ecf1;
-  border-left-color: #17a2b8;
-  color: #0c5460;
-}
-
 /* Responsive */
 @media (max-width: 768px) {
   .detail-header {
@@ -1107,18 +889,6 @@ defineExpose({
   
   .actions-grid {
     grid-template-columns: 1fr;
-  }
-  
-  .test-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
-  }
-  
-  .config-header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
   }
 }
 </style>
