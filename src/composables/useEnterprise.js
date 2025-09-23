@@ -111,20 +111,20 @@ export const useEnterprise = () => {
 
       console.log('✅ Enterprise companies response:', response)
 
-      // ✅ ESTRUCTURA CORREGIDA: response.data.companies (no response.companies)
-      if (response && response.data && Array.isArray(response.data.companies)) {
-        enterpriseCompanies.value = response.data.companies
+      // ✅ ESTRUCTURA CORREGIDA: response.companies (según logs de la API real)
+      if (response && response.companies && Array.isArray(response.companies)) {
+        enterpriseCompanies.value = response.companies
         lastUpdateTime.value = new Date().toISOString()
 
-        addToLog(`Enterprise companies loaded successfully (${response.data.companies.length} companies)`, 'success')
-        showNotification(`${response.data.companies.length} empresas enterprise cargadas`, 'success')
+        addToLog(`Enterprise companies loaded successfully (${response.companies.length} companies)`, 'success')
+        showNotification(`${response.companies.length} empresas enterprise cargadas`, 'success')
         
       } else {
         console.error('Invalid response format:', response)
-        throw new Error(`Invalid response format: expected data.companies array, got ${typeof response}`)
+        throw new Error(`Invalid response format: expected companies array, got ${typeof response}`)
       }
 
-      return response.data.companies
+      return response.companies
 
     } catch (error) {
       addToLog(`Error loading enterprise companies: ${error.message}`, 'error')
@@ -167,8 +167,8 @@ export const useEnterprise = () => {
         body: companyData
       })
 
-      // ✅ ESTRUCTURA CORREGIDA: response.data (no response.company)
-      const newCompany = response.data || response
+      // ✅ ESTRUCTURA CORREGIDA: response directamente (no response.data)
+      const newCompany = response
 
       addToLog(`Enterprise company created successfully: ${newCompany.company_id}`, 'success')
       showNotification('Empresa enterprise creada exitosamente', 'success')
@@ -214,8 +214,8 @@ export const useEnterprise = () => {
         }
       })
 
-      // ✅ ESTRUCTURA CORREGIDA: response.data
-      const companyData = response.data || response
+      // ✅ ESTRUCTURA CORREGIDA: response directamente
+      const companyData = response
       selectedCompany.value = companyData
 
       addToLog(`Enterprise company details loaded: ${companyId}`, 'success')
@@ -251,8 +251,8 @@ export const useEnterprise = () => {
         body: companyData
       })
 
-      // ✅ ESTRUCTURA CORREGIDA: response.data
-      const updatedCompany = response.data || response
+      // ✅ ESTRUCTURA CORREGIDA: response directamente
+      const updatedCompany = response
 
       // Actualizar en lista local
       const index = enterpriseCompanies.value.findIndex(c => c.company_id === companyId)
