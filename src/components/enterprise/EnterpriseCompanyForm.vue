@@ -6,19 +6,24 @@
         {{ isEditMode ? '✏️ Editar Empresa Enterprise' : '➕ Crear Nueva Empresa Enterprise' }}
       </h4>
       <p class="form-description">
-        {{ isEditMode ? 'Modifica los datos de la empresa enterprise' : 'Complete los datos básicos para crear una nueva empresa enterprise' }}
+        {{ isEditMode ? `Modifica los datos de: ${formData.company_name || formData.company_id}` : 'Complete los datos básicos para crear una nueva empresa enterprise' }}
       </p>
+      
+      <!-- DEBUG: Mostrar si hay datos iniciales -->
+      <div v-if="isEditMode && initialData" class="debug-info">
+        <small>✅ Datos cargados de: {{ initialData.company_name || initialData.company_id }}</small>
+      </div>
     </div>
 
-    <!-- Formulario principal - ✅ CAMPOS EXACTOS DE script.js -->
+    <!-- Formulario principal -->
     <form @submit.prevent="handleSubmit" class="enterprise-form">
       
-      <!-- ✅ SECCIÓN BÁSICA - CAMPOS OBLIGATORIOS EXACTOS como script.js -->
+      <!-- ✅ INFORMACIÓN BÁSICA -->
       <div class="form-section">
         <h5>📋 Información Básica</h5>
         
         <div class="form-group">
-          <label for="companyId">ID de empresa (solo minúsculas, números y _):</label>
+          <label for="companyId">ID de empresa:</label>
           <input 
             v-model="formData.company_id"
             type="text" 
@@ -26,14 +31,13 @@
             :disabled="isEditMode"
             required
             pattern="[a-z0-9_]+"
-            title="Solo letras minúsculas, números y guiones bajos"
             placeholder="ej: spa_wellness"
             class="form-control"
-            :class="{ 'form-error': errors.company_id }"
+            :class="{ 'form-error': errors.company_id, 'form-readonly': isEditMode }"
           />
           <small v-if="errors.company_id" class="form-error-text">{{ errors.company_id }}</small>
           <small v-else class="form-hint">
-            {{ isEditMode ? 'El ID no se puede modificar' : 'Identificador único (solo letras minúsculas, números, _)' }}
+            {{ isEditMode ? 'El ID no se puede modificar en edición' : 'Solo letras minúsculas, números y _' }}
           </small>
         </div>
 
@@ -90,7 +94,7 @@
             type="text" 
             id="agentName"
             required
-            placeholder="ej: Ana, terapeuta especialista de Wellness Spa"
+            placeholder="ej: Ana, terapeuta especialista"
             class="form-control"
             :class="{ 'form-error': errors.sales_agent_name }"
           />
@@ -98,7 +102,7 @@
         </div>
       </div>
 
-      <!-- ✅ SECCIÓN DE CONFIGURACIÓN - EXACTA como script.js -->
+      <!-- ✅ CONFIGURACIÓN -->
       <div class="form-section">
         <h5>⚙️ Configuración</h5>
         
@@ -108,7 +112,7 @@
             v-model="formData.schedule_service_url"
             type="url" 
             id="scheduleUrl"
-            placeholder="http://127.0.0.1:4043"
+            placeholder="http://localhost:4040"
             class="form-control"
           />
           <small class="form-hint">URL del servicio de agendamiento (opcional)</small>
@@ -161,12 +165,18 @@
         </div>
       </div>
 
-      <!-- Indicador de validación en tiempo real -->
+      <!-- Validación en tiempo real -->
       <div v-if="Object.keys(errors).length > 0" class="validation-summary">
         <h6>⚠️ Errores de validación:</h6>
         <ul>
           <li v-for="(error, field) in errors" :key="field">{{ error }}</li>
         </ul>
+      </div>
+
+      <!-- Indicador de carga de datos -->
+      <div v-if="isLoadingData" class="loading-indicator">
+        <div class="loading-spinner"></div>
+        <span>Cargando datos de la empresa...</span>
       </div>
 
       <!-- Botones de acción -->
@@ -184,7 +194,7 @@
           type="button"
           @click="resetForm"
           class="btn btn-outline"
-          :disabled="isSaving"
+          :disabled="isSaving || isEditMode"
         >
           🔄 Limpiar
         </button>
@@ -210,7 +220,6 @@
         <h5>{{ operationResult.title }}</h5>
         <p>{{ operationResult.message }}</p>
         
-        <!-- ✅ MOSTRAR DETALLES DE SETUP COMO script.js -->
         <div v-if="operationResult.setup_status" class="setup-status">
           <h6>Estado de Configuración:</h6>
           <div class="setup-items">
@@ -225,7 +234,6 @@
           </div>
         </div>
         
-        <!-- ✅ PRÓXIMOS PASOS COMO script.js -->
         <div v-if="operationResult.next_steps" class="next-steps">
           <h6>Próximos Pasos:</h6>
           <ol>
@@ -238,7 +246,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 
 // ============================================================================
 // PROPS & EMITS
@@ -280,12 +288,12 @@ const formData = ref({
 
 const errors = ref({})
 const operationResult = ref(null)
+const isLoadingData = ref(false)
 
 // ============================================================================
-// COMPUTED PROPERTIES - ✅ VALIDACIONES EXACTAS COMO script.js
+// COMPUTED PROPERTIES
 // ============================================================================
 const isFormValid = computed(() => {
-  // ✅ Validaciones obligatorias exactas de script.js
   return formData.value.company_id?.toString().trim() &&
          formData.value.company_name?.toString().trim() &&
          formData.value.services?.toString().trim() &&
@@ -295,11 +303,34 @@ const isFormValid = computed(() => {
 })
 
 // ============================================================================
-// WATCHERS - VALIDACIÓN EN TIEMPO REAL
+// WATCHERS - VALIDACIÓN Y CARGA DE DATOS
 // ============================================================================
+
+// ✅ WATCHER CRÍTICO: Cargar datos cuando cambian las props
+watch(() => props.initialData, async (newData) => {
+  console.log('🔄 Props initialData changed:', newData)
+  if (newData && Object.keys(newData).length > 0 && props.isEditMode) {
+    await loadInitialData(newData)
+  } else if (!props.isEditMode) {
+    // Si no es modo edición, limpiar
+    resetToDefaults()
+  }
+}, { immediate: true, deep: true })
+
+// ✅ WATCHER: Detectar cambio a modo edición
+watch(() => props.isEditMode, async (isEdit) => {
+  console.log('🔄 Edit mode changed:', isEdit)
+  if (isEdit && props.initialData && Object.keys(props.initialData).length > 0) {
+    await loadInitialData(props.initialData)
+  } else if (!isEdit) {
+    resetToDefaults()
+  }
+})
+
+// Validación en tiempo real
 watch(() => formData.value.company_id, (newVal) => {
   if (newVal && !/^[a-z0-9_]*$/.test(newVal)) {
-    errors.value.company_id = 'Solo letras minúsculas, números y guiones bajos'
+    errors.value.company_id = 'Solo letras minúsculas, números y _'
   } else if (newVal && newVal.trim() === '') {
     errors.value.company_id = 'El ID de empresa es obligatorio'
   } else {
@@ -309,7 +340,7 @@ watch(() => formData.value.company_id, (newVal) => {
 
 watch(() => formData.value.company_name, (newVal) => {
   if (!newVal || !newVal.toString().trim()) {
-    errors.value.company_name = 'El nombre de empresa es obligatorio'
+    errors.value.company_name = 'El nombre es obligatorio'
   } else {
     delete errors.value.company_name
   }
@@ -339,63 +370,59 @@ watch(() => formData.value.sales_agent_name, (newVal) => {
   }
 })
 
-// Cargar datos iniciales
-watch(() => props.initialData, (newData) => {
-  if (newData && Object.keys(newData).length > 0) {
-    loadInitialData(newData)
-  }
-}, { immediate: true })
-
 // ============================================================================
-// METHODS - ✅ COMPATIBLES CON script.js
+// METHODS - ✅ CARGA DE DATOS CORREGIDA
 // ============================================================================
-const loadInitialData = (data) => {
-  // ✅ Solo cargar campos que usa script.js
-  formData.value = {
-    company_id: data.company_id || data.id || '',
-    company_name: data.company_name || data.name || '',
-    business_type: data.business_type || '',
-    services: data.services || '',
-    sales_agent_name: data.sales_agent_name || '',
-    schedule_service_url: data.schedule_service_url || '',
-    timezone: data.timezone || 'America/Bogota',
-    currency: data.currency || 'COP',
-    subscription_tier: data.subscription_tier || 'basic'
-  }
-  // Limpiar errores al cargar datos
-  errors.value = {}
-}
 
-const handleSubmit = () => {
-  // ✅ Validación final exacta como script.js
-  if (!isFormValid.value) {
-    showError('Por favor complete todos los campos requeridos correctamente')
+/**
+ * ✅ FUNCIÓN CRÍTICA: Cargar datos iniciales correctamente
+ */
+const loadInitialData = async (data) => {
+  console.log('📥 Loading initial data:', data)
+  
+  if (!data || Object.keys(data).length === 0) {
+    console.warn('❌ No data to load')
     return
   }
 
-  // ✅ Preparar datos exacto como script.js (estructura idéntica)
-  const submitData = {
-    company_id: formData.value.company_id.toString().trim(),
-    company_name: formData.value.company_name.toString().trim(),
-    business_type: formData.value.business_type,
-    services: formData.value.services.toString().trim(),
-    sales_agent_name: formData.value.sales_agent_name.toString().trim(),
-    schedule_service_url: formData.value.schedule_service_url?.toString().trim() || '',
-    timezone: formData.value.timezone,
-    currency: formData.value.currency,
-    subscription_tier: formData.value.subscription_tier
+  isLoadingData.value = true
+  
+  try {
+    // ✅ Esperar un tick para asegurar que el DOM esté listo
+    await nextTick()
+    
+    // ✅ Cargar datos con todos los campos posibles
+    formData.value = {
+      company_id: data.company_id || data.id || '',
+      company_name: data.company_name || data.name || '',
+      business_type: data.business_type || '',
+      services: data.services || '',
+      sales_agent_name: data.sales_agent_name || '',
+      schedule_service_url: data.schedule_service_url || '',
+      timezone: data.timezone || 'America/Bogota',
+      currency: data.currency || 'COP',
+      subscription_tier: data.subscription_tier || 'basic'
+    }
+    
+    // ✅ Limpiar errores después de cargar datos
+    errors.value = {}
+    operationResult.value = null
+    
+    console.log('✅ Data loaded successfully:', formData.value)
+    
+  } catch (error) {
+    console.error('❌ Error loading initial data:', error)
+    showError('Error cargando datos de la empresa')
+  } finally {
+    isLoadingData.value = false
   }
-
-  emit('submit', submitData)
 }
 
-const handleCancel = () => {
-  operationResult.value = null
-  emit('cancel')
-}
-
-const resetForm = () => {
-  // ✅ Reset exacto como script.js
+/**
+ * ✅ Resetear a valores por defecto
+ */
+const resetToDefaults = () => {
+  console.log('🔄 Resetting to defaults')
   formData.value = {
     company_id: '',
     company_name: '',
@@ -409,6 +436,45 @@ const resetForm = () => {
   }
   errors.value = {}
   operationResult.value = null
+}
+
+/**
+ * ✅ SUBMIT con verificación de modo
+ */
+const handleSubmit = () => {
+  console.log('🚀 Form submit:', { editMode: props.isEditMode, formData: formData.value })
+  
+  if (!isFormValid.value) {
+    showError('Complete todos los campos requeridos correctamente')
+    return
+  }
+
+  // ✅ Preparar datos exacto como script.js
+  const submitData = {
+    company_id: formData.value.company_id.toString().trim(),
+    company_name: formData.value.company_name.toString().trim(),
+    business_type: formData.value.business_type,
+    services: formData.value.services.toString().trim(),
+    sales_agent_name: formData.value.sales_agent_name.toString().trim(),
+    schedule_service_url: formData.value.schedule_service_url?.toString().trim() || '',
+    timezone: formData.value.timezone,
+    currency: formData.value.currency,
+    subscription_tier: formData.value.subscription_tier
+  }
+
+  console.log('📤 Emitting submit with data:', submitData)
+  emit('submit', submitData)
+}
+
+const handleCancel = () => {
+  operationResult.value = null
+  emit('cancel')
+}
+
+const resetForm = () => {
+  if (!props.isEditMode) {
+    resetToDefaults()
+  }
 }
 
 const showResult = (type, title, message, details = null) => {
@@ -426,7 +492,7 @@ const showError = (message) => {
 }
 
 // ============================================================================
-// HELPERS PARA DISPLAY - ✅ COMPATIBLES CON script.js
+// HELPERS
 // ============================================================================
 const getStatusClass = (value) => {
   if (typeof value === 'boolean') {
@@ -434,8 +500,8 @@ const getStatusClass = (value) => {
   }
   if (typeof value === 'string') {
     const v = value.toLowerCase()
-    if (v.includes('success') || v.includes('ok') || v.includes('✅')) return 'success'
-    if (v.includes('error') || v.includes('fail') || v.includes('❌')) return 'error'
+    if (v.includes('success') || v.includes('✅')) return 'success'
+    if (v.includes('error') || v.includes('❌')) return 'error'
   }
   return 'info'
 }
@@ -453,6 +519,21 @@ const formatSetupValue = (value) => {
 }
 
 // ============================================================================
+// LIFECYCLE
+// ============================================================================
+onMounted(async () => {
+  console.log('🎯 Form mounted:', { 
+    isEditMode: props.isEditMode, 
+    hasInitialData: !!(props.initialData && Object.keys(props.initialData).length > 0) 
+  })
+  
+  // ✅ Cargar datos si ya están disponibles al montar
+  if (props.isEditMode && props.initialData && Object.keys(props.initialData).length > 0) {
+    await loadInitialData(props.initialData)
+  }
+})
+
+// ============================================================================
 // EXPOSE METHODS
 // ============================================================================
 defineExpose({
@@ -461,17 +542,10 @@ defineExpose({
   showError,
   loadInitialData
 })
-
-// onMounted - protección adicional
-onMounted(() => {
-  if (props.initialData && Object.keys(props.initialData).length > 0) {
-    loadInitialData(props.initialData)
-  }
-})
 </script>
 
 <style scoped>
-/* ✅ ESTILOS OPTIMIZADOS - Diseño limpio y consistente */
+/* ✅ ESTILOS CON MEJORAS VISUALES */
 .enterprise-company-form {
   background: white;
   border-radius: 8px;
@@ -493,9 +567,21 @@ onMounted(() => {
 }
 
 .form-description {
-  margin: 0;
+  margin: 0 0 10px 0;
   color: #6c757d;
   font-size: 1em;
+}
+
+.debug-info {
+  background: #e7f3ff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-top: 10px;
+}
+
+.debug-info small {
+  color: #0066cc;
+  font-weight: 500;
 }
 
 .form-section {
@@ -551,9 +637,10 @@ onMounted(() => {
   box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
 }
 
-.form-control:disabled {
+.form-control:disabled, .form-control.form-readonly {
   background-color: #e9ecef;
-  opacity: 1;
+  opacity: 0.8;
+  cursor: not-allowed;
 }
 
 .form-control.form-error {
@@ -594,8 +681,30 @@ onMounted(() => {
   padding-left: 20px;
 }
 
-.validation-summary li {
-  margin-bottom: 5px;
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px;
+  background: #e7f3ff;
+  border: 1px solid #cce5ff;
+  border-radius: 4px;
+  margin: 20px 0;
+  color: #0066cc;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #cce5ff;
+  border-top: 2px solid #0066cc;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .form-actions {
