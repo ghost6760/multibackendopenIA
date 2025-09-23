@@ -397,7 +397,6 @@ import { ref, computed, watch, onMounted } from 'vue'
 // ============================================================================
 // PROPS & EMITS
 // ============================================================================
-
 const props = defineProps({
   isEditMode: {
     type: Boolean,
@@ -422,7 +421,6 @@ const emit = defineEmits([
 // ============================================================================
 // REACTIVE DATA - ESTRUCTURA EXACTA COMO script.js
 // ============================================================================
-
 const formData = ref({
   // ✅ CAMPOS BÁSICOS (obligatorios en script.js)
   company_id: '',
@@ -465,13 +463,28 @@ const operationResult = ref(null)
 /**
  * ✅ VALIDACIÓN EXACTA COMO script.js
  */
+const isValidTreatmentDurationsJSON = computed(() => {
+  if (!formData.value.treatment_durations_json || !formData.value.treatment_durations_json.toString().trim()) return true
+  try {
+    const parsed = JSON.parse(formData.value.treatment_durations_json)
+    // Parsed must be an object (not array) and values positive numbers
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    for (const val of Object.values(parsed)) {
+      if (typeof val !== 'number' || !isFinite(val) || val <= 0) return false
+    }
+    return true
+  } catch (error) {
+    return false
+  }
+})
+
 const isFormValid = computed(() => {
   // Validaciones obligatorias del script.js
-  if (!formData.value.company_id.trim()) return false
-  if (!formData.value.company_name.trim()) return false
-  if (!formData.value.services.trim()) return false
+  if (!formData.value.company_id || !formData.value.company_id.toString().trim()) return false
+  if (!formData.value.company_name || !formData.value.company_name.toString().trim()) return false
+  if (!formData.value.services || !formData.value.services.toString().trim()) return false
   if (!formData.value.business_type) return false
-  if (!formData.value.sales_agent_name.trim()) return false
+  if (!formData.value.sales_agent_name || !formData.value.sales_agent_name.toString().trim()) return false
   
   // Validar formato de company_id como script.js
   if (!/^[a-z0-9_]+$/.test(formData.value.company_id)) return false
@@ -482,35 +495,38 @@ const isFormValid = computed(() => {
   return true
 })
 
-/**
- * ✅ VALIDACIÓN DE JSON como script.js
- */
-const isValidTreatmentDurationsJSON = computed(() => {
-  if (!formData.value.treatment_durations_json.trim()) return true
-  
-  try {
-    JSON.parse(formData.value.treatment_durations_json)
-    return true
-  } catch (error) {
-    return false
-  }
-})
-
 // ============================================================================
 // WATCHERS
 // ============================================================================
 
-// Cargar datos iniciales cuando cambia la prop
+// Cargar datos iniciales cuando cambia la prop (inmediato)
 watch(() => props.initialData, (newData) => {
   if (newData && Object.keys(newData).length > 0) {
     loadInitialData(newData)
   }
 }, { immediate: true })
 
-// Emitir cambios del formulario
+// Emitir cambios del formulario al padre
 watch(formData, (newData) => {
   emit('update:formData', newData)
 }, { deep: true })
+
+// Sincronizar JSON de treatment_durations con el objeto treatment_durations real
+watch(() => formData.value.treatment_durations_json, (newJson) => {
+  if (!newJson || !newJson.toString().trim()) {
+    formData.value.treatment_durations = {}
+    return
+  }
+  try {
+    const parsed = JSON.parse(newJson)
+    // solo asignar si es objeto
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      formData.value.treatment_durations = parsed
+    }
+  } catch (e) {
+    // leave treatment_durations unchanged (invalid JSON)
+  }
+})
 
 // ============================================================================
 // METHODS
@@ -555,19 +571,30 @@ const handleSubmit = () => {
     return
   }
 
-  // ✅ PREPARAR DATOS EXACTO COMO script.js
+  // PREPARAR DATOS EXACTO COMO script.js
+  let treatmentDurations = {}
+  if (formData.value.treatment_durations_json && formData.value.treatment_durations_json.toString().trim()) {
+    try {
+      treatmentDurations = JSON.parse(formData.value.treatment_durations_json)
+    } catch (e) {
+      showError('JSON de treatment_durations inválido')
+      return
+    }
+  } else {
+    treatmentDurations = formData.value.treatment_durations || {}
+  }
+
   const submitData = {
-    company_id: formData.value.company_id.trim(),
-    company_name: formData.value.company_name.trim(),
+    company_id: formData.value.company_id.toString().trim(),
+    company_name: formData.value.company_name.toString().trim(),
     business_type: formData.value.business_type,
-    services: formData.value.services.trim(),
-    sales_agent_name: formData.value.sales_agent_name.trim(),
+    services: formData.value.services.toString().trim(),
+    sales_agent_name: formData.value.sales_agent_name.toString().trim(),
     model_name: formData.value.model_name,
     max_tokens: formData.value.max_tokens,
     temperature: formData.value.temperature,
     schedule_service_url: formData.value.schedule_service_url || '',
-    treatment_durations: formData.value.treatment_durations_json ? 
-      JSON.parse(formData.value.treatment_durations_json) : {},
+    treatment_durations: treatmentDurations,
     timezone: formData.value.timezone,
     language: formData.value.language,
     currency: formData.value.currency,
@@ -575,7 +602,7 @@ const handleSubmit = () => {
     environment: formData.value.environment,
     database_type: formData.value.database_type,
     api_base_url: formData.value.api_base_url,
-    is_active: formData.value.is_active,
+    is_active: !!formData.value.is_active,
     description: formData.value.description,
     notes: formData.value.notes
   }
@@ -649,13 +676,15 @@ const getStatusClass = (value) => {
     return value ? 'success' : 'error'
   }
   if (typeof value === 'string') {
-    if (value.includes('success') || value.includes('✅')) return 'success'
-    if (value.includes('error') || value.includes('❌')) return 'error'
+    const v = value.toLowerCase()
+    if (v.includes('success') || v.includes('ok') || v.includes('true') || v.includes('✅')) return 'success'
+    if (v.includes('error') || v.includes('fail') || v.includes('false') || v.includes('❌')) return 'error'
   }
   return 'info'
 }
 
 const formatSetupKey = (key) => {
+  if (!key) return ''
   return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
@@ -669,12 +698,18 @@ const formatSetupValue = (value) => {
 // ============================================================================
 // EXPOSE METHODS (Para uso desde componente padre)
 // ============================================================================
-
 defineExpose({
   resetForm,
   showResult,
   showError,
   loadInitialData
+})
+
+// onMounted: si initialData ya existe (protección adicional)
+onMounted(() => {
+  if (props.initialData && Object.keys(props.initialData).length > 0) {
+    loadInitialData(props.initialData)
+  }
 })
 </script>
 
