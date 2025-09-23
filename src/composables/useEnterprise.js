@@ -4,11 +4,21 @@
  * PRESERVAR: Comportamiento 100% compatible
  */
 
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
 import { useSystemLog } from '@/composables/useSystemLog'
+
+/**
+ * Nota:
+ * - Este composable asume que `apiRequest(url, opts)` devuelve la respuesta ya parseada (objeto JSON)
+ *   o lanza en caso de error de red/HTTP. Si tu `useApiRequest` devuelve el objeto `Response`,
+ *   ajusta las llamadas (await res.json()) en consecuencia.
+ *
+ * - Se preserva compatibilidad con script.js: endpoints exactos y headers (X-API-Key para admin,
+ *   X-Company-ID cuando corresponde) y Content-Type: application/json + JSON.stringify() en POST/PUT.
+ */
 
 export const useEnterprise = () => {
   const appStore = useAppStore()
@@ -16,10 +26,9 @@ export const useEnterprise = () => {
   const { showNotification } = useNotifications()
   const { addToLog } = useSystemLog()
 
-  // ============================================================================
-  // ESTADO REACTIVO
-  // ============================================================================
-
+  // ======================================================================
+  // Estado reactivo
+  // ======================================================================
   const enterpriseCompanies = ref([])
   const selectedCompany = ref(null)
   const isLoading = ref(false)
@@ -27,7 +36,7 @@ export const useEnterprise = () => {
   const isUpdating = ref(false)
   const isTesting = ref(false)
   const isMigrating = ref(false)
-  
+
   const companyForm = ref({
     company_id: '',
     company_name: '',
@@ -50,152 +59,186 @@ export const useEnterprise = () => {
     is_active: true,
     notes: ''
   })
-  
+
   const testResults = ref({})
   const migrationResults = ref(null)
   const lastUpdateTime = ref(null)
 
-  // ============================================================================
-  // COMPUTED PROPERTIES
-  // ============================================================================
-
+  // ======================================================================
+  // Computed
+  // ======================================================================
   const companiesCount = computed(() => enterpriseCompanies.value.length)
   const hasCompanies = computed(() => enterpriseCompanies.value.length > 0)
-  
-  const activeCompanies = computed(() => {
-    return enterpriseCompanies.value.filter(company => 
-      company.is_active !== false && company.status !== 'inactive'
-    )
-  })
 
-  const companyOptions = computed(() => {
-    return enterpriseCompanies.value.map(company => ({
-      value: company.company_id,
-      label: `${company.company_name || company.company_id} (${company.company_id})`,
-      status: company.status || 'unknown',
-      disabled: company.status === 'disabled'
+  const activeCompanies = computed(() =>
+    enterpriseCompanies.value.filter(c => c.is_active !== false && c.status !== 'inactive')
+  )
+
+  const companyOptions = computed(() =>
+    enterpriseCompanies.value.map(c => ({
+      value: c.company_id,
+      label: `${c.company_name || c.company_id} (${c.company_id})`,
+      status: c.status || 'unknown',
+      disabled: c.status === 'disabled'
     }))
-  })
+  )
 
-  const isFormValid = computed(() => {
-    return companyForm.value.company_id.trim() &&
-           companyForm.value.company_name.trim() &&
-           companyForm.value.services.trim()
-  })
+  const isFormValid = computed(() =>
+    companyForm.value.company_id?.toString().trim() &&
+    companyForm.value.company_name?.toString().trim() &&
+    companyForm.value.services?.toString().trim()
+  )
 
-  const isAnyProcessing = computed(() => 
+  const isAnyProcessing = computed(() =>
     isLoading.value || isCreating.value || isUpdating.value || isTesting.value || isMigrating.value
   )
 
-  // ============================================================================
-  // FUNCIONES PRINCIPALES - ENDPOINTS CORREGIDOS
-  // ============================================================================
+  // ======================================================================
+  // Helpers internos
+  // ======================================================================
+  const _adminKeyHeader = () => {
+    // Mantener X-API-Key explícito para compatibilidad con script.js
+    return { 'X-API-Key': appStore.adminApiKey || '' }
+  }
+
+  const _ensureJsonResponse = (res) => {
+    // apiRequest idealmente ya devuelve JSON. Si no, devolvemos lo que venga.
+    return res
+  }
+
+  const _normalizeCompanyFromResponse = (obj) => {
+    // normalizar distintos formatos: response.data, response.company, response directamente
+    if (!obj) return null
+    if (obj.data && obj.data.company_id) return { ...obj.data }
+    if (obj.company_id) return { ...obj }
+    if (obj.data && obj.data.company) return { ...obj.data.company }
+    return obj
+  }
+
+  // ======================================================================
+  // ENDPOINTS PRINCIPALES (alineados con script.js)
+  // ======================================================================
 
   /**
-   * 🔧 CORREGIDO: Usar endpoint exacto de script.js
+   * GET /api/admin/companies
+   * Query params: active_only, business_type (opcionales)
    */
-  const loadEnterpriseCompanies = async () => {
-    if (isLoading.value) return
-
+  const loadEnterpriseCompanies = async ({ active_only, business_type } = {}) => {
+    if (isLoading.value) return []
     try {
       isLoading.value = true
       addToLog('Loading enterprise companies', 'info')
 
-      // ✅ ENDPOINT CORREGIDO: GET /api/admin/companies con API key
-      const response = await apiRequest('/api/admin/companies', {
+      let url = '/api/admin/companies'
+      // construir query params cuando se requiera
+      const params = []
+      if (active_only !== undefined) params.push(`active_only=${encodeURIComponent(String(active_only))}`)
+      if (business_type) params.push(`business_type=${encodeURIComponent(business_type)}`)
+      if (params.length) url += `?${params.join('&')}`
+
+      const response = await apiRequest(url, {
         method: 'GET',
         headers: {
-          'X-API-Key': appStore.adminApiKey || ''
+          Accept: 'application/json',
+          ..._adminKeyHeader()
         }
       })
 
-      console.log('✅ Enterprise companies response:', response)
+      const payload = _ensureJsonResponse(response)
 
-      // ✅ ESTRUCTURA CORREGIDA: response.companies (según logs de la API real)
-      if (response && response.companies && Array.isArray(response.companies)) {
-        enterpriseCompanies.value = response.companies
-        lastUpdateTime.value = new Date().toISOString()
-
-        addToLog(`Enterprise companies loaded successfully (${response.companies.length} companies)`, 'success')
-        showNotification(`${response.companies.length} empresas enterprise cargadas`, 'success')
-        
-      } else {
-        console.error('Invalid response format:', response)
-        throw new Error(`Invalid response format: expected companies array, got ${typeof response}`)
+      // según logs de la API real: response.companies (fallbacks)
+      const companies = payload?.companies || payload?.data?.companies || payload?.data || payload
+      if (!Array.isArray(companies)) {
+        // si viene en una raiz diferente, intentar normalizar
+        console.error('Invalid response format for companies:', payload)
+        throw new Error('Formato de respuesta inválido al listar empresas. Se esperaba un array "companies".')
       }
 
-      return response.companies
+      enterpriseCompanies.value = companies
+      lastUpdateTime.value = new Date().toISOString()
 
+      addToLog(`Enterprise companies loaded successfully (${companies.length} companies)`, 'success')
+      showNotification(`${companies.length} empresas enterprise cargadas`, 'success')
+
+      return companies
     } catch (error) {
-      addToLog(`Error loading enterprise companies: ${error.message}`, 'error')
-      showNotification('Error cargando empresas enterprise: ' + error.message, 'error')
       enterpriseCompanies.value = []
+      addToLog(`Error loading enterprise companies: ${error?.message || error}`, 'error')
+      showNotification('Error cargando empresas enterprise: ' + (error?.message || error), 'error')
       throw error
-
     } finally {
       isLoading.value = false
     }
   }
 
   /**
-   * 🔧 CORREGIDO: Usar endpoint de creación exacto de script.js
+   * POST /api/admin/companies/create
+   * Body: JSON (companyData)
+   * Headers: Content-Type + X-API-Key
    */
   const createEnterpriseCompany = async (companyData) => {
-    if (!companyData) return false
+    if (!companyData) {
+      addToLog('createEnterpriseCompany called without companyData', 'warning')
+      showNotification('Datos de empresa vacíos', 'warning')
+      return false
+    }
+
+    // Validaciones idénticas a script.js (básicas)
+    if (!companyData.company_id || !companyData.company_name || !companyData.services) {
+      const errMsg = 'company_id, company_name y services son requeridos'
+      addToLog(`Validation failed: ${errMsg}`, 'error')
+      showNotification(errMsg, 'error')
+      throw new Error(errMsg)
+    }
+    if (!/^[a-z0-9_]+$/.test(companyData.company_id)) {
+      const errMsg = 'El ID de empresa solo puede contener letras minúsculas, números y guiones bajos'
+      addToLog(`Validation failed: ${errMsg}`, 'error')
+      showNotification(errMsg, 'error')
+      throw new Error(errMsg)
+    }
 
     try {
       isCreating.value = true
       addToLog(`Creating enterprise company: ${companyData.company_id}`, 'info')
       showNotification('Creando empresa enterprise...', 'info')
 
-      // ✅ VALIDACIONES EXACTAS como script.js
-      if (!companyData.company_id || !companyData.company_name || !companyData.services) {
-        throw new Error('company_id, company_name y services son requeridos')
-      }
-
-      // ✅ Validar formato de company_id como script.js
-      if (!/^[a-z0-9_]+$/.test(companyData.company_id)) {
-        throw new Error('El ID de empresa solo puede contener letras minúsculas, números y guiones bajos')
-      }
-
-      // ✅ ENDPOINT CORREGIDO: POST /api/admin/companies/create (no /api/admin/companies)
       const response = await apiRequest('/api/admin/companies/create', {
         method: 'POST',
         headers: {
-          'X-API-Key': appStore.adminApiKey || ''
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ..._adminKeyHeader()
         },
-        body: companyData
+        body: JSON.stringify(companyData)
       })
 
-      // ✅ ESTRUCTURA CORREGIDA: response directamente (no response.data)
-      const newCompany = response
+      const payload = _ensureJsonResponse(response)
+      const newCompany = _normalizeCompanyFromResponse(payload) || payload
 
-      addToLog(`Enterprise company created successfully: ${newCompany.company_id}`, 'success')
-      showNotification('Empresa enterprise creada exitosamente', 'success')
-
-      // Actualizar lista local
+      // Guardar en listado local (manteniendo compatibilidad)
       enterpriseCompanies.value.push({
-        company_id: newCompany.company_id,
-        company_name: newCompany.company_name,
-        business_type: newCompany.business_type,
-        is_active: true,
+        company_id: newCompany.company_id || companyData.company_id,
+        company_name: newCompany.company_name || companyData.company_name,
+        business_type: newCompany.business_type || companyData.business_type || '',
+        is_active: newCompany.is_active !== undefined ? newCompany.is_active : true,
         ...newCompany
       })
 
-      return response
+      addToLog(`Enterprise company created successfully: ${newCompany.company_id || companyData.company_id}`, 'success')
+      showNotification('Empresa enterprise creada exitosamente', 'success')
 
+      return payload
     } catch (error) {
-      addToLog(`Error creating enterprise company: ${error.message}`, 'error')
-      showNotification('Error creando empresa enterprise: ' + error.message, 'error')
-      return false
-
+      addToLog(`Error creating enterprise company: ${error?.message || error}`, 'error')
+      showNotification('Error creando empresa enterprise: ' + (error?.message || error), 'error')
+      throw error
     } finally {
       isCreating.value = false
     }
   }
 
   /**
-   * 🔧 CORREGIDO: Ver empresa con endpoint exacto
+   * GET /api/admin/companies/{companyId}
    */
   const viewEnterpriseCompany = async (companyId) => {
     if (!companyId) {
@@ -205,31 +248,31 @@ export const useEnterprise = () => {
 
     try {
       addToLog(`Viewing enterprise company: ${companyId}`, 'info')
-
-      // ✅ ENDPOINT EXACTO: GET /api/admin/companies/{id}
-      const response = await apiRequest(`/api/admin/companies/${companyId}`, {
+      const response = await apiRequest(`/api/admin/companies/${encodeURIComponent(companyId)}`, {
         method: 'GET',
         headers: {
-          'X-API-Key': appStore.adminApiKey || ''
+          Accept: 'application/json',
+          ..._adminKeyHeader()
         }
       })
 
-      // ✅ ESTRUCTURA CORREGIDA: response directamente
-      const companyData = response
+      const payload = _ensureJsonResponse(response)
+      const companyData = _normalizeCompanyFromResponse(payload) || payload
+
       selectedCompany.value = companyData
 
       addToLog(`Enterprise company details loaded: ${companyId}`, 'success')
       return companyData
-
     } catch (error) {
-      addToLog(`Error viewing enterprise company: ${error.message}`, 'error')
-      showNotification('Error viendo empresa enterprise: ' + error.message, 'error')
+      addToLog(`Error viewing enterprise company: ${error?.message || error}`, 'error')
+      showNotification('Error viendo empresa enterprise: ' + (error?.message || error), 'error')
       return null
     }
   }
 
   /**
-   * 🔧 CORREGIDO: Actualizar empresa con endpoint exacto
+   * PUT /api/admin/companies/{companyId}
+   * Body: JSON patch/updated fields
    */
   const saveEnterpriseCompany = async (companyId, companyData) => {
     if (!companyId || !companyData) {
@@ -242,42 +285,42 @@ export const useEnterprise = () => {
       addToLog(`Updating enterprise company: ${companyId}`, 'info')
       showNotification('Actualizando empresa enterprise...', 'info')
 
-      // ✅ ENDPOINT EXACTO: PUT /api/admin/companies/{id}
-      const response = await apiRequest(`/api/admin/companies/${companyId}`, {
+      const response = await apiRequest(`/api/admin/companies/${encodeURIComponent(companyId)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': appStore.adminApiKey || ''
+          Accept: 'application/json',
+          ..._adminKeyHeader()
         },
         body: JSON.stringify(companyData)
       })
 
-      // ✅ ESTRUCTURA CORREGIDA: response directamente
-      const updatedCompany = response
+      const payload = _ensureJsonResponse(response)
+      const updatedCompany = _normalizeCompanyFromResponse(payload) || payload
 
-      // Actualizar en lista local
-      const index = enterpriseCompanies.value.findIndex(c => c.company_id === companyId)
-      if (index !== -1) {
-        enterpriseCompanies.value[index] = { ...enterpriseCompanies.value[index], ...updatedCompany }
+      // actualizar caché local
+      const idx = enterpriseCompanies.value.findIndex(c => c.company_id === companyId)
+      if (idx !== -1) {
+        enterpriseCompanies.value[idx] = { ...enterpriseCompanies.value[idx], ...updatedCompany }
       }
 
       addToLog(`Enterprise company updated successfully: ${companyId}`, 'success')
       showNotification('Empresa enterprise actualizada exitosamente', 'success')
 
-      return response
-
+      return payload
     } catch (error) {
-      addToLog(`Error updating enterprise company: ${error.message}`, 'error')
-      showNotification('Error actualizando empresa enterprise: ' + error.message, 'error')
-      return false
-
+      addToLog(`Error updating enterprise company: ${error?.message || error}`, 'error')
+      showNotification('Error actualizando empresa enterprise: ' + (error?.message || error), 'error')
+      throw error
     } finally {
       isUpdating.value = false
     }
   }
 
   /**
-   * 🔧 CORREGIDO: Test empresa con endpoint exacto (SIN API key - usa company_id)
+   * POST /api/conversations/test_user/test?company_id={companyId}
+   * Headers: Content-Type + X-Company-ID
+   * Body: { message, company_id }
    */
   const testEnterpriseCompany = async (companyId, testMessage = '¿Cuáles son sus servicios disponibles?') => {
     if (!companyId) {
@@ -290,45 +333,42 @@ export const useEnterprise = () => {
       addToLog(`Testing enterprise company: ${companyId}`, 'info')
       showNotification('Probando empresa enterprise...', 'info')
 
-      // ✅ ENDPOINT EXACTO como script.js: sin API key, usa X-Company-ID
-      const response = await apiRequest(`/api/conversations/test_user/test?company_id=${companyId}`, {
+      const url = `/api/conversations/test_user/test?company_id=${encodeURIComponent(companyId)}`
+      const response = await apiRequest(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
           'X-Company-ID': companyId
         },
-        body: JSON.stringify({
-          message: testMessage,
-          company_id: companyId
-        })
+        body: JSON.stringify({ message: testMessage, company_id: companyId })
       })
 
-      testResults.value[companyId] = {
-        ...response,
-        timestamp: new Date().toISOString()
-      }
+      const payload = _ensureJsonResponse(response)
+      testResults.value[companyId] = { ...payload, timestamp: new Date().toISOString() }
 
       addToLog(`Enterprise company test completed: ${companyId}`, 'success')
       showNotification('Test de empresa enterprise completado', 'success')
 
-      return response
-
+      return payload
     } catch (error) {
-      addToLog(`Error testing enterprise company: ${error.message}`, 'error')
-      showNotification('Error probando empresa enterprise: ' + error.message, 'error')
+      addToLog(`Error testing enterprise company: ${error?.message || error}`, 'error')
+      showNotification('Error probando empresa enterprise: ' + (error?.message || error), 'error')
       return null
-
     } finally {
       isTesting.value = false
     }
   }
 
   /**
-   * 🔧 CORREGIDO: Migración con endpoint exacto
+   * POST /api/admin/companies/migrate-from-json
+   * Nota: esta acción puede tomar tiempo; confirm en UI.
    */
   const migrateCompaniesToPostgreSQL = async () => {
-    if (!confirm('¿Estás seguro de migrar las empresas a PostgreSQL? Esta operación puede tomar tiempo.')) {
-      return false
+    // Confirm en UI (preservar comportamiento existente de script.js)
+    if (typeof window !== 'undefined') {
+      const proceed = window.confirm('¿Estás seguro de migrar las empresas a PostgreSQL? Esta operación puede tomar tiempo.')
+      if (!proceed) return false
     }
 
     try {
@@ -336,39 +376,39 @@ export const useEnterprise = () => {
       addToLog('Starting companies migration to PostgreSQL', 'info')
       showNotification('Iniciando migración de empresas a PostgreSQL...', 'info')
 
-      // ✅ ENDPOINT EXACTO: POST /api/admin/companies/migrate-from-json
       const response = await apiRequest('/api/admin/companies/migrate-from-json', {
         method: 'POST',
         headers: {
-          'X-API-Key': appStore.adminApiKey || ''
+          Accept: 'application/json',
+          ..._adminKeyHeader()
         }
+        // script.js no envía body por defecto en migración; si necesitas enviar JSON, añade body: JSON.stringify(payload)
       })
 
-      migrationResults.value = response
+      const payload = _ensureJsonResponse(response)
+      migrationResults.value = payload
 
       addToLog('Companies migration to PostgreSQL completed', 'success')
       showNotification('Migración de empresas completada exitosamente', 'success')
 
-      // Recargar empresas después de la migración
+      // recargar empresas para sincronizar
       await loadEnterpriseCompanies()
 
-      return true
-
+      return payload
     } catch (error) {
-      addToLog(`Error migrating companies: ${error.message}`, 'error')
-      showNotification('Error en migración de empresas: ' + error.message, 'error')
-      return false
-
+      addToLog(`Error migrating companies: ${error?.message || error}`, 'error')
+      showNotification('Error en migración de empresas: ' + (error?.message || error), 'error')
+      throw error
     } finally {
       isMigrating.value = false
     }
   }
 
-  // ============================================================================
-  // FUNCIONES AUXILIARES
-  // ============================================================================
-
+  // ======================================================================
+  // Utilidades / auxiliares
+  // ======================================================================
   const getCompanyById = (companyId) => {
+    if (!companyId) return null
     return enterpriseCompanies.value.find(c => c.company_id === companyId) || null
   }
 
@@ -398,6 +438,7 @@ export const useEnterprise = () => {
   }
 
   const populateCompanyForm = (company) => {
+    if (!company) return
     companyForm.value = {
       company_id: company.company_id || '',
       company_name: company.company_name || company.name || '',
@@ -422,6 +463,9 @@ export const useEnterprise = () => {
     }
   }
 
+  /**
+   * Exportar empresas a JSON/CSV (client-side)
+   */
   const exportCompanies = (format = 'json') => {
     try {
       const dataToExport = {
@@ -430,22 +474,27 @@ export const useEnterprise = () => {
         total_count: enterpriseCompanies.value.length
       }
 
-      let content
+      let content = ''
       const timestamp = new Date().toISOString().split('T')[0]
-      
+
       if (format === 'json') {
         content = JSON.stringify(dataToExport, null, 2)
       } else if (format === 'csv') {
-        const headers = 'Company_ID,Company_Name,Business_Type,Status,Services_Count,Last_Modified\n'
-        content = headers + enterpriseCompanies.value.map(company => 
-          `"${company.company_id}","${company.company_name || ''}","${company.business_type || ''}","${company.is_active ? 'Active' : 'Inactive'}","1","${company.last_modified || ''}"`
-        ).join('\n')
+        const headers = ['Company_ID', 'Company_Name', 'Business_Type', 'Status', 'Services', 'Last_Modified']
+        const rows = enterpriseCompanies.value.map(c => ([
+          c.company_id,
+          c.company_name || '',
+          c.business_type || '',
+          c.is_active ? 'Active' : 'Inactive',
+          (c.services && typeof c.services === 'string') ? c.services.replace(/"/g, '""') : '',
+          c.last_modified || ''
+        ]))
+        content = headers.join(',') + '\n' + rows.map(r => r.map(cell => `"${String(cell || '')}"`).join(',')).join('\n')
+      } else {
+        throw new Error('Formato de exportación no soportado')
       }
 
-      // Crear archivo para descarga
-      const blob = new Blob([content], { 
-        type: format === 'json' ? 'application/json' : 'text/csv' 
-      })
+      const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/csv' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -457,19 +506,17 @@ export const useEnterprise = () => {
 
       addToLog(`Enterprise companies exported to ${format.toUpperCase()} format`, 'success')
       showNotification(`Empresas enterprise exportadas en formato ${format.toUpperCase()}`, 'success')
-      
     } catch (error) {
-      addToLog(`Error exporting companies: ${error.message}`, 'error')
-      showNotification(`Error exportando empresas: ${error.message}`, 'error')
+      addToLog(`Error exporting companies: ${error?.message || error}`, 'error')
+      showNotification(`Error exportando empresas: ${error?.message || error}`, 'error')
     }
   }
 
-  // ============================================================================
-  // RETURN COMPOSABLE API
-  // ============================================================================
-
+  // ======================================================================
+  // Return (API del composable)
+  // ======================================================================
   return {
-    // Estado reactivo
+    // state
     enterpriseCompanies,
     selectedCompany,
     isLoading,
@@ -482,7 +529,7 @@ export const useEnterprise = () => {
     migrationResults,
     lastUpdateTime,
 
-    // Computed properties
+    // computed
     companiesCount,
     hasCompanies,
     activeCompanies,
@@ -490,7 +537,7 @@ export const useEnterprise = () => {
     isFormValid,
     isAnyProcessing,
 
-    // Funciones principales
+    // actions
     loadEnterpriseCompanies,
     createEnterpriseCompany,
     viewEnterpriseCompany,
@@ -498,7 +545,7 @@ export const useEnterprise = () => {
     testEnterpriseCompany,
     migrateCompaniesToPostgreSQL,
 
-    // Funciones auxiliares
+    // utils
     getCompanyById,
     exportCompanies,
     clearCompanyForm,
