@@ -325,12 +325,26 @@ const handleViewCompany = async (companyId) => {
 
 const handleEditCompany = async (companyId) => {
   try {
+    console.log('🔧 Editing company:', companyId)
+    
+    // ✅ CRÍTICO: Cargar datos frescos del servidor antes de editar
     await viewEnterpriseCompany(companyId)
+    
     if (selectedCompany.value) {
+      console.log('✅ Company data loaded for edit:', selectedCompany.value)
+      
+      // ✅ Asegurar que el modal se abra DESPUÉS de cargar los datos
+      await nextTick()
       showEditModal.value = true
+      
+      console.log('✅ Edit modal opened with data')
+    } else {
+      console.error('❌ No company data available for editing')
+      showNotification('Error: No se pudieron cargar los datos de la empresa', 'error')
     }
   } catch (error) {
-    // Error ya manejado en el composable
+    console.error('❌ Error in handleEditCompany:', error)
+    showNotification(`Error cargando empresa para edición: ${error.message}`, 'error')
   }
 }
 
