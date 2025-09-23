@@ -182,8 +182,8 @@ export const useEnterprise = () => {
       showNotification('Datos de empresa vacíos', 'warning')
       return false
     }
-
-    // Validaciones idénticas a script.js (básicas)
+  
+    // Validaciones client-side
     if (!companyData.company_id || !companyData.company_name || !companyData.services) {
       const errMsg = 'company_id, company_name y services son requeridos'
       addToLog(`Validation failed: ${errMsg}`, 'error')
@@ -196,46 +196,151 @@ export const useEnterprise = () => {
       showNotification(errMsg, 'error')
       throw new Error(errMsg)
     }
-
+  
+    // Optional: validate treatment_durations entries
+    if (companyData.treatment_durations && typeof companyData.treatment_durations === 'object') {
+      for (const [k, v] of Object.entries(companyData.treatment_durations)) {
+        if (typeof v !== 'number' || !isFinite(v) || v <= 0) {
+          const errMsg = `treatment_durations.${k} debe ser número positivo`
+          addToLog(`Validation failed: ${errMsg}`, 'error')
+          showNotification(errMsg, 'error')
+          throw new Error(errMsg)
+        }
+      }
+    }
+  
     try {
       isCreating.value = true
-      addToLog(`Creating enterprise company: ${companyData.company_id}`, 'info')
+      addToLog(`Creating enterprise company (attempt full payload): ${companyData.company_id}`, 'info')
       showNotification('Creando empresa enterprise...', 'info')
-
-      const response = await apiRequest('/api/admin/companies/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ..._adminKeyHeader()
-        },
-        body: JSON.stringify(companyData)
-      })
-
-      const payload = _ensureJsonResponse(response)
-      const newCompany = _normalizeCompanyFromResponse(payload) || payload
-
-      // Guardar en listado local (manteniendo compatibilidad)
-      enterpriseCompanies.value.push({
-        company_id: newCompany.company_id || companyData.company_id,
-        company_name: newCompany.company_name || companyData.company_name,
-        business_type: newCompany.business_type || companyData.business_type || '',
-        is_active: newCompany.is_active !== undefined ? newCompany.is_active : true,
-        ...newCompany
-      })
-
-      addToLog(`Enterprise company created successfully: ${newCompany.company_id || companyData.company_id}`, 'success')
-      showNotification('Empresa enterprise creada exitosamente', 'success')
-
-      return payload
-    } catch (error) {
-      addToLog(`Error creating enterprise company: ${error?.message || error}`, 'error')
-      showNotification('Error creando empresa enterprise: ' + (error?.message || error), 'error')
-      throw error
+  
+      const bodyStr = JSON.stringify(companyData)
+      console.log('🔔 createEnterpriseCompany - request body (full):', bodyStr)
+  
+      // 1) Intentar crear con payload completo
+      try {
+        const res = await apiRequest('/api/admin/companies/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ..._adminKeyHeader()
+          },
+          body: bodyStr
+        })
+  
+        const payload = _ensureJsonResponse(res)
+        const newCompany = _normalizeCompanyFromResponse(payload) || payload
+  
+        enterpriseCompanies.value.push({
+          company_id: newCompany.company_id || companyData.company_id,
+          company_name: newCompany.company_name || companyData.company_name,
+          business_type: newCompany.business_type || companyData.business_type || '',
+          is_active: newCompany.is_active !== undefined ? newCompany.is_active : true,
+          ...newCompany
+        })
+  
+        addToLog(`Enterprise company created successfully (full): ${newCompany.company_id || companyData.company_id}`, 'success')
+        showNotification('Empresa enterprise creada exitosamente', 'success')
+        return payload
+  
+      } catch (errFull) {
+        // Si falla el POST completo, intentamos fallback
+        console.warn('Full create failed, attempting fallback (minimal create + PUT). Error:', errFull)
+        addToLog('Full create failed, attempting minimal create', 'warning')
+  
+        // Intento diagnóstico: intentar fetch raw para capturar body del 500 (no rompe si falla)
+        try {
+          const fallbackUrl = window.__API_BASE_URL ? `${window.__API_BASE_URL}/api/admin/companies/create` : '/api/admin/companies/create'
+          const raw = await fetch(fallbackUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              ..._adminKeyHeader()
+            },
+            body: bodyStr
+          })
+          const text = await raw.text().catch(() => '')
+          let parsed = text
+          try { parsed = JSON.parse(text) } catch {}
+          addToLog(`Raw server response (full attempt) status ${raw.status}: ${text}`, raw.status >= 500 ? 'error' : 'info')
+        } catch (rawErr) {
+          console.warn('raw fetch diagnostic failed', rawErr)
+        }
+  
+        // 2) Minimal create
+        const minimal = {
+          company_id: companyData.company_id,
+          company_name: companyData.company_name,
+          services: companyData.services
+        }
+  
+        try {
+          addToLog(`Attempting minimal create for ${minimal.company_id}`, 'info')
+          const minRes = await apiRequest('/api/admin/companies/create', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              ..._adminKeyHeader()
+            },
+            body: JSON.stringify(minimal)
+          })
+          const minPayload = _ensureJsonResponse(minRes)
+          const created = _normalizeCompanyFromResponse(minPayload) || minPayload
+  
+          enterpriseCompanies.value.push({
+            company_id: created.company_id || minimal.company_id,
+            company_name: created.company_name || minimal.company_name,
+            business_type: created.business_type || '',
+            is_active: created.is_active !== undefined ? created.is_active : true,
+            ...created
+          })
+  
+          addToLog(`Minimal create succeeded for ${minimal.company_id}`, 'success')
+          showNotification('Empresa creada parcialmente. Aplicando configuración adicional...', 'info')
+  
+          // 3) PUT para aplicar configuración restante (parche)
+          try {
+            const patch = { ...companyData }
+            delete patch.company_id
+            delete patch.company_name
+            delete patch.services
+  
+            await apiRequest(`/api/admin/companies/${encodeURIComponent(minimal.company_id)}`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ..._adminKeyHeader()
+              },
+              body: JSON.stringify(patch)
+            })
+  
+            addToLog(`Configuration applied via PUT for ${minimal.company_id}`, 'success')
+            showNotification('Configuración adicional aplicada correctamente', 'success')
+          } catch (putErr) {
+            addToLog(`PUT after minimal create failed: ${putErr?.message || putErr}`, 'error')
+            showNotification('La empresa fue creada, pero falló aplicar la configuración adicional. Revisa logs.', 'error')
+          }
+  
+          return minPayload
+        } catch (minErr) {
+          addToLog(`Minimal create failed: ${minErr?.message || minErr}`, 'error')
+          showNotification('Error creando empresa enterprise: ' + (minErr?.message || minErr), 'error')
+          throw minErr
+        }
+      }
+    } catch (finalErr) {
+      addToLog(`Error creating enterprise company (final): ${finalErr?.message || finalErr}`, 'error')
+      showNotification('Error creando empresa enterprise: ' + (finalErr?.message || finalErr), 'error')
+      throw finalErr
     } finally {
       isCreating.value = false
     }
   }
+
 
   /**
    * GET /api/admin/companies/{companyId}
