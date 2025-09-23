@@ -10,14 +10,13 @@ import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
 import { useSystemLog } from '@/composables/useSystemLog'
-import { useCompaniesStore } from '@/stores/companies'
 
 export const useEnterprise = () => {
   const appStore = useAppStore()
   const { apiRequest } = useApiRequest()
   const { showNotification } = useNotifications()
   const { addToLog } = useSystemLog()
-  
+
   // ============================================================================
   // ESTADO REACTIVO - EXACTO COMO script.js
   // ============================================================================
@@ -29,8 +28,7 @@ export const useEnterprise = () => {
   const isTesting = ref(false)
   const isMigrating = ref(false)
   const lastUpdateTime = ref(null)
-  const companiesStore = useCompaniesStore()
-  
+
   // Formulario con estructura EXACTA de script.js
   const companyForm = ref({
     company_id: '',
@@ -278,14 +276,45 @@ export const useEnterprise = () => {
   // ACTUALIZAR EMPRESA - ENDPOINT EXACTO como script.js
   // ============================================================================
   const saveEnterpriseCompany = async (companyId, companyData) => {
+    if (!companyId || !companyData) {
+      showNotification('ID de empresa y datos requeridos', 'warning')
+      return false
+    }
+
     try {
-      // Usar el store unificado en lugar de API directa
-      const result = await companiesStore.updateCompany(companyId, companyData, 'enterprise')
-      
-      // Ya no necesitas sincronización manual - el store lo hace automáticamente
-      return result
+      isUpdating.value = true
+      addToLog(`Updating enterprise company: ${companyId}`, 'info')
+      showNotification('Actualizando empresa enterprise...', 'info')
+
+      // ✅ ENDPOINT Y HEADERS EXACTOS como script.js
+      const response = await apiRequest(`/api/admin/companies/${encodeURIComponent(companyId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ..._adminKeyHeader()
+        },
+        body: JSON.stringify(companyData)
+      })
+
+      const updatedCompany = _normalizeCompanyFromResponse(response) || response
+
+      // ✅ ACTUALIZAR CACHE como script.js
+      const idx = enterpriseCompanies.value.findIndex(c => c.company_id === companyId)
+      if (idx !== -1) {
+        enterpriseCompanies.value[idx] = { ...enterpriseCompanies.value[idx], ...updatedCompany }
+      }
+
+      addToLog(`Enterprise company updated successfully: ${companyId}`, 'success')
+      showNotification('Empresa enterprise actualizada exitosamente', 'success')
+
+      return response
     } catch (error) {
+      addToLog(`Error updating enterprise company: ${error?.message || error}`, 'error')
+      showNotification('Error actualizando empresa enterprise: ' + (error?.message || error), 'error')
       throw error
+    } finally {
+      isUpdating.value = false
     }
   }
 
