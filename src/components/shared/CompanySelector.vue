@@ -112,70 +112,42 @@ const loadCompanies = async () => {
     
     console.log('Loading companies from API...')
     
-    // Intentar primero el endpoint /api/companies
+    // Intentar primero el endpoint /api/companies - PRESERVAR LÓGICA EXACTA
     try {
       const response = await apiRequest('/api/companies')
       console.log('Response from /api/companies:', response)
       
       let companiesData = []
       
-      // 🔥 NUEVA LÓGICA: Manejar ambas estructuras de datos
-      if (response.companies) {
-        if (Array.isArray(response.companies)) {
-          // 📊 ESTRUCTURA ENTERPRISE: Array de objetos
-          console.log('📊 Parsing Enterprise structure (array)')
-          companiesData = response.companies.map(company => ({
-            id: company.company_id || company.id,
-            name: company.company_name || company.name,
-            description: company.description,
-            business_type: company.business_type,
-            services: company.services,
-            status: company.is_active ? 'active' : 'inactive',
-            active: company.is_active !== false,
-            subscription_tier: company.subscription_tier,
-            version: company.version
-          }))
-          
-        } else if (typeof response.companies === 'object') {
-          // 🏢 ESTRUCTURA COMPANY SELECTOR: Objeto con keys
-          console.log('🏢 Parsing CompanySelector structure (object)')
-          const companiesObj = response.companies
-          
-          companiesData = Object.keys(companiesObj).map(companyId => {
-            const companyData = companiesObj[companyId]
-            return {
-              id: companyId,
-              name: companyData.company_name || companyId,
-              description: companyData.description,
-              business_type: companyData.business_type,
-              services: companyData.services,
-              status: companyData.status || 'active',
-              active: companyData.active !== false,
-              // Campos específicos de CompanySelector
-              orchestrator_status: companyData.orchestrator_status,
-              statistics: companyData.statistics,
-              vectorstore_index: companyData.vectorstore_index
-            }
-          })
-        }
+      // Verificar si las empresas están directamente en response.companies
+      if (response.companies && typeof response.companies === 'object') {
+        const companiesObj = response.companies
+        
+        // Convertir objeto de empresas a array - PRESERVAR LÓGICA EXACTA
+        companiesData = Object.keys(companiesObj).map(companyId => {
+          const companyData = companiesObj[companyId]
+          return {
+            id: companyId,
+            name: companyData.company_name || companyId,
+            description: companyData.description,
+            status: companyData.status || 'active',
+            active: companyData.active !== false
+          }
+        })
+        
+        console.log('Converted companies from /api/companies:', companiesData)
+        
+      } else if (response.data && response.data.companies) {
+        // Fallback: verificar si están en response.data.companies
+        companiesData = response.data.companies
       } else if (Array.isArray(response)) {
-        // 📋 RESPUESTA DIRECTA COMO ARRAY
-        console.log('📋 Parsing direct array structure')
-        companiesData = response.map(company => ({
-          id: company.company_id || company.id || company,
-          name: company.company_name || company.name || company,
-          active: true,
-          status: 'active'
-        }))
-      }
-      
-      // 🚨 FALLBACK: Si no se pudo parsear nada
-      if (companiesData.length === 0) {
-        console.warn('⚠️ No companies found in response, using defaults')
+        // Fallback: respuesta directa como array
+        companiesData = response
+      } else {
+        // Último fallback: empresas por defecto
+        console.warn('No companies found in response, using defaults')
         companiesData = getDefaultCompanies()
       }
-      
-      console.log('✅ Companies parsed successfully:', companiesData.length)
       
       // Actualizar estado y cache
       companies.value = companiesData
@@ -185,7 +157,7 @@ const loadCompanies = async () => {
       return companiesData
       
     } catch (apiError) {
-      console.error('❌ Error loading companies from API:', apiError)
+      console.error('Error loading companies from API:', apiError)
       
       // Fallback: usar empresas por defecto
       const defaultCompanies = getDefaultCompanies()
@@ -198,7 +170,7 @@ const loadCompanies = async () => {
     }
     
   } catch (error) {
-    console.error('💥 Error in loadCompanies:', error)
+    console.error('Error in loadCompanies:', error)
     
     // Último fallback
     const defaultCompanies = getDefaultCompanies()
@@ -210,7 +182,7 @@ const loadCompanies = async () => {
     return defaultCompanies
   }
 }
-  
+
 /**
  * Obtiene las empresas por defecto
  * PRESERVAR: Lista exacta del HTML original
@@ -286,102 +258,23 @@ const refreshCompanies = async () => {
   lastRefresh.value = Date.now()
   
   try {
-    console.log('🔄 Refreshing companies...')
-    
     // Limpiar cache para forzar recarga
     appStore.cache.companies = null
     delete appStore.cache.lastUpdate.companies
     
-    // 🔥 INTENTAR PRIMERO ENDPOINT GENERAL
-    try {
-      await loadCompanies()
-      console.log('✅ Companies refreshed from general endpoint')
-    } catch (generalError) {
-      console.warn('⚠️ General endpoint failed, trying enterprise endpoint')
-      
-      // 🔥 FALLBACK: INTENTAR ENDPOINT ENTERPRISE
-      try {
-        const enterpriseResponse = await apiRequest('/api/admin/companies', {
-          headers: {
-            'X-API-Key': appStore.adminApiKey || localStorage.getItem('api_key')
-          }
-        })
-        
-        console.log('📊 Using enterprise endpoint as fallback')
-        
-        // Procesar respuesta enterprise manualmente
-        if (enterpriseResponse.companies && Array.isArray(enterpriseResponse.companies)) {
-          const companiesData = enterpriseResponse.companies.map(company => ({
-            id: company.company_id,
-            name: company.company_name,
-            business_type: company.business_type,
-            services: company.services,
-            status: company.is_active ? 'active' : 'inactive',
-            active: company.is_active !== false
-          }))
-          
-          companies.value = companiesData
-          appStore.updateCache('companies', companiesData)
-          
-          console.log('✅ Companies refreshed from enterprise endpoint')
-        }
-        
-      } catch (enterpriseError) {
-        console.error('❌ Both endpoints failed:', { generalError, enterpriseError })
-        throw new Error('No se pudo cargar empresas desde ningún endpoint')
-      }
-    }
+    await loadCompanies()
     
     showNotification('✅ Lista de empresas actualizada', 'success', 2000)
-    appStore.addToLog('Companies list refreshed successfully', 'info')
+    appStore.addToLog('Companies list refreshed manually', 'info')
     
   } catch (error) {
-    console.error('💥 Error refreshing companies:', error)
+    console.error('Error refreshing companies:', error)
     showNotification(`Error actualizando empresas: ${error.message}`, 'error')
-    
-    // Usar empresas por defecto como último recurso
-    const defaultCompanies = getDefaultCompanies()
-    companies.value = defaultCompanies
-    
   } finally {
     isLoading.value = false
   }
 }
 
-
-/**
- * Manejar eventos de actualización desde Enterprise
- */
-const handleCompanyUpdatedEvent = async (event) => {
-  const { companyId, updatedData, source } = event.detail
-  
-  console.log(`🔄 CompanySelector received companyUpdated event from ${source}:`, { companyId, updatedData })
-  
-  try {
-    // 📊 Si viene de Enterprise, usar su estructura de datos
-    if (source === 'enterprise') {
-      console.log('📊 Handling enterprise update with smart refresh')
-      
-      // Invalidar cache
-      appStore.cache.companies = null
-      delete appStore.cache.lastUpdate.companies
-      
-      // Refrescar usando la función mejorada que maneja ambas estructuras
-      await refreshCompanies()
-    } else {
-      // 🏢 Para otros orígenes, usar refresh normal
-      await loadCompanies()
-    }
-    
-    console.log('✅ CompanySelector synced successfully after update')
-    appStore.addToLog(`CompanySelector synced after ${source} update: ${companyId}`, 'success')
-    
-  } catch (error) {
-    console.error('❌ Error handling companyUpdated event:', error)
-    appStore.addToLog(`Error syncing CompanySelector: ${error.message}`, 'error')
-  }
-}
-  
 /**
  * Actualiza el selector de empresas
  * MIGRADO: updateCompanySelector() de script.js
@@ -453,15 +346,10 @@ onMounted(async () => {
   
   // Event listeners para compatibilidad
   window.addEventListener('highlightCompanySelector', highlightSelector)
-  
-  // 🔥 NUEVO: Listener mejorado para sincronización desde Enterprise
-  window.addEventListener('companyUpdated', handleCompanyUpdatedEvent)
 })
 
 onUnmounted(() => {
   window.removeEventListener('highlightCompanySelector', highlightSelector)
-  // 🔥 Limpiar listener de sincronización
-  window.removeEventListener('companyUpdated', handleCompanyUpdatedEvent)
 })
 
 // ============================================================================
