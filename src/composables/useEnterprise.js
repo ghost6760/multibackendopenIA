@@ -224,11 +224,10 @@ export const useEnterprise = () => {
       showNotification('ID de empresa requerido', 'warning')
       return null
     }
-
+  
     try {
       addToLog(`Viewing enterprise company: ${companyId}`, 'info')
       
-      // ✅ ENDPOINT EXACTO como script.js
       const response = await apiRequest(`/api/admin/companies/${encodeURIComponent(companyId)}`, {
         method: 'GET',
         headers: {
@@ -236,13 +235,37 @@ export const useEnterprise = () => {
           ..._adminKeyHeader()
         }
       })
-
-      const companyData = _normalizeCompanyFromResponse(response) || response
+  
+      console.log('🔍 Raw API response:', response) // DEBUG
+  
+      // ✅ CORRECCIÓN: Manejar tanto response.configuration como response directo
+      let companyData = null
+      
+      if (response.configuration) {
+        // Formato de script.js: { configuration: { company_id, company_name, ... } }
+        companyData = response.configuration
+        console.log('✅ Using response.configuration:', companyData)
+      } else if (response.data) {
+        // Formato alternativo: { data: { company_id, company_name, ... } }
+        companyData = response.data
+        console.log('✅ Using response.data:', companyData)
+      } else if (response.company_id) {
+        // Formato directo: { company_id, company_name, ... }
+        companyData = response
+        console.log('✅ Using response directly:', companyData)
+      } else {
+        console.error('❌ Unexpected response format:', response)
+        throw new Error('Formato de respuesta inesperado')
+      }
+  
       selectedCompany.value = companyData
-
       addToLog(`Enterprise company details loaded: ${companyId}`, 'success')
+      
+      console.log('✅ Final selectedCompany:', selectedCompany.value) // DEBUG
+      
       return companyData
     } catch (error) {
+      console.error('❌ Error in viewEnterpriseCompany:', error)
       addToLog(`Error viewing enterprise company: ${error?.message || error}`, 'error')
       showNotification('Error viendo empresa enterprise: ' + (error?.message || error), 'error')
       return null
