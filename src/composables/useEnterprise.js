@@ -246,9 +246,10 @@ export const useEnterprise = () => {
       const response = await apiRequest(`/api/admin/companies/${companyId}`, {
         method: 'PUT',
         headers: {
+          'Content-Type': 'application/json',
           'X-API-Key': appStore.adminApiKey || ''
         },
-        body: companyData
+        body: JSON.stringify(companyData)
       })
 
       // ✅ ESTRUCTURA CORREGIDA: response directamente
@@ -293,12 +294,13 @@ export const useEnterprise = () => {
       const response = await apiRequest(`/api/conversations/test_user/test?company_id=${companyId}`, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'X-Company-ID': companyId
         },
-        body: {
+        body: JSON.stringify({
           message: testMessage,
           company_id: companyId
-        }
+        })
       })
 
       testResults.value[companyId] = {
