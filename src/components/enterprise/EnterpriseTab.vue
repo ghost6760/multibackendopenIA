@@ -79,6 +79,15 @@
             <button @click="toggleCreateForm" class="btn btn-primary">
               ➕ Nueva Empresa
             </button>
+            <!-- 🔥 BOTÓN OPCIONAL PARA SYNC MANUAL -->
+            <button 
+              @click="forceSyncCompanySelector"
+              class="btn btn-info btn-sm"
+              title="Sincronizar CompanySelector manualmente"
+              style="margin-left: 10px;"
+            >
+              🔄 Sync Manual
+            </button>
           </div>
         </div>
         
@@ -348,21 +357,6 @@ const handleEditCompany = async (companyId) => {
   }
 }
 
-const handleUpdateCompany = async (companyData) => {
-  if (!selectedCompany.value) return
-  
-  try {
-    const result = await saveEnterpriseCompany(selectedCompany.value.company_id, companyData)
-    
-    if (result) {
-      closeEditModal()
-      await refreshCompanies()
-    }
-  } catch (error) {
-    // Error ya manejado en el composable
-  }
-}
-
 const handleTestCompany = async (companyId) => {
   try {
     const testMessage = prompt('Mensaje de prueba:', '¿Cuáles son sus servicios disponibles?')
@@ -594,6 +588,160 @@ watch(() => appStore.adminApiKey, (newApiKey) => {
     loadEnterpriseCompanies()
   }
 })
+
+// ============================================================================
+// 🔥 NUEVAS FUNCIONES: Sincronizar CompanySelector después de actualizar empresa
+// ============================================================================
+
+// 🔥 NUEVA FUNCIÓN: Sincronizar CompanySelector después de actualizar empresa
+const syncCompanySelectorAfterUpdate = async (companyId, updatedData) => {
+  try {
+    console.log('🔄 Syncing CompanySelector after enterprise update...')
+    console.log('Updated company:', { companyId, updatedData })
+    
+    // 1. Invalidar cache del CompanySelector
+    appStore.cache.companies = null
+    delete appStore.cache.lastUpdate.companies
+    
+    // 2. Forzar refresh del CompanySelector si está disponible
+    if (window.refreshCompanies && typeof window.refreshCompanies === 'function') {
+      try {
+        await window.refreshCompanies()
+        console.log('✅ CompanySelector refreshed via global function')
+      } catch (refreshError) {
+        console.warn('⚠️ Global refresh failed, using event method:', refreshError)
+      }
+    }
+    
+    // 3. Emitir evento global para CompanySelector
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      const event = new CustomEvent('companyUpdated', {
+        detail: { 
+          companyId: companyId,
+          updatedData: updatedData,
+          source: 'enterprise',
+          timestamp: Date.now()
+        }
+      })
+      
+      window.dispatchEvent(event)
+      console.log('✅ Global companyUpdated event dispatched:', event.detail)
+    }
+    
+    // 4. Notificación de sincronización exitosa
+    setTimeout(() => {
+      showNotification('🔄 Selector de empresas sincronizado', 'success', 2000)
+    }, 500)
+    
+  } catch (error) {
+    console.error('❌ Error syncing CompanySelector:', error)
+    showNotification('⚠️ Error sincronizando selector de empresas', 'warning')
+  }
+}
+
+// ============================================================================
+// 🔥 MODIFICAR LA FUNCIÓN handleUpdateCompany EXISTENTE
+// ============================================================================
+
+const handleUpdateCompany = async (companyData) => {
+  if (!selectedCompany.value) {
+    console.error('No company selected for update')
+    return
+  }
+  
+  const companyId = selectedCompany.value.company_id
+  console.log('🔄 Updating company:', companyId, companyData)
+  
+  try {
+    // Guardar datos originales para comparación
+    const originalData = { ...selectedCompany.value }
+    
+    // Actualizar empresa usando el composable
+    const result = await saveEnterpriseCompany(companyId, companyData)
+    
+    if (result) {
+      console.log('✅ Company updated successfully:', result)
+      
+      // Cerrar modal de edición
+      closeEditModal()
+      
+      // Refrescar lista enterprise
+      await refreshCompanies()
+      
+      // 🔥 NUEVA LÓGICA: Sincronizar CompanySelector
+      console.log('🔗 Starting CompanySelector synchronization...')
+      await syncCompanySelectorAfterUpdate(companyId, companyData)
+      
+      // Log de cambios para debug
+      const changes = Object.keys(companyData).filter(key => 
+        originalData[key] !== companyData[key]
+      )
+      if (changes.length > 0) {
+        console.log('📝 Changes detected:', changes.map(key => 
+          `${key}: "${originalData[key]}" → "${companyData[key]}"`
+        ))
+      }
+      
+      showNotification(`✅ Empresa ${companyId} actualizada exitosamente`, 'success')
+    }
+  } catch (error) {
+    console.error('❌ Error updating company:', error)
+    showNotification(`Error actualizando empresa: ${error.message}`, 'error')
+  }
+}
+
+// ============================================================================
+// 🔥 OPCIONAL: Función para forzar sincronización manual
+// ============================================================================
+
+const forceSyncCompanySelector = async () => {
+  try {
+    showNotification('🔄 Forzando sincronización...', 'info')
+    
+    // Invalidar cache
+    appStore.cache.companies = null
+    delete appStore.cache.lastUpdate.companies
+    
+    // Emitir evento de refresh general
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('forceRefreshCompanies', {
+        detail: { source: 'enterprise-manual', timestamp: Date.now() }
+      }))
+    }
+    
+    // Llamar función global si existe
+    if (window.refreshCompanies) {
+      await window.refreshCompanies()
+    }
+    
+    showNotification('✅ Sincronización completada', 'success')
+    console.log('✅ Manual synchronization completed')
+    
+  } catch (error) {
+    console.error('❌ Error in manual sync:', error)
+    showNotification('❌ Error en sincronización manual', 'error')
+  }
+}
+
+// ============================================================================
+// DEBUG: Función para verificar estado de sincronización
+// ============================================================================
+
+const debugSyncState = () => {
+  console.log('🔍 DEBUG: Sync state check')
+  console.log('Cache companies:', appStore.cache.companies ? appStore.cache.companies.length + ' companies' : 'null')
+  console.log('Enterprise companies:', enterpriseCompanies.value.length)
+  console.log('Global refreshCompanies available:', typeof window.refreshCompanies)
+  console.log('Selected company:', selectedCompany.value?.company_id)
+  
+  // Test event dispatch
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('debugTest', { 
+      detail: { message: 'Debug test from Enterprise', timestamp: Date.now() } 
+    }))
+    console.log('✅ Debug event dispatched')
+  }
+}
 </script>
 
 <style scoped>
