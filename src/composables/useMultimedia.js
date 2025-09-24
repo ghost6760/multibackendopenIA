@@ -204,76 +204,6 @@ export const useMultimedia = () => {
   }
 
   /**
-   * Procesa grabación de voz - ESPECÍFICA para VoiceRecorder
-   * Guarda resultados en voiceRecordingResults, no en audioResults
-   */
-  const processVoiceRecording = async (userId, options = {}) => {
-    if (!voiceRecordingResults.value?.blob) {
-      showNotification('No hay grabación para procesar', 'warning')
-      return null
-    }
-
-    // Validar empresa seleccionada
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return null
-    }
-
-    if (!userId || !userId.trim()) {
-      showNotification('Por favor ingresa un ID de usuario', 'warning')
-      return null
-    }
-
-    try {
-      // Crear archivo temporal para el procesamiento
-      const file = new File(
-        [voiceRecordingResults.value.blob], 
-        `voice_recording_${Date.now()}.webm`, 
-        { type: 'audio/webm' }
-      )
-
-      addToLog(`Starting voice recording processing for user: ${userId}`, 'info')
-      showNotification('Procesando grabación de voz...', 'info')
-
-      // Crear FormData - IGUAL estructura que processAudio pero para voz
-      const formData = new FormData()
-      formData.append('audio', file)
-      formData.append('company_id', appStore.currentCompanyId)
-      formData.append('user_id', userId.trim())
-
-      // Agregar opciones adicionales
-      if (options.language) formData.append('language', options.language)
-      if (options.prompt) formData.append('prompt', options.prompt)
-
-      // MISMO endpoint que processAudio - pero resultado va a voiceRecordingResults
-      const response = await apiRequest('/api/multimedia/process-voice', {
-        method: 'POST',
-        body: formData
-      })
-
-      // IMPORTANTE: Guardar en voiceRecordingResults, no en audioResults
-      voiceRecordingResults.value = {
-        ...voiceRecordingResults.value,
-        processing: response,
-        transcript: response.transcript || response.transcription,
-        bot_response: response.bot_response || response.response || response.message,
-        company_id: response.company_id,
-        processing_time: response.processing_time || response.time
-      }
-
-      addToLog('Voice recording processing completed successfully', 'success')
-      showNotification('Grabación de voz procesada exitosamente', 'success')
-
-      return response
-
-    } catch (error) {
-      addToLog(`Voice recording processing failed: ${error.message}`, 'error')
-      showNotification(`Error procesando grabación: ${error.message}`, 'error')
-      throw error
-    }
-  }
-
-  /**
    * Procesa imagen - MIGRADO: processImage() de script.js  
    * PRESERVAR: Comportamiento y endpoints exactos
    */
@@ -672,8 +602,13 @@ export const useMultimedia = () => {
         addToLog(`Voice recording completed (${recordingDuration.value}s)`, 'success')
         showNotification(`Grabación completada (${recordingDuration.value}s)`, 'success')
 
-        // NO PROCESAR AUTOMÁTICAMENTE - dejar que el usuario decida
-        addToLog(`Voice recording saved (${recordingDuration.value}s)`, 'success')
+        // PRESERVAR: Procesamiento automático como script.js
+        try {
+          const file = new File([blob], `voice_recording_${Date.now()}.webm`, { type: 'audio/webm' })
+          await processAudio(file)
+        } catch (error) {
+          addToLog(`Error processing recorded audio: ${error.message}`, 'error')
+        }
       }
 
       mediaRecorder.value.start()
@@ -811,7 +746,6 @@ export const useMultimedia = () => {
     // Funciones principales (PRESERVAR nombres exactos de script.js)
     processAudio,
     processImage,
-    processVoiceRecording,
     testMultimediaIntegration,
     captureScreen,
     toggleVoiceRecording,
