@@ -61,12 +61,14 @@ export const useMultimedia = () => {
   }))
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES - EXACTAS A SCRIPT.JS
+  // FUNCIONES PRINCIPALES - EXACTAS A SCRIPT.JS (CON MEJORA PARA SOURCE)
   // ============================================================================
 
   /**
    * Procesa archivo de audio - MIGRADO: processAudio() de script.js
    * PRESERVAR: Comportamiento y endpoints exactos
+   *
+   * options: { language, prompt, source: 'recorder'|'uploader'|undefined, skipDomUpdate: boolean }
    */
   const processAudio = async (audioFile = null, options = {}) => {
     // Validar empresa seleccionada - PRESERVAR lógica script.js
@@ -89,6 +91,11 @@ export const useMultimedia = () => {
       showNotification('Ya se está procesando un archivo de audio', 'warning')
       return null
     }
+
+    // decide target container based on options.source
+    const source = options.source || null
+    const targetContainerId = source === 'recorder' ? 'voiceResult' : 'audioResult'
+    const skipDomUpdate = !!options.skipDomUpdate
 
     try {
       isProcessingAudio.value = true
@@ -138,40 +145,43 @@ export const useMultimedia = () => {
       processingProgress.value = 100
       audioResults.value = response
 
-      // PRESERVAR: Actualizar DOM como script.js SI EXISTE
-      const resultContainer = document.getElementById('audioResult')
-      if (resultContainer) {
-        // MEJORADO: Extraer campos de manera robusta como script.js corregido
-        const transcript = response.transcript || response.transcription || 'Sin transcripción'
-        const botResponse = response.bot_response || response.response || response.message || null
-        const companyId = response.company_id || appStore.currentCompanyId
-        const processingTime = response.processing_time || response.time || null
-        
-        let resultHTML = `
-          <div class="result-container result-success">
-            <h4>🎵 Procesamiento de Audio Completado</h4>
-            <p><strong>Transcripción:</strong></p>
-            <div class="code-block">${escapeHTML(transcript)}</div>
-        `
-        
-        if (botResponse) {
-          resultHTML += `
-            <p><strong>Respuesta del Bot:</strong></p>
-            <div class="code-block">${escapeHTML(botResponse)}</div>
+      // PRESERVAR: Actualizar DOM como script.js SI EXISTE,
+      // pero ahora targeteado por source (voiceResult vs audioResult), y con opción de skip
+      if (!skipDomUpdate) {
+        const resultContainer = document.getElementById(targetContainerId)
+        if (resultContainer) {
+          // MEJORADO: Extraer campos de manera robusta como script.js corregido
+          const transcript = response.transcript || response.transcription || 'Sin transcripción'
+          const botResponse = response.bot_response || response.response || response.message || null
+          const companyId = response.company_id || appStore.currentCompanyId
+          const processingTime = response.processing_time || response.time || null
+          
+          let resultHTML = `
+            <div class="result-container result-success">
+              <h4>🎵 Procesamiento de Audio Completado</h4>
+              <p><strong>Transcripción:</strong></p>
+              <div class="code-block">${escapeHTML(transcript)}</div>
           `
+          
+          if (botResponse) {
+            resultHTML += `
+              <p><strong>Respuesta del Bot:</strong></p>
+              <div class="code-block">${escapeHTML(botResponse)}</div>
+            `
+          }
+          
+          resultHTML += `
+              <p><strong>Empresa:</strong> ${companyId}</p>
+          `
+          
+          if (processingTime) {
+            resultHTML += `<p><strong>Tiempo:</strong> ${processingTime}ms</p>`
+          }
+          
+          resultHTML += `</div>`
+          
+          resultContainer.innerHTML = resultHTML
         }
-        
-        resultHTML += `
-            <p><strong>Empresa:</strong> ${companyId}</p>
-        `
-        
-        if (processingTime) {
-          resultHTML += `<p><strong>Tiempo:</strong> ${processingTime}ms</p>`
-        }
-        
-        resultHTML += `</div>`
-        
-        resultContainer.innerHTML = resultHTML
       }
 
       addToLog('Audio processing completed successfully', 'success')
@@ -184,15 +194,17 @@ export const useMultimedia = () => {
       showNotification(`Error procesando audio: ${error.message}`, 'error')
 
       // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
-      const resultContainer = document.getElementById('audioResult')
-      if (resultContainer) {
-        resultContainer.innerHTML = `
-          <div class="result-container result-error">
-            <p>❌ Error al procesar audio</p>
-            <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
-            <p><strong>Empresa:</strong> ${appStore.currentCompanyId}</p>
-          </div>
-        `
+      if (!skipDomUpdate) {
+        const resultContainer = document.getElementById(targetContainerId)
+        if (resultContainer) {
+          resultContainer.innerHTML = `
+            <div class="result-container result-error">
+              <p>❌ Error al procesar audio</p>
+              <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+              <p><strong>Empresa:</strong> ${appStore.currentCompanyId}</p>
+            </div>
+          `
+        }
       }
 
       throw error
@@ -605,7 +617,10 @@ export const useMultimedia = () => {
         // PRESERVAR: Procesamiento automático como script.js
         try {
           const file = new File([blob], `voice_recording_${Date.now()}.webm`, { type: 'audio/webm' })
-          await processAudio(file)
+
+          // Important: indicate this processing originates from the recorder,
+          // so processAudio will target the voiceResult container instead of audioResult
+          await processAudio(file, { source: 'recorder' })
         } catch (error) {
           addToLog(`Error processing recorded audio: ${error.message}`, 'error')
         }
@@ -697,7 +712,7 @@ export const useMultimedia = () => {
     // Limpiar contenedores DOM SI EXISTEN
     const containers = [
       'audioResult', 'imageResult', 'multimediaTestResult',
-      'screenCaptureResult'
+      'screenCaptureResult', 'voiceResult'
     ]
     
     containers.forEach(id => {
