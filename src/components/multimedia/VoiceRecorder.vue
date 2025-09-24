@@ -58,6 +58,21 @@
       </button>
     </div>
 
+    <!-- Campo de Usuario ID - IGUAL QUE AudioProcessor.vue -->
+    <div class="user-id-section">
+      <div class="form-group">
+        <label for="voiceUserId">ID de Usuario:</label>
+        <input 
+          id="voiceUserId"
+          type="text" 
+          v-model="userId"
+          placeholder="usuario_123"
+          class="form-input"
+          :disabled="isRecording"
+        />
+      </div>
+    </div>
+
     <!-- Configuración simple -->
     <div class="recording-config">
       <h4>⚙️ Configuración</h4>
