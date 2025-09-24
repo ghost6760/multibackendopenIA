@@ -6,6 +6,17 @@
       <p class="tab-subtitle">
         Procesamiento de audio, imágenes y captura de pantalla
       </p>
+      
+      <!-- Indicador de capacidades -->
+      <div class="capabilities-indicator">
+        <div 
+          v-for="(available, capability) in multimediaCapabilities"
+          :key="capability"
+          :class="['capability-badge', { available, unavailable: !available }]"
+        >
+          {{ getCapabilityIcon(capability) }} {{ formatCapabilityName(capability) }}
+        </div>
+      </div>
     </div>
 
     <!-- Grid principal de componentes multimedia -->
@@ -14,9 +25,11 @@
       <div class="multimedia-card">
         <AudioProcessor 
           ref="audioProcessorRef"
-          @processing="onAudioProcessing"
-          @completed="onAudioCompleted"
-          @error="onAudioError"
+          :is-processing="isProcessingAudio"
+          :results="audioResults"
+          :progress="processingProgress"
+          @process-audio="handleProcessAudio"
+          @clear-results="clearResults"
         />
       </div>
 
@@ -24,9 +37,11 @@
       <div class="multimedia-card">
         <ImageProcessor 
           ref="imageProcessorRef"
-          @processing="onImageProcessing"
-          @completed="onImageCompleted" 
-          @error="onImageError"
+          :is-processing="isProcessingImage"
+          :results="imageResults"
+          :progress="processingProgress"
+          @process-image="handleProcessImage"
+          @clear-results="clearResults"
         />
       </div>
 
@@ -34,9 +49,10 @@
       <div class="multimedia-card">
         <ScreenCapture 
           ref="screenCaptureRef"
-          @capturing="onScreenCapturing"
-          @completed="onScreenCaptureCompleted"
-          @error="onScreenCaptureError"
+          :is-capturing="isCapturingScreen"
+          :results="screenCaptureResults"
+          @capture-screen="handleCaptureScreen"
+          @clear-results="clearResults"
         />
       </div>
 
@@ -44,22 +60,24 @@
       <div class="multimedia-card">
         <VoiceRecorder 
           ref="voiceRecorderRef"
-          @recording="onVoiceRecording"
-          @stopped="onVoiceRecordingStopped"
-          @error="onVoiceRecordingError"
+          :is-recording="isRecording"
+          :duration="recordingDuration"
+          :results="voiceRecordingResults"
+          @toggle-recording="handleToggleVoiceRecording"
+          @clear-results="clearResults"
         />
       </div>
     </div>
 
-    <!-- Resultados y testing -->
-    <div class="multimedia-results">
+    <!-- Test de Integración -->
+    <div class="integration-section">
       <div class="card">
         <h3>🧪 Test de Integración Multimedia</h3>
         <div class="integration-controls">
           <button 
             class="btn btn-primary" 
-            @click="testMultimediaIntegration"
-            :disabled="isTestingIntegration"
+            @click="handleTestIntegration"
+            :disabled="isTestingIntegration || isAnyProcessing"
           >
             <span v-if="isTestingIntegration">⏳ Probando...</span>
             <span v-else>🔄 Probar Integración</span>
@@ -67,9 +85,17 @@
           
           <button 
             class="btn btn-secondary" 
-            @click="clearResults"
+            @click="clearAllResults"
+            :disabled="isAnyProcessing"
           >
-            🗑️ Limpiar Resultados
+            🗑️ Limpiar Todo
+          </button>
+          
+          <button 
+            class="btn btn-info" 
+            @click="checkCapabilities"
+          >
+            🔍 Verificar Capacidades
           </button>
         </div>
         
@@ -78,20 +104,20 @@
           <h4>📊 Resultados del Test</h4>
           <div class="result-grid">
             <div 
-              v-for="(result, service) in integrationResults" 
+              v-for="(result, service) in parseIntegrationResults(integrationResults)" 
               :key="service"
-              :class="['result-item', result.status]"
+              :class="['result-item', getResultStatus(result)]"
             >
               <div class="result-header">
-                <span class="result-icon">{{ result.icon }}</span>
-                <span class="result-service">{{ result.service }}</span>
-                <span :class="['result-status', result.status]">
-                  {{ result.status.toUpperCase() }}
+                <span class="result-icon">{{ getServiceIcon(service) }}</span>
+                <span class="result-service">{{ formatServiceName(service) }}</span>
+                <span :class="['result-status', getResultStatus(result)]">
+                  {{ getResultStatus(result).toUpperCase() }}
                 </span>
               </div>
               
-              <div v-if="result.message" class="result-message">
-                {{ result.message }}
+              <div v-if="result.message || result.description" class="result-message">
+                {{ result.message || result.description }}
               </div>
               
               <div v-if="result.details" class="result-details">
@@ -100,6 +126,20 @@
                   <pre>{{ formatJSON(result.details) }}</pre>
                 </details>
               </div>
+            </div>
+          </div>
+          
+          <!-- Información adicional del test -->
+          <div v-if="integrationResults.openai_service_available !== undefined" class="additional-info">
+            <div class="info-item">
+              <span class="info-label">OpenAI disponible:</span>
+              <span :class="['info-value', integrationResults.openai_service_available ? 'success' : 'error']">
+                {{ integrationResults.openai_service_available ? '✅ Disponible' : '❌ No disponible' }}
+              </span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Empresa:</span>
+              <span class="info-value">{{ integrationResults.company_id || appStore.currentCompanyId }}</span>
             </div>
           </div>
         </div>
@@ -122,13 +162,21 @@
         {{ globalProgress.message }}
       </div>
     </div>
+
+    <!-- Alertas de estado -->
+    <div v-if="!appStore.currentCompanyId" class="company-warning">
+      <div class="warning-content">
+        <span class="warning-icon">⚠️</span>
+        <span class="warning-text">Selecciona una empresa para usar las funciones multimedia</span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
+import { useMultimedia } from '@/composables/useMultimedia'
 import { useNotifications } from '@/composables/useNotifications'
 import AudioProcessor from './AudioProcessor.vue'
 import ImageProcessor from './ImageProcessor.vue'
@@ -136,12 +184,46 @@ import ScreenCapture from './ScreenCapture.vue'
 import VoiceRecorder from './VoiceRecorder.vue'
 
 // ============================================================================
-// STORES & COMPOSABLES
+// STORES & COMPOSABLES - SIN DUPLICAR FUNCIONES
 // ============================================================================
 
 const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
+
+// USAR COMPOSABLE - EVITAR DUPLICACIONES
+const {
+  // Estado reactivo
+  isProcessingAudio,
+  isProcessingImage,
+  isTestingIntegration,
+  isRecording,
+  isCapturingScreen,
+  isAnyProcessing,
+  processingProgress,
+  recordingDuration,
+  
+  // Resultados
+  audioResults,
+  imageResults,
+  integrationResults,
+  screenCaptureResults,
+  voiceRecordingResults,
+  
+  // Capacidades
+  multimediaCapabilities,
+
+  // Funciones principales - USAR COMPOSABLE DIRECTAMENTE
+  processAudio,
+  processImage,
+  testMultimediaIntegration,
+  captureScreen,
+  toggleVoiceRecording,
+
+  // Funciones auxiliares
+  checkMultimediaCapabilities,
+  clearResults,
+  formatFileSize
+} = useMultimedia()
 
 // ============================================================================
 // REFS A COMPONENTES HIJOS
@@ -153,11 +235,9 @@ const screenCaptureRef = ref(null)
 const voiceRecorderRef = ref(null)
 
 // ============================================================================
-// ESTADO LOCAL
+// ESTADO LOCAL DEL COMPONENTE - SOLO LO NECESARIO
 // ============================================================================
 
-const isTestingIntegration = ref(false)
-const integrationResults = ref(null)
 const globalProgress = ref({
   active: false,
   title: '',
@@ -166,284 +246,118 @@ const globalProgress = ref({
 })
 
 // ============================================================================
-// FUNCIONES MIGRADAS DEL SCRIPT.JS ORIGINAL
+// COMPUTED
+// ============================================================================
+
+const canUseMultimedia = computed(() => {
+  return !!appStore.currentCompanyId && Object.values(multimediaCapabilities.value).some(Boolean)
+})
+
+// ============================================================================
+// EVENT HANDLERS - DELEGAR AL COMPOSABLE
 // ============================================================================
 
 /**
- * Procesa archivo de audio - MIGRADO: processAudio() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Maneja procesamiento de audio - DELEGAR AL COMPOSABLE
  */
-const processAudio = async (audioFile, options = {}) => {
-  if (!audioFile) {
-    showNotification('Por favor selecciona un archivo de audio', 'warning')
-    return null
-  }
-
-  updateGlobalProgress(true, 'Procesando Audio', 'Preparando archivo...', 0)
+const handleProcessAudio = async (audioFile, options = {}) => {
+  updateGlobalProgress(true, 'Procesando Audio', 'Iniciando...', 0)
   
   try {
-    appStore.addToLog(`Starting audio processing: ${audioFile.name}`, 'info')
-    
-    // Crear FormData para el archivo
-    const formData = new FormData()
-    formData.append('audio', audioFile)
-    
-    // Agregar opciones adicionales si existen
-    if (options.language) formData.append('language', options.language)
-    if (options.prompt) formData.append('prompt', options.prompt)
-    
-    updateGlobalProgress(true, 'Procesando Audio', 'Enviando al servidor...', 25)
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/multimedia/audio', {
-      method: 'POST',
-      body: formData
-    })
-    
-    updateGlobalProgress(true, 'Procesando Audio', 'Procesando respuesta...', 75)
-    
-    appStore.addToLog('Audio processing completed successfully', 'info')
-    showNotification('Audio procesado exitosamente', 'success')
-    
+    const result = await processAudio(audioFile, options)
     updateGlobalProgress(true, 'Procesando Audio', 'Completado', 100)
     
     setTimeout(() => {
       updateGlobalProgress(false)
     }, 1000)
     
-    return response
+    return result
     
   } catch (error) {
-    appStore.addToLog(`Audio processing failed: ${error.message}`, 'error')
-    showNotification(`Error procesando audio: ${error.message}`, 'error')
     updateGlobalProgress(false)
     throw error
   }
 }
 
 /**
- * Procesa imagen - MIGRADO: processImage() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Maneja procesamiento de imagen - DELEGAR AL COMPOSABLE
  */
-const processImage = async (imageFile, options = {}) => {
-  if (!imageFile) {
-    showNotification('Por favor selecciona una imagen', 'warning')
-    return null
-  }
-
-  updateGlobalProgress(true, 'Procesando Imagen', 'Preparando imagen...', 0)
+const handleProcessImage = async (imageFile, options = {}) => {
+  updateGlobalProgress(true, 'Procesando Imagen', 'Iniciando...', 0)
   
   try {
-    appStore.addToLog(`Starting image processing: ${imageFile.name}`, 'info')
-    
-    // Crear FormData para la imagen
-    const formData = new FormData()
-    formData.append('image', imageFile)
-    
-    // Agregar opciones adicionales
-    if (options.analysis_type) formData.append('analysis_type', options.analysis_type)
-    if (options.prompt) formData.append('prompt', options.prompt)
-    
-    updateGlobalProgress(true, 'Procesando Imagen', 'Enviando al servidor...', 25)
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/multimedia/image', {
-      method: 'POST',
-      body: formData
-    })
-    
-    updateGlobalProgress(true, 'Procesando Imagen', 'Analizando imagen...', 75)
-    
-    appStore.addToLog('Image processing completed successfully', 'info')
-    showNotification('Imagen procesada exitosamente', 'success')
-    
+    const result = await processImage(imageFile, options)
     updateGlobalProgress(true, 'Procesando Imagen', 'Completado', 100)
     
     setTimeout(() => {
       updateGlobalProgress(false)
     }, 1000)
     
-    return response
+    return result
     
   } catch (error) {
-    appStore.addToLog(`Image processing failed: ${error.message}`, 'error')
-    showNotification(`Error procesando imagen: ${error.message}`, 'error')
     updateGlobalProgress(false)
     throw error
   }
 }
 
 /**
- * Prueba la integración multimedia - MIGRADO: testMultimediaIntegration() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Maneja captura de pantalla - DELEGAR AL COMPOSABLE
  */
-const testMultimediaIntegration = async () => {
-  isTestingIntegration.value = true
-  updateGlobalProgress(true, 'Test de Integración', 'Iniciando pruebas...', 0)
+const handleCaptureScreen = async (options = {}) => {
+  updateGlobalProgress(true, 'Capturando Pantalla', 'Iniciando...', 0)
   
   try {
-    appStore.addToLog('Starting multimedia integration test', 'info')
+    const result = await captureScreen(options)
+    updateGlobalProgress(true, 'Capturando Pantalla', 'Completado', 100)
     
-    updateGlobalProgress(true, 'Test de Integración', 'Probando conexión...', 25)
+    setTimeout(() => {
+      updateGlobalProgress(false)
+    }, 1000)
     
-    // Llamada a la API de test - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/multimedia/test')
+    return result
     
-    updateGlobalProgress(true, 'Test de Integración', 'Analizando resultados...', 75)
-    
-    // Procesar resultados
-    integrationResults.value = response.results || {}
-    
-    appStore.addToLog('Multimedia integration test completed', 'info')
-    showNotification('Test de integración completado', 'success')
-    
+  } catch (error) {
+    updateGlobalProgress(false)
+    throw error
+  }
+}
+
+/**
+ * Maneja grabación de voz - DELEGAR AL COMPOSABLE
+ */
+const handleToggleVoiceRecording = async () => {
+  try {
+    await toggleVoiceRecording()
+  } catch (error) {
+    showNotification(`Error en grabación: ${error.message}`, 'error')
+  }
+}
+
+/**
+ * Maneja test de integración - DELEGAR AL COMPOSABLE
+ */
+const handleTestIntegration = async () => {
+  updateGlobalProgress(true, 'Test de Integración', 'Iniciando...', 0)
+  
+  try {
+    const result = await testMultimediaIntegration()
     updateGlobalProgress(true, 'Test de Integración', 'Completado', 100)
     
     setTimeout(() => {
       updateGlobalProgress(false)
     }, 1000)
     
+    return result
+    
   } catch (error) {
-    appStore.addToLog(`Multimedia integration test failed: ${error.message}`, 'error')
-    showNotification(`Error en test de integración: ${error.message}`, 'error')
     updateGlobalProgress(false)
-  } finally {
-    isTestingIntegration.value = false
-  }
-}
-
-/**
- * Captura de pantalla - MIGRADO: captureScreen() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
- */
-const captureScreen = async () => {
-  try {
-    appStore.addToLog('Starting screen capture', 'info')
-    
-    // Verificar soporte del navegador
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      throw new Error('Screen capture no es soportado en este navegador')
-    }
-    
-    showNotification('Iniciando captura de pantalla...', 'info')
-    
-    // Solicitar captura de pantalla
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        mediaSource: 'screen',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    })
-    
-    // Crear canvas para capturar frame
-    const video = document.createElement('video')
-    video.srcObject = stream
-    video.play()
-    
-    // Esperar a que el video esté listo
-    await new Promise(resolve => {
-      video.onloadedmetadata = resolve
-    })
-    
-    // Capturar frame
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0)
-    
-    // Detener stream
-    stream.getTracks().forEach(track => track.stop())
-    
-    // Convertir a blob
-    const blob = await new Promise(resolve => {
-      canvas.toBlob(resolve, 'image/png')
-    })
-    
-    appStore.addToLog('Screen capture completed successfully', 'info')
-    showNotification('Captura de pantalla completada', 'success')
-    
-    return blob
-    
-  } catch (error) {
-    appStore.addToLog(`Screen capture failed: ${error.message}`, 'error')
-    showNotification(`Error en captura de pantalla: ${error.message}`, 'error')
     throw error
   }
 }
 
-/**
- * Toggle grabación de voz - MIGRADO: toggleVoiceRecording() de script.js
- */
-const toggleVoiceRecording = () => {
-  if (voiceRecorderRef.value) {
-    voiceRecorderRef.value.toggleRecording()
-  }
-}
-
 // ============================================================================
-// EVENT HANDLERS PARA COMPONENTES HIJOS
-// ============================================================================
-
-const onAudioProcessing = (data) => {
-  updateGlobalProgress(true, 'Procesando Audio', data.message || 'Procesando...', data.progress || 0)
-}
-
-const onAudioCompleted = (result) => {
-  showNotification('Audio procesado exitosamente', 'success')
-  updateGlobalProgress(false)
-}
-
-const onAudioError = (error) => {
-  showNotification(`Error procesando audio: ${error.message}`, 'error')
-  updateGlobalProgress(false)
-}
-
-const onImageProcessing = (data) => {
-  updateGlobalProgress(true, 'Procesando Imagen', data.message || 'Procesando...', data.progress || 0)
-}
-
-const onImageCompleted = (result) => {
-  showNotification('Imagen procesada exitosamente', 'success')
-  updateGlobalProgress(false)
-}
-
-const onImageError = (error) => {
-  showNotification(`Error procesando imagen: ${error.message}`, 'error')
-  updateGlobalProgress(false)
-}
-
-const onScreenCapturing = (data) => {
-  updateGlobalProgress(true, 'Capturando Pantalla', data.message || 'Capturando...', data.progress || 0)
-}
-
-const onScreenCaptureCompleted = (result) => {
-  showNotification('Captura de pantalla completada', 'success')
-  updateGlobalProgress(false)
-}
-
-const onScreenCaptureError = (error) => {
-  showNotification(`Error capturando pantalla: ${error.message}`, 'error')
-  updateGlobalProgress(false)
-}
-
-const onVoiceRecording = (data) => {
-  // Voice recording events
-}
-
-const onVoiceRecordingStopped = (result) => {
-  showNotification('Grabación de voz completada', 'success')
-}
-
-const onVoiceRecordingError = (error) => {
-  showNotification(`Error en grabación de voz: ${error.message}`, 'error')
-}
-
-// ============================================================================
-// UTILIDADES
+// UTILIDADES DEL COMPONENTE
 // ============================================================================
 
 const updateGlobalProgress = (active, title = '', message = '', percentage = 0) => {
@@ -455,9 +369,101 @@ const updateGlobalProgress = (active, title = '', message = '', percentage = 0) 
   }
 }
 
-const clearResults = () => {
-  integrationResults.value = null
-  showNotification('Resultados limpiados', 'info')
+const clearAllResults = () => {
+  clearResults()
+  globalProgress.value.active = false
+}
+
+const checkCapabilities = () => {
+  const capabilities = checkMultimediaCapabilities()
+  
+  const availableCount = Object.values(capabilities).filter(Boolean).length
+  const totalCount = Object.keys(capabilities).length
+  
+  showNotification(
+    `Capacidades multimedia: ${availableCount}/${totalCount} disponibles`, 
+    availableCount > 0 ? 'success' : 'warning'
+  )
+}
+
+// ============================================================================
+// PARSERS Y FORMATTERS
+// ============================================================================
+
+const parseIntegrationResults = (results) => {
+  if (!results || !results.multimedia_integration) return {}
+  
+  const integration = results.multimedia_integration
+  
+  return {
+    fully_integrated: {
+      status: integration.fully_integrated,
+      message: integration.fully_integrated ? 'Integración completa' : 'Integración incompleta'
+    },
+    transcribe_audio: {
+      status: integration.transcribe_audio_from_url,
+      message: integration.transcribe_audio_from_url ? 'Transcripción disponible' : 'Transcripción no disponible'
+    },
+    analyze_image: {
+      status: integration.analyze_image_from_url,
+      message: integration.analyze_image_from_url ? 'Análisis disponible' : 'Análisis no disponible'
+    },
+    process_attachment: {
+      status: integration.process_attachment,
+      message: integration.process_attachment ? 'Procesamiento disponible' : 'Procesamiento no disponible'
+    }
+  }
+}
+
+const getResultStatus = (result) => {
+  if (typeof result === 'boolean') return result ? 'success' : 'error'
+  if (result && typeof result === 'object') {
+    return result.status === true ? 'success' : 
+           result.status === false ? 'error' : 'warning'
+  }
+  return 'warning'
+}
+
+const getServiceIcon = (service) => {
+  const icons = {
+    fully_integrated: '✅',
+    transcribe_audio: '🎤',
+    analyze_image: '🖼️',
+    process_attachment: '📎'
+  }
+  return icons[service] || '🔧'
+}
+
+const formatServiceName = (service) => {
+  const names = {
+    fully_integrated: 'Integración Completa',
+    transcribe_audio: 'Transcripción de Audio',
+    analyze_image: 'Análisis de Imagen',
+    process_attachment: 'Procesamiento de Archivos'
+  }
+  return names[service] || service
+}
+
+const getCapabilityIcon = (capability) => {
+  const icons = {
+    audio: '🎤',
+    screen: '🖥️',
+    files: '📁',
+    webrtc: '🌐',
+    webgl: '🎮'
+  }
+  return icons[capability] || '❓'
+}
+
+const formatCapabilityName = (capability) => {
+  const names = {
+    audio: 'Audio',
+    screen: 'Pantalla',
+    files: 'Archivos',
+    webrtc: 'WebRTC',
+    webgl: 'WebGL'
+  }
+  return names[capability] || capability
 }
 
 const formatJSON = (obj) => {
@@ -475,12 +481,15 @@ const formatJSON = (obj) => {
 onMounted(() => {
   appStore.addToLog('MultimediaTab component mounted', 'info')
   
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON script.js
   window.processAudio = processAudio
   window.processImage = processImage
   window.testMultimediaIntegration = testMultimediaIntegration
   window.captureScreen = captureScreen
   window.toggleVoiceRecording = toggleVoiceRecording
+  
+  // Verificar capacidades iniciales
+  checkCapabilities()
 })
 
 onUnmounted(() => {
@@ -496,29 +505,28 @@ onUnmounted(() => {
   appStore.addToLog('MultimediaTab component unmounted', 'info')
 })
 
-// Watcher para cargar datos cuando el tab se activa
-watch(() => appStore.activeTab, (newTab) => {
-  if (newTab === 'multimedia') {
-    // Verificar permisos y capacidades del navegador
-    checkMultimediaCapabilities()
+// Watcher para empresa seleccionada
+watch(() => appStore.currentCompanyId, (newCompany, oldCompany) => {
+  if (newCompany !== oldCompany) {
+    clearAllResults()
+    if (newCompany) {
+      appStore.addToLog(`Multimedia tab activated for company: ${newCompany}`, 'info')
+    }
   }
 })
 
-const checkMultimediaCapabilities = () => {
-  const capabilities = {
-    audio: !!navigator.mediaDevices?.getUserMedia,
-    screen: !!navigator.mediaDevices?.getDisplayMedia,
-    files: !!window.File && !!window.FileReader
+// Watcher para mostrar progreso en tiempo real
+watch([processingProgress, isAnyProcessing], ([progress, processing]) => {
+  if (processing && globalProgress.value.active) {
+    globalProgress.value.percentage = progress
   }
-  
-  appStore.addToLog(`Multimedia capabilities: ${JSON.stringify(capabilities)}`, 'info')
-}
+})
 </script>
 
 <style scoped>
 .multimedia-tab {
   padding: 20px;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -536,6 +544,33 @@ const checkMultimediaCapabilities = () => {
 .tab-subtitle {
   color: var(--text-secondary);
   font-size: 1.1rem;
+  margin-bottom: 20px;
+}
+
+.capabilities-indicator {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.capability-badge {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.capability-badge.available {
+  background: rgba(72, 187, 120, 0.1);
+  color: var(--success-color);
+  border: 1px solid var(--success-color);
+}
+
+.capability-badge.unavailable {
+  background: rgba(160, 174, 192, 0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
 }
 
 .multimedia-grid {
@@ -559,8 +594,8 @@ const checkMultimediaCapabilities = () => {
   transform: translateY(-2px);
 }
 
-.multimedia-results {
-  margin-top: 30px;
+.integration-section {
+  margin: 30px 0;
 }
 
 .card {
@@ -604,6 +639,11 @@ const checkMultimediaCapabilities = () => {
 .btn-secondary {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+.btn-info {
+  background: var(--info-color);
+  color: white;
 }
 
 .btn:hover:not(:disabled) {
@@ -708,6 +748,36 @@ const checkMultimediaCapabilities = () => {
   margin-top: 8px;
 }
 
+.additional-info {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-color);
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+}
+
+.info-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.info-value {
+  font-weight: 500;
+}
+
+.info-value.success {
+  color: var(--success-color);
+}
+
+.info-value.error {
+  color: var(--error-color);
+}
+
 .global-progress {
   position: fixed;
   top: 20px;
@@ -759,9 +829,37 @@ const checkMultimediaCapabilities = () => {
   font-size: 0.9rem;
 }
 
+.company-warning {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(237, 137, 54, 0.1);
+  border: 1px solid var(--warning-color);
+  border-radius: var(--radius-lg);
+  padding: 15px;
+  z-index: 999;
+}
+
+.warning-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--warning-color);
+  font-weight: 500;
+}
+
+.warning-icon {
+  font-size: 1.2rem;
+}
+
 @media (max-width: 768px) {
   .multimedia-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .capabilities-indicator {
+    justify-content: center;
   }
   
   .global-progress {
@@ -777,6 +875,18 @@ const checkMultimediaCapabilities = () => {
   
   .btn {
     justify-content: center;
+  }
+  
+  .info-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  
+  .company-warning {
+    left: 10px;
+    right: 10px;
+    transform: none;
   }
 }
 </style>
