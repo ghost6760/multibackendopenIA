@@ -5,8 +5,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Este blueprint se debe registrar en __init__.py
-documents_extended_bp = Blueprint('documents_extended', __name__, url_prefix='/api/documents')
+# ✅ CAMBIAR: url_prefix para evitar conflicto con documents.py
+documents_extended_bp = Blueprint('documents_extended', __name__, url_prefix='/api/documents-ext')
 
 @documents_extended_bp.route('/<doc_id>/vectors', methods=['GET'])
 def get_document_vectors(doc_id):
@@ -94,7 +94,7 @@ def get_documents_stats():
 
 @documents_extended_bp.route('/search', methods=['POST'])
 def search_documents():
-    """Buscar documentos por similitud"""
+    """Buscar documentos por similitud (SIMULADO - para desarrollo)"""
     try:
         data = request.get_json()
         company_id = data.get('company_id') or request.headers.get('X-Company-ID')
@@ -112,7 +112,8 @@ def search_documents():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # Búsqueda simulada
+        # ⚠️ NOTA: Este es un endpoint SIMULADO para desarrollo
+        # Para búsqueda real, usar POST /api/documents/search
         search_results = [
             {
                 "document_id": f"doc_{i}",
@@ -133,7 +134,8 @@ def search_documents():
             "results": search_results,
             "query": query,
             "total_results": len(search_results),
-            "company_id": company_id
+            "company_id": company_id,
+            "note": "This is a SIMULATED endpoint for development. Use POST /api/documents/search for real search."
         })
         
     except Exception as e:
