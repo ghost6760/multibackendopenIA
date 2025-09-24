@@ -44,61 +44,40 @@
       </div>
     </div>
 
-    <!-- Configuración de análisis -->
-    <div class="analysis-config">
-      <h4>⚙️ Configuración de Análisis</h4>
+    <!-- Campos exactos como script.js -->
+    <div class="form-fields">
+      <div class="form-group">
+        <label for="imageUserId">ID de Usuario:</label>
+        <input 
+          id="imageUserId"
+          type="text" 
+          v-model="userId"
+          placeholder="usuario_123"
+          class="form-input"
+        />
+      </div>
       
-      <div class="config-grid">
-        <div class="config-item">
-          <label for="analysisType">Tipo de análisis:</label>
-          <select id="analysisType" v-model="config.analysisType">
-            <option value="general">Análisis general</option>
-            <option value="medical">Análisis médico</option>
-            <option value="document">Documento/Texto</option>
-            <option value="product">Análisis de producto</option>
-            <option value="scene">Descripción de escena</option>
-            <option value="ocr">Extracción de texto (OCR)</option>
-          </select>
-        </div>
-        
-        <div class="config-item">
-          <label for="detailLevel">Nivel de detalle:</label>
-          <select id="detailLevel" v-model="config.detailLevel">
-            <option value="basic">Básico</option>
-            <option value="detailed">Detallado</option>
-            <option value="comprehensive">Completo</option>
-          </select>
-        </div>
-        
-        <div class="config-item full-width">
-          <label for="customPrompt">Prompt personalizado (opcional):</label>
-          <textarea
-            id="customPrompt"
-            v-model="config.prompt"
-            placeholder="Describe qué aspectos específicos quieres analizar en la imagen..."
-            rows="3"
-          ></textarea>
-        </div>
-        
-        <div class="config-item">
-          <label>
-            <input 
-              type="checkbox" 
-              v-model="config.includeCoordinates"
-            />
-            Incluir coordenadas de objetos
-          </label>
-        </div>
-        
-        <div class="config-item">
-          <label>
-            <input 
-              type="checkbox" 
-              v-model="config.extractText"
-            />
-            Extraer texto automáticamente
-          </label>
-        </div>
+      <div class="form-group">
+        <label for="analysisType">Tipo de análisis:</label>
+        <select id="analysisType" v-model="config.analysis_type" class="form-select">
+          <option value="">General</option>
+          <option value="medical">Análisis médico</option>
+          <option value="document">Documento/Texto</option>
+          <option value="product">Análisis de producto</option>
+          <option value="scene">Descripción de escena</option>
+          <option value="ocr">Extracción de texto (OCR)</option>
+        </select>
+      </div>
+      
+      <div class="form-group full-width">
+        <label for="imagePrompt">Prompt personalizado (opcional):</label>
+        <textarea
+          id="imagePrompt"
+          v-model="config.prompt"
+          placeholder="Describe qué aspectos específicos quieres analizar en la imagen..."
+          rows="3"
+          class="form-textarea"
+        ></textarea>
       </div>
     </div>
 
@@ -107,10 +86,10 @@
       <button 
         class="btn btn-primary"
         @click="processImage"
-        :disabled="!selectedImage || isProcessing"
+        :disabled="!selectedImage || !userId.trim() || isProcessing"
       >
         <span v-if="isProcessing">⏳ Analizando...</span>
-        <span v-else>🔍 Analizar Imagen</span>
+        <span v-else">🔍 Analizar Imagen</span>
       </button>
       
       <button 
@@ -135,56 +114,55 @@
     <div v-if="isProcessing" class="processing-progress">
       <div class="progress-header">
         <span>{{ processingStage }}</span>
-        <span>{{ processingProgress }}%</span>
+        <span>{{ progress }}%</span>
       </div>
       <div class="progress-bar">
         <div 
           class="progress-fill"
-          :style="{ width: processingProgress + '%' }"
+          :style="{ width: progress + '%' }"
         ></div>
       </div>
     </div>
 
-    <!-- Resultados -->
-    <div v-if="result" class="processing-result">
+    <!-- Resultados - ESTRUCTURA EXACTA COMO SCRIPT.JS -->
+    <div v-if="results" class="processing-result">
       <h4>📊 Resultado del Análisis</h4>
       
-      <div class="result-tabs">
-        <button 
-          v-for="tab in resultTabs"
-          :key="tab.id"
-          :class="['result-tab', { active: activeResultTab === tab.id }]"
-          @click="activeResultTab = tab.id"
-        >
-          {{ tab.icon }} {{ tab.name }}
-        </button>
-      </div>
-      
       <div class="result-content">
-        <!-- Descripción general -->
-        <div v-if="activeResultTab === 'description'" class="result-section">
-          <div class="description-text">
-            {{ result.description || 'No se pudo generar descripción' }}
+        <!-- Análisis/Descripción -->
+        <div class="result-section">
+          <h5>📝 Análisis:</h5>
+          <div class="analysis-text">
+            {{ getAnalysis(results) }}
           </div>
           
-          <div class="description-actions">
-            <button @click="copyToClipboard(result.description)" class="btn btn-sm">
+          <div class="analysis-actions">
+            <button @click="copyToClipboard(getAnalysis(results))" class="btn btn-sm">
               📋 Copiar
             </button>
-            <button @click="downloadDescription" class="btn btn-sm">
+            <button @click="downloadAnalysis" class="btn btn-sm">
               💾 Descargar
             </button>
           </div>
         </div>
         
-        <!-- Texto extraído -->
-        <div v-if="activeResultTab === 'text' && result.extracted_text" class="result-section">
+        <!-- Respuesta del Bot - COMO SCRIPT.JS CORREGIDO -->
+        <div v-if="getBotResponse(results)" class="result-section">
+          <h5>🤖 Respuesta del Bot:</h5>
+          <div class="bot-response-text">
+            {{ getBotResponse(results) }}
+          </div>
+        </div>
+        
+        <!-- Texto extraído si está disponible -->
+        <div v-if="getExtractedText(results)" class="result-section">
+          <h5>📄 Texto Extraído:</h5>
           <div class="extracted-text">
-            <pre>{{ result.extracted_text }}</pre>
+            <pre>{{ getExtractedText(results) }}</pre>
           </div>
           
           <div class="text-actions">
-            <button @click="copyToClipboard(result.extracted_text)" class="btn btn-sm">
+            <button @click="copyToClipboard(getExtractedText(results))" class="btn btn-sm">
               📋 Copiar Texto
             </button>
             <button @click="downloadText" class="btn btn-sm">
@@ -193,60 +171,39 @@
           </div>
         </div>
         
-        <!-- Objetos detectados -->
-        <div v-if="activeResultTab === 'objects' && result.objects" class="result-section">
-          <div class="objects-grid">
-            <div 
-              v-for="(obj, index) in result.objects"
-              :key="index"
-              class="object-item"
-              @click="highlightObject(obj)"
-            >
-              <div class="object-label">{{ obj.label }}</div>
-              <div class="object-confidence">
-                Confianza: {{ Math.round(obj.confidence * 100) }}%
-              </div>
-              <div v-if="obj.coordinates" class="object-coordinates">
-                Posición: ({{ obj.coordinates.x }}, {{ obj.coordinates.y }})
-              </div>
+        <!-- Información técnica -->
+        <div class="result-section technical-info">
+          <h5>🔧 Información Técnica:</h5>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Empresa:</span>
+              <span class="info-value">{{ getCompanyId(results) }}</span>
+            </div>
+            <div v-if="getProcessingTime(results)" class="info-item">
+              <span class="info-label">Tiempo de procesamiento:</span>
+              <span class="info-value">{{ getProcessingTime(results) }}ms</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Archivo:</span>
+              <span class="info-value">{{ selectedImage?.name }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Tamaño:</span>
+              <span class="info-value">{{ formatFileSize(selectedImage?.size || 0) }}</span>
+            </div>
+            <div v-if="imageDimensions" class="info-item">
+              <span class="info-label">Dimensiones:</span>
+              <span class="info-value">{{ imageDimensions }}</span>
             </div>
           </div>
         </div>
-        
-        <!-- Análisis detallado -->
-        <div v-if="activeResultTab === 'analysis'" class="result-section">
-          <div v-if="result.analysis" class="analysis-grid">
-            <div v-for="(value, key) in result.analysis" :key="key" class="analysis-item">
-              <label>{{ formatAnalysisKey(key) }}:</label>
-              <span>{{ value }}</span>
-            </div>
-          </div>
-          <div v-else class="no-analysis">
-            No hay análisis detallado disponible
-          </div>
-        </div>
-        
-        <!-- Metadatos -->
-        <div v-if="activeResultTab === 'metadata'" class="result-section">
-          <div class="metadata-content">
-            <details>
-              <summary>Ver metadatos completos</summary>
-              <pre>{{ formatJSON(result.metadata || {}) }}</pre>
-            </details>
-          </div>
-        </div>
-        
-        <!-- Imagen procesada -->
-        <div v-if="activeResultTab === 'processed' && result.processed_image" class="result-section">
-          <div class="processed-image">
-            <img :src="result.processed_image" alt="Imagen procesada" />
-          </div>
-          
-          <div class="processed-actions">
-            <button @click="downloadProcessedImage" class="btn btn-sm">
-              💾 Descargar Imagen
-            </button>
-          </div>
+
+        <!-- Debug Info si disponible -->
+        <div v-if="results.debug_info || results.metadata" class="result-section">
+          <details>
+            <summary>Ver información de depuración</summary>
+            <pre>{{ formatJSON(results.debug_info || results.metadata || {}) }}</pre>
+          </details>
         </div>
       </div>
     </div>
@@ -275,51 +232,42 @@
       </div>
     </div>
 
-    <!-- Historial reciente -->
-    <div v-if="recentResults.length > 0" class="recent-results">
-      <h4>📚 Análisis Reciente</h4>
-      <div class="recent-list">
-        <div 
-          v-for="(item, index) in recentResults"
-          :key="index"
-          class="recent-item"
-          @click="loadRecentResult(item)"
-        >
-          <div class="recent-thumbnail">
-            <img v-if="item.thumbnail" :src="item.thumbnail" :alt="item.filename" />
-            <div v-else class="no-thumbnail">🖼️</div>
-          </div>
-          <div class="recent-info">
-            <div class="recent-name">{{ item.filename }}</div>
-            <div class="recent-time">{{ formatTime(item.timestamp) }}</div>
-          </div>
-          <div class="recent-status">
-            {{ item.status === 'success' ? '✅' : '❌' }}
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- Compatible with DOM manipulation from script.js -->
+    <div id="imageResult" style="margin-top: 20px;"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, defineProps, defineEmits } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
 
 // ============================================================================
-// PROPS & EMITS
+// PROPS & EMITS - INTERFACE CON MULTIMEDIATAB
 // ============================================================================
 
-const emit = defineEmits(['processing', 'completed', 'error'])
+const props = defineProps({
+  isProcessing: {
+    type: Boolean,
+    default: false
+  },
+  results: {
+    type: Object,
+    default: null
+  },
+  progress: {
+    type: Number,
+    default: 0
+  }
+})
+
+const emit = defineEmits(['process-image', 'clear-results'])
 
 // ============================================================================
 // STORES & COMPOSABLES
 // ============================================================================
 
 const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
 
 // ============================================================================
@@ -331,69 +279,38 @@ const videoElement = ref(null)
 const canvasElement = ref(null)
 
 // ============================================================================
-// ESTADO LOCAL
+// ESTADO LOCAL - ESTRUCTURA EXACTA SCRIPT.JS
 // ============================================================================
 
 const selectedImage = ref(null)
 const imagePreviewUrl = ref('')
 const imageDimensions = ref('')
 const isDragOver = ref(false)
-const isProcessing = ref(false)
 const processingStage = ref('')
-const processingProgress = ref(0)
-const result = ref(null)
-const activeResultTab = ref('description')
-const recentResults = ref([])
 const showCameraModal = ref(false)
 const canUseCamera = ref(false)
 
-// Configuración de análisis
+// Campos exactos como en script.js DOM
+const userId = ref('')
 const config = ref({
-  analysisType: 'general',
-  detailLevel: 'detailed',
-  prompt: '',
-  includeCoordinates: false,
-  extractText: false
+  analysis_type: '',  // Corresponde a script.js analysis_type option
+  prompt: ''          // Corresponde a script.js prompt option
 })
 
 // ============================================================================
 // COMPUTED
 // ============================================================================
 
-const resultTabs = computed(() => {
-  const tabs = [
-    { id: 'description', name: 'Descripción', icon: '📝' }
-  ]
-  
-  if (result.value?.extracted_text) {
-    tabs.push({ id: 'text', name: 'Texto', icon: '📄' })
-  }
-  
-  if (result.value?.objects?.length > 0) {
-    tabs.push({ id: 'objects', name: 'Objetos', icon: '🎯' })
-  }
-  
-  if (result.value?.analysis) {
-    tabs.push({ id: 'analysis', name: 'Análisis', icon: '📊' })
-  }
-  
-  if (result.value?.metadata) {
-    tabs.push({ id: 'metadata', name: 'Metadatos', icon: '📋' })
-  }
-  
-  if (result.value?.processed_image) {
-    tabs.push({ id: 'processed', name: 'Procesada', icon: '🖼️' })
-  }
-  
-  return tabs
+const canProcess = computed(() => {
+  return selectedImage.value && userId.value.trim() && !props.isProcessing && appStore.currentCompanyId
 })
 
 // ============================================================================
-// MÉTODOS DE MANEJO DE ARCHIVOS
+// MÉTODOS DE MANEJO DE ARCHIVOS - VALIDACIONES EXACTAS SCRIPT.JS
 // ============================================================================
 
 const triggerFileInput = () => {
-  if (!isProcessing.value) {
+  if (!props.isProcessing) {
     fileInput.value?.click()
   }
 }
@@ -416,21 +333,20 @@ const handleDrop = (event) => {
 }
 
 const validateAndSetImage = async (file) => {
-  // Validar tipo de archivo
+  // PRESERVAR: Validaciones exactas como script.js
   if (!file.type.startsWith('image/')) {
-    showNotification('Por favor selecciona un archivo de imagen válido', 'error')
+    showNotification('El archivo debe ser una imagen', 'error')
     return
   }
   
-  // Validar tamaño (max 20MB)
-  const maxSize = 20 * 1024 * 1024
+  // PRESERVAR: Límite de tamaño exacto como script.js
+  const maxSize = 20 * 1024 * 1024 // 20MB
   if (file.size > maxSize) {
     showNotification('La imagen es demasiado grande. Máximo 20MB', 'error')
     return
   }
   
   selectedImage.value = file
-  result.value = null // Limpiar resultado anterior
   
   // Crear preview URL
   imagePreviewUrl.value = URL.createObjectURL(file)
@@ -466,129 +382,14 @@ const clearImage = () => {
 
 const clearAll = () => {
   clearImage()
-  result.value = null
+  userId.value = ''
+  config.value.analysis_type = ''
   config.value.prompt = ''
+  emit('clear-results')
 }
 
 // ============================================================================
-// PROCESAMIENTO DE IMAGEN
-// ============================================================================
-
-const processImage = async () => {
-  if (!selectedImage.value) {
-    showNotification('Por favor selecciona una imagen', 'warning')
-    return
-  }
-  
-  isProcessing.value = true
-  processingProgress.value = 0
-  
-  try {
-    emit('processing', { 
-      message: 'Preparando imagen para análisis...', 
-      progress: 0 
-    })
-    
-    appStore.addToLog(`Starting image processing: ${selectedImage.value.name}`, 'info')
-    
-    // Crear FormData
-    const formData = new FormData()
-    formData.append('image', selectedImage.value)
-    
-    // Agregar configuración
-    formData.append('analysis_type', config.value.analysisType)
-    formData.append('detail_level', config.value.detailLevel)
-    
-    if (config.value.prompt.trim()) {
-      formData.append('prompt', config.value.prompt.trim())
-    }
-    
-    if (config.value.includeCoordinates) {
-      formData.append('include_coordinates', 'true')
-    }
-    
-    if (config.value.extractText) {
-      formData.append('extract_text', 'true')
-    }
-    
-    updateProgress('Enviando imagen al servidor...', 25)
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/multimedia/image', {
-      method: 'POST',
-      body: formData
-    })
-    
-    updateProgress('Analizando imagen...', 75)
-    
-    // Simular progreso adicional
-    await simulateProgress(75, 95, 'Finalizando análisis...')
-    
-    updateProgress('Completado', 100)
-    
-    // Guardar resultado
-    result.value = response
-    activeResultTab.value = 'description'
-    
-    // Agregar al historial
-    addToRecentResults({
-      filename: selectedImage.value.name,
-      timestamp: Date.now(),
-      status: 'success',
-      result: response,
-      thumbnail: imagePreviewUrl.value
-    })
-    
-    appStore.addToLog('Image processing completed successfully', 'info')
-    showNotification('Imagen analizada exitosamente', 'success')
-    
-    emit('completed', response)
-    
-  } catch (error) {
-    appStore.addToLog(`Image processing failed: ${error.message}`, 'error')
-    showNotification(`Error analizando imagen: ${error.message}`, 'error')
-    
-    // Agregar al historial como error
-    addToRecentResults({
-      filename: selectedImage.value.name,
-      timestamp: Date.now(),
-      status: 'error',
-      error: error.message,
-      thumbnail: imagePreviewUrl.value
-    })
-    
-    emit('error', error)
-    
-  } finally {
-    isProcessing.value = false
-    processingProgress.value = 0
-    processingStage.value = ''
-  }
-}
-
-const updateProgress = (stage, progress) => {
-  processingStage.value = stage
-  processingProgress.value = progress
-  
-  emit('processing', { 
-    message: stage, 
-    progress 
-  })
-}
-
-const simulateProgress = async (start, end, message) => {
-  const steps = 10
-  const increment = (end - start) / steps
-  const delay = 100
-  
-  for (let i = 0; i < steps; i++) {
-    await new Promise(resolve => setTimeout(resolve, delay))
-    updateProgress(message, start + (increment * (i + 1)))
-  }
-}
-
-// ============================================================================
-// CÁMARA
+// CÁMARA - FUNCIONALIDAD COMPLETA
 // ============================================================================
 
 const takePhoto = async () => {
@@ -659,6 +460,77 @@ const closeCameraModal = () => {
 }
 
 // ============================================================================
+// PROCESAMIENTO - DELEGAR AL COMPOSABLE
+// ============================================================================
+
+const processImage = async () => {
+  if (!canProcess.value) {
+    if (!appStore.currentCompanyId) {
+      showNotification('Por favor selecciona una empresa primero', 'warning')
+      return
+    }
+    if (!selectedImage.value) {
+      showNotification('Por favor selecciona una imagen', 'warning')
+      return
+    }
+    if (!userId.value.trim()) {
+      showNotification('Por favor ingresa un ID de usuario', 'warning')
+      return
+    }
+    return
+  }
+  
+  processingStage.value = 'Preparando imagen para análisis...'
+  
+  try {
+    // ESTRUCTURA EXACTA: Pasar datos como script.js
+    const options = {}
+    if (config.value.analysis_type) options.analysis_type = config.value.analysis_type
+    if (config.value.prompt.trim()) options.prompt = config.value.prompt.trim()
+    
+    // IMPORTANTE: También actualizar DOM para compatibilidad script.js
+    const userIdInput = document.getElementById('imageUserId')
+    if (userIdInput) userIdInput.value = userId.value
+    
+    // Delegar al composable via emit
+    await emit('process-image', selectedImage.value, options)
+    
+  } catch (error) {
+    showNotification(`Error procesando imagen: ${error.message}`, 'error')
+  }
+}
+
+// ============================================================================
+// EXTRACTORS - ESTRUCTURA EXACTA COMO SCRIPT.JS CORREGIDO
+// ============================================================================
+
+const getAnalysis = (results) => {
+  if (!results) return 'Sin análisis'
+  
+  // PRESERVAR: Orden exacto de campos como script.js corregido
+  return results.analysis || results.description || results.image_analysis || 'Sin análisis'
+}
+
+const getBotResponse = (results) => {
+  if (!results) return null
+  
+  // PRESERVAR: Orden exacto de campos como script.js corregido
+  return results.bot_response || results.response || results.message || null
+}
+
+const getExtractedText = (results) => {
+  return results?.extracted_text || null
+}
+
+const getCompanyId = (results) => {
+  return results?.company_id || appStore.currentCompanyId
+}
+
+const getProcessingTime = (results) => {
+  return results?.processing_time || results?.time || null
+}
+
+// ============================================================================
 // UTILIDADES
 // ============================================================================
 
@@ -672,20 +544,12 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
-const formatTime = (timestamp) => {
-  return new Date(timestamp).toLocaleString()
-}
-
 const formatJSON = (obj) => {
   try {
     return JSON.stringify(obj, null, 2)
   } catch (error) {
     return 'Error formatting JSON: ' + error.message
   }
-}
-
-const formatAnalysisKey = (key) => {
-  return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
 const copyToClipboard = async (text) => {
@@ -697,32 +561,36 @@ const copyToClipboard = async (text) => {
   }
 }
 
-const downloadDescription = () => {
-  if (!result.value?.description) return
+const downloadAnalysis = () => {
+  if (!props.results) return
   
-  const blob = new Blob([result.value.description], { type: 'text/plain' })
+  const analysis = getAnalysis(props.results)
+  const blob = new Blob([analysis], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   
   const a = document.createElement('a')
   a.href = url
-  a.download = `image_description_${selectedImage.value.name.replace(/\.[^/.]+$/, '')}.txt`
+  a.download = `image_analysis_${selectedImage.value?.name.replace(/\.[^/.]+$/, '') || 'image'}.txt`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
   
   URL.revokeObjectURL(url)
-  showNotification('Descripción descargada', 'success')
+  showNotification('Análisis descargado', 'success')
 }
 
 const downloadText = () => {
-  if (!result.value?.extracted_text) return
+  if (!props.results) return
   
-  const blob = new Blob([result.value.extracted_text], { type: 'text/plain' })
+  const extractedText = getExtractedText(props.results)
+  if (!extractedText) return
+  
+  const blob = new Blob([extractedText], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   
   const a = document.createElement('a')
   a.href = url
-  a.download = `extracted_text_${selectedImage.value.name.replace(/\.[^/.]+$/, '')}.txt`
+  a.download = `extracted_text_${selectedImage.value?.name.replace(/\.[^/.]+$/, '') || 'image'}.txt`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -731,71 +599,11 @@ const downloadText = () => {
   showNotification('Texto descargado', 'success')
 }
 
-const downloadProcessedImage = () => {
-  if (!result.value?.processed_image) return
-  
-  const a = document.createElement('a')
-  a.href = result.value.processed_image
-  a.download = `processed_${selectedImage.value.name}`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  
-  showNotification('Imagen descargada', 'success')
-}
-
-const highlightObject = (obj) => {
-  // Funcionalidad para resaltar objetos en la imagen
-  // Se puede implementar con overlays CSS
-  showNotification(`Objeto: ${obj.label} (${Math.round(obj.confidence * 100)}%)`, 'info')
-}
-
-// ============================================================================
-// HISTORIAL
-// ============================================================================
-
-const addToRecentResults = (item) => {
-  recentResults.value.unshift(item)
-  
-  // Mantener solo los últimos 5 resultados
-  if (recentResults.value.length > 5) {
-    recentResults.value.pop()
-  }
-  
-  // Guardar en localStorage si está disponible
-  try {
-    localStorage.setItem('imageProcessorRecent', JSON.stringify(recentResults.value))
-  } catch (error) {
-    // Ignorar errores de localStorage
-  }
-}
-
-const loadRecentResult = (item) => {
-  if (item.status === 'success' && item.result) {
-    result.value = item.result
-    activeResultTab.value = 'description'
-    showNotification('Resultado cargado del historial', 'info')
-  }
-}
-
-const loadRecentResults = () => {
-  try {
-    const saved = localStorage.getItem('imageProcessorRecent')
-    if (saved) {
-      recentResults.value = JSON.parse(saved)
-    }
-  } catch (error) {
-    // Ignorar errores de localStorage
-  }
-}
-
 // ============================================================================
 // LIFECYCLE
 // ============================================================================
 
 onMounted(async () => {
-  loadRecentResults()
-  
   // Verificar disponibilidad de cámara
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
     try {
@@ -823,7 +631,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* Estilos similares a AudioProcessor pero adaptados para imágenes */
 .image-processor {
   padding: 20px;
   height: 100%;
@@ -836,7 +643,7 @@ onUnmounted(() => {
 }
 
 .upload-area {
-  margin-bottom: 25px;
+  margin-bottom: 20px;
 }
 
 .image-drop-zone {
@@ -953,41 +760,31 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.analysis-config {
-  margin-bottom: 25px;
-}
-
-.analysis-config h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.config-grid {
+.form-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 15px;
+  margin-bottom: 20px;
 }
 
-.config-item {
+.form-group {
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.config-item.full-width {
+.form-group.full-width {
   grid-column: 1 / -1;
 }
 
-.config-item label {
+.form-group label {
   font-weight: 500;
   color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.config-item select,
-.config-item textarea {
+.form-input,
+.form-select,
+.form-textarea {
   padding: 8px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -995,13 +792,9 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-.config-item textarea {
+.form-textarea {
   resize: vertical;
   min-height: 80px;
-}
-
-.config-item input[type="checkbox"] {
-  margin: 0;
 }
 
 .processor-controls {
@@ -1091,36 +884,6 @@ onUnmounted(() => {
   margin-bottom: 15px;
 }
 
-.result-tabs {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 15px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  padding: 4px;
-  overflow-x: auto;
-}
-
-.result-tab {
-  flex: 1;
-  padding: 8px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: var(--transition-fast);
-  font-size: 0.9rem;
-  white-space: nowrap;
-  min-width: fit-content;
-}
-
-.result-tab.active {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
-}
-
 .result-content {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -1128,23 +891,29 @@ onUnmounted(() => {
   padding: 20px;
 }
 
-.description-text {
+.result-section {
+  margin-bottom: 20px;
+}
+
+.result-section:last-child {
+  margin-bottom: 0;
+}
+
+.result-section h5 {
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.analysis-text,
+.bot-response-text {
   background: var(--bg-secondary);
   padding: 15px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-light);
   line-height: 1.6;
   margin-bottom: 15px;
-  min-height: 100px;
+  min-height: 60px;
   white-space: pre-wrap;
-}
-
-.description-actions,
-.text-actions,
-.processed-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .extracted-text pre {
@@ -1159,80 +928,39 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.objects-grid {
+.analysis-actions,
+.text-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.technical-info {
+  border-top: 1px solid var(--border-color);
+  padding-top: 15px;
+}
+
+.info-grid {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
-.object-item {
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
-  cursor: pointer;
-  transition: var(--transition-fast);
-}
-
-.object-item:hover {
-  background: var(--bg-tertiary);
-  transform: translateY(-2px);
-}
-
-.object-label {
-  font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.object-confidence {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-  margin-bottom: 2px;
-}
-
-.object-coordinates {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.analysis-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.analysis-item {
+.info-item {
   display: flex;
   justify-content: space-between;
-  padding: 10px;
+  padding: 8px;
   background: var(--bg-secondary);
   border-radius: var(--radius-sm);
 }
 
-.analysis-item label {
+.info-label {
   font-weight: 500;
   color: var(--text-primary);
 }
 
-.metadata-content pre {
-  background: var(--bg-secondary);
-  padding: 15px;
-  border-radius: var(--radius-md);
-  overflow-x: auto;
-  font-size: 0.9rem;
-}
-
-.processed-image {
-  margin-bottom: 15px;
-  text-align: center;
-}
-
-.processed-image img {
-  max-width: 100%;
-  max-height: 400px;
-  object-fit: contain;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
+.info-value {
+  color: var(--text-secondary);
 }
 
 .camera-modal {
@@ -1300,87 +1028,30 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-.recent-results {
-  margin-top: 30px;
+details {
+  margin-top: 15px;
 }
 
-.recent-results h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.recent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.recent-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
+details summary {
   cursor: pointer;
-  transition: var(--transition-fast);
-}
-
-.recent-item:hover {
-  background: var(--bg-tertiary);
-  transform: translateX(4px);
-}
-
-.recent-thumbnail {
-  width: 50px;
-  height: 50px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.recent-thumbnail img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.no-thumbnail {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-tertiary);
-  font-size: 1.5rem;
-}
-
-.recent-info {
-  flex: 1;
-}
-
-.recent-name {
   font-weight: 500;
   color: var(--text-primary);
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
 }
 
-.recent-time {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-}
-
-.recent-status {
-  font-size: 1.1rem;
-}
-
-.no-analysis {
-  text-align: center;
-  color: var(--text-secondary);
-  padding: 40px;
+details pre {
+  background: var(--bg-secondary);
+  padding: 15px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 0.9rem;
+  margin-top: 10px;
 }
 
 @media (max-width: 768px) {
-  .config-grid {
+  .form-fields {
     grid-template-columns: 1fr;
   }
   
@@ -1388,18 +1059,18 @@ onUnmounted(() => {
     flex-direction: column;
   }
   
-  .result-tabs {
+  .analysis-actions,
+  .text-actions {
     flex-direction: column;
   }
   
-  .description-actions,
-  .text-actions,
-  .processed-actions {
-    flex-direction: column;
-  }
-  
-  .objects-grid {
+  .info-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .info-item {
+    flex-direction: column;
+    gap: 4px;
   }
   
   .camera-content {
