@@ -7,62 +7,58 @@
       <div :class="['status-indicator', recordingStatus]">
         <span class="status-icon">{{ statusIcon }}</span>
         <span class="status-text">{{ statusText }}</span>
-        <span v-if="isRecording" class="recording-duration">{{ formatDuration(recordingDuration) }}</span>
+        <span v-if="isRecording" class="recording-duration">{{ formatDuration(duration) }}</span>
       </div>
     </div>
 
-    <!-- Visualizador de audio -->
-    <div class="audio-visualizer" ref="visualizerContainer">
-      <canvas 
-        ref="visualizerCanvas"
-        :width="visualizerWidth"
-        :height="visualizerHeight"
-      ></canvas>
+    <!-- Visualizador simple de audio -->
+    <div class="audio-visualizer">
+      <div v-if="isRecording" class="recording-animation">
+        <div class="pulse-dot"></div>
+        <div class="sound-bars">
+          <div 
+            v-for="bar in 8" 
+            :key="bar"
+            :class="['sound-bar', { active: isRecording }]"
+            :style="{ animationDelay: bar * 0.1 + 's' }"
+          ></div>
+        </div>
+      </div>
       
-      <div v-if="!isRecording && !hasRecording" class="visualizer-placeholder">
+      <div v-else-if="results" class="recording-complete">
+        <div class="complete-icon">✅</div>
+        <p>Grabación completada ({{ formatDuration(results.duration || 0) }})</p>
+      </div>
+      
+      <div v-else class="visualizer-placeholder">
         <div class="placeholder-icon">🎵</div>
-        <p>Presiona grabar para ver la forma de onda</p>
+        <p>Presiona grabar para iniciar</p>
       </div>
     </div>
 
-    <!-- Controles principales -->
+    <!-- Controles principales - EXACTOS A SCRIPT.JS -->
     <div class="recorder-controls">
       <button 
+        id="recordVoiceButton"
         class="btn btn-record"
-        :class="{ recording: isRecording }"
+        :class="{ recording: isRecording, 'btn-primary': !isRecording, 'btn-danger': isRecording }"
         @click="toggleRecording"
         :disabled="!isSupported"
       >
-        <span v-if="isRecording">⏹️ Detener</span>
-        <span v-else>🎙️ Grabar</span>
+        <span v-if="isRecording">⏹️ Detener{{ duration > 0 ? ` (${formatDuration(duration)})` : '' }}</span>
+        <span v-else>🎤 Grabar Voz</span>
       </button>
       
       <button 
         class="btn btn-secondary"
-        @click="pauseRecording"
-        :disabled="!isRecording || isPaused"
-      >
-        ⏸️ Pausar
-      </button>
-      
-      <button 
-        class="btn btn-secondary"
-        @click="resumeRecording"
-        :disabled="!isRecording || !isPaused"
-      >
-        ▶️ Continuar
-      </button>
-      
-      <button 
-        class="btn btn-danger"
         @click="clearRecording"
-        :disabled="isRecording || !hasRecording"
+        :disabled="isRecording || !results"
       >
         🗑️ Limpiar
       </button>
     </div>
 
-    <!-- Configuración de grabación -->
+    <!-- Configuración simple -->
     <div class="recording-config">
       <h4>⚙️ Configuración</h4>
       
@@ -70,33 +66,9 @@
         <div class="config-item">
           <label for="audioQuality">Calidad de audio:</label>
           <select id="audioQuality" v-model="config.quality" :disabled="isRecording">
-            <option value="low">Baja (8 kHz)</option>
-            <option value="medium">Media (16 kHz)</option>
+            <option value="standard">Estándar (16 kHz)</option>
             <option value="high">Alta (44.1 kHz)</option>
             <option value="ultra">Ultra (48 kHz)</option>
-          </select>
-        </div>
-        
-        <div class="config-item">
-          <label for="audioFormat">Formato:</label>
-          <select id="audioFormat" v-model="config.format" :disabled="isRecording">
-            <option value="webm">WebM</option>
-            <option value="mp4">MP4</option>
-            <option value="wav">WAV</option>
-          </select>
-        </div>
-        
-        <div class="config-item">
-          <label for="inputSource">Fuente de entrada:</label>
-          <select id="inputSource" v-model="config.inputSource" :disabled="isRecording">
-            <option value="default">Micrófono por defecto</option>
-            <option 
-              v-for="device in audioDevices"
-              :key="device.deviceId"
-              :value="device.deviceId"
-            >
-              {{ device.label || `Dispositivo ${device.deviceId.slice(0, 8)}...` }}
-            </option>
           </select>
         </div>
         
@@ -126,124 +98,56 @@
           <label>
             <input 
               type="checkbox" 
-              v-model="config.autoGain"
+              v-model="config.autoProcess"
               :disabled="isRecording"
             />
-            Ganancia automática
+            Procesamiento automático
           </label>
         </div>
       </div>
     </div>
 
-    <!-- Control de volumen -->
-    <div class="volume-control">
-      <h4>🔊 Control de Volumen</h4>
-      <div class="volume-meter">
-        <div class="volume-label">Nivel de entrada:</div>
-        <div class="volume-bar">
-          <div 
-            class="volume-fill"
-            :style="{ width: volumeLevel + '%' }"
-            :class="{ 'volume-high': volumeLevel > 80, 'volume-medium': volumeLevel > 50 }"
-          ></div>
+    <!-- Reproductor de grabación - COMO SCRIPT.JS -->
+    <div v-if="results" class="recording-player">
+      <h4>🎵 Grabación Completada</h4>
+      
+      <div class="player-info">
+        <div class="recording-details">
+          <div class="detail-item">
+            <span class="detail-label">Duración:</span>
+            <span class="detail-value">{{ formatDuration(results.duration || 0) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Tamaño:</span>
+            <span class="detail-value">{{ formatFileSize(results.blob?.size || 0) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Formato:</span>
+            <span class="detail-value">WebM</span>
+          </div>
         </div>
-        <div class="volume-value">{{ Math.round(volumeLevel) }}%</div>
       </div>
-    </div>
-
-    <!-- Reproductor de grabación -->
-    <div v-if="hasRecording" class="recording-player">
-      <h4>🎵 Reproducir Grabación</h4>
       
       <div class="player-controls">
-        <button @click="togglePlayback" class="btn btn-primary">
-          <span v-if="isPlaying">⏸️ Pausar</span>
-          <span v-else>▶️ Reproducir</span>
-        </button>
-        
-        <div class="playback-time">
-          {{ formatDuration(currentTime) }} / {{ formatDuration(totalDuration) }}
-        </div>
+        <audio v-if="results.url" :src="results.url" controls></audio>
       </div>
       
-      <div class="progress-bar" @click="seekTo($event)">
-        <div 
-          class="progress-fill"
-          :style="{ width: playbackProgress + '%' }"
-        ></div>
-      </div>
-      
-      <audio 
-        ref="audioPlayer"
-        @timeupdate="updatePlaybackTime"
-        @ended="onPlaybackEnded"
-        @loadedmetadata="onAudioLoaded"
-      ></audio>
-    </div>
-
-    <!-- Acciones de archivo -->
-    <div v-if="hasRecording" class="file-actions">
-      <h4>💾 Acciones</h4>
-      
-      <div class="action-buttons">
+      <div class="player-actions">
         <button @click="downloadRecording" class="btn btn-primary">
           💾 Descargar
         </button>
         
-        <button @click="processWithAPI" class="btn btn-info" :disabled="isProcessing">
-          <span v-if="isProcessing">⏳ Procesando...</span>
-          <span v-else>🔄 Procesar con IA</span>
+        <button 
+          @click="processRecording" 
+          class="btn btn-info"
+          :disabled="!appStore.currentCompanyId"
+        >
+          🔄 Procesar con IA
         </button>
         
         <button @click="shareRecording" class="btn btn-secondary">
           📤 Compartir
         </button>
-        
-        <button @click="saveToLibrary" class="btn btn-success">
-          📚 Guardar en Biblioteca
-        </button>
-      </div>
-    </div>
-
-    <!-- Biblioteca de grabaciones -->
-    <div v-if="recordings.length > 0" class="recordings-library">
-      <h4>📚 Biblioteca de Grabaciones</h4>
-      
-      <div class="library-controls">
-        <button @click="clearLibrary" class="btn btn-sm btn-secondary">
-          🗑️ Limpiar Biblioteca
-        </button>
-        <button @click="exportLibrary" class="btn btn-sm btn-primary">
-          📤 Exportar Todo
-        </button>
-      </div>
-      
-      <div class="recordings-list">
-        <div 
-          v-for="(recording, index) in recordings"
-          :key="recording.id"
-          class="recording-item"
-        >
-          <div class="recording-info">
-            <div class="recording-name">{{ recording.name }}</div>
-            <div class="recording-details">
-              {{ formatDuration(recording.duration) }} • {{ formatFileSize(recording.size) }}
-            </div>
-            <div class="recording-date">{{ formatDateTime(recording.timestamp) }}</div>
-          </div>
-          
-          <div class="recording-actions">
-            <button @click="playLibraryRecording(recording)" class="btn btn-xs">
-              ▶️
-            </button>
-            <button @click="downloadLibraryRecording(recording)" class="btn btn-xs">
-              💾
-            </button>
-            <button @click="deleteLibraryRecording(recording.id)" class="btn btn-xs btn-danger">
-              🗑️
-            </button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -265,76 +169,50 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, defineProps, defineEmits } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
 
 // ============================================================================
-// PROPS & EMITS
+// PROPS & EMITS - INTERFACE CON MULTIMEDIATAB
 // ============================================================================
 
-const emit = defineEmits(['recording', 'stopped', 'error'])
+const props = defineProps({
+  isRecording: {
+    type: Boolean,
+    default: false
+  },
+  duration: {
+    type: Number,
+    default: 0
+  },
+  results: {
+    type: Object,
+    default: null
+  }
+})
+
+const emit = defineEmits(['toggle-recording', 'clear-results'])
 
 // ============================================================================
 // STORES & COMPOSABLES
 // ============================================================================
 
 const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
 
 // ============================================================================
-// REFS
-// ============================================================================
-
-const visualizerContainer = ref(null)
-const visualizerCanvas = ref(null)
-const audioPlayer = ref(null)
-
-// ============================================================================
-// ESTADO LOCAL
+// ESTADO LOCAL - SIMPLE COMO SCRIPT.JS
 // ============================================================================
 
 const isSupported = ref(false)
-const isRecording = ref(false)
-const isPaused = ref(false)
-const hasRecording = ref(false)
-const isPlaying = ref(false)
-const isProcessing = ref(false)
 
-const recordingDuration = ref(0)
-const currentTime = ref(0)
-const totalDuration = ref(0)
-const volumeLevel = ref(0)
-
-const audioDevices = ref([])
-const recordings = ref([])
-
-// Stream y recording objects
-const mediaStream = ref(null)
-const mediaRecorder = ref(null)
-const audioContext = ref(null)
-const analyser = ref(null)
-const currentRecording = ref(null)
-
-// Timers
-const recordingTimer = ref(null)
-const volumeTimer = ref(null)
-const visualizerAnimationId = ref(null)
-
-// Visualizer
-const visualizerWidth = ref(400)
-const visualizerHeight = ref(120)
-
-// Configuración de grabación
+// Configuración simple
 const config = ref({
   quality: 'high',
-  format: 'webm',
-  inputSource: 'default',
   echoCancellation: true,
   noiseSuppression: true,
-  autoGain: true
+  autoProcess: true
 })
 
 // ============================================================================
@@ -343,8 +221,8 @@ const config = ref({
 
 const recordingStatus = computed(() => {
   if (!isSupported.value) return 'not-supported'
-  if (isRecording.value && isPaused.value) return 'paused'
-  if (isRecording.value) return 'recording'
+  if (props.isRecording) return 'recording'
+  if (props.results) return 'completed'
   return 'ready'
 })
 
@@ -352,7 +230,7 @@ const statusIcon = computed(() => {
   switch (recordingStatus.value) {
     case 'not-supported': return '⚠️'
     case 'recording': return '🔴'
-    case 'paused': return '⏸️'
+    case 'completed': return '✅'
     case 'ready': return '🎙️'
     default: return '❓'
   }
@@ -362,21 +240,15 @@ const statusText = computed(() => {
   switch (recordingStatus.value) {
     case 'not-supported': return 'No compatible'
     case 'recording': return 'Grabando...'
-    case 'paused': return 'Pausado'
+    case 'completed': return 'Completado'
     case 'ready': return 'Listo para grabar'
     default: return 'Estado desconocido'
   }
 })
 
-const playbackProgress = computed(() => {
-  if (totalDuration.value === 0) return 0
-  return (currentTime.value / totalDuration.value) * 100
-})
-
 const qualitySettings = computed(() => {
   const settings = {
-    low: { sampleRate: 8000, bitrate: 32000 },
-    medium: { sampleRate: 16000, bitrate: 64000 },
+    standard: { sampleRate: 16000, bitrate: 64000 },
     high: { sampleRate: 44100, bitrate: 128000 },
     ultra: { sampleRate: 48000, bitrate: 192000 }
   }
@@ -385,421 +257,49 @@ const qualitySettings = computed(() => {
 })
 
 // ============================================================================
-// MÉTODOS PRINCIPALES
+// MÉTODOS PRINCIPALES - DELEGAR AL COMPOSABLE
 // ============================================================================
 
 /**
- * Toggle grabación - MIGRADO: toggleVoiceRecording() de script.js
- * PRESERVAR: Comportamiento exacto de la función original
+ * Toggle grabación - DELEGAR AL COMPOSABLE COMO SCRIPT.JS
  */
 const toggleRecording = async () => {
-  if (isRecording.value) {
-    stopRecording()
-  } else {
-    await startRecording()
-  }
-}
-
-/**
- * Inicia la grabación de voz
- */
-const startRecording = async () => {
   if (!isSupported.value) {
     showNotification('Grabación de voz no soportada', 'error')
     return
   }
   
   try {
-    appStore.addToLog('Starting voice recording', 'info')
-    emit('recording', { message: 'Iniciando grabación...', progress: 0 })
+    appStore.addToLog(`Voice recording toggle - currently recording: ${props.isRecording}`, 'info')
     
-    // Obtener permisos y stream de audio
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: config.value.inputSource !== 'default' ? config.value.inputSource : undefined,
-        sampleRate: qualitySettings.value.sampleRate,
-        echoCancellation: config.value.echoCancellation,
-        noiseSuppression: config.value.noiseSuppression,
-        autoGainControl: config.value.autoGain
-      }
+    // Delegar al composable via emit
+    await emit('toggle-recording', {
+      quality: config.value.quality,
+      echoCancellation: config.value.echoCancellation,
+      noiseSuppression: config.value.noiseSuppression,
+      autoProcess: config.value.autoProcess
     })
     
-    mediaStream.value = stream
-    
-    // Configurar AudioContext para análisis y visualización
-    setupAudioAnalysis(stream)
-    
-    // Configurar MediaRecorder
-    setupMediaRecorder(stream)
-    
-    // Iniciar grabación
-    mediaRecorder.value.start()
-    isRecording.value = true
-    isPaused.value = false
-    recordingDuration.value = 0
-    hasRecording.value = false
-    
-    // Iniciar timers
-    startRecordingTimer()
-    startVolumeMonitoring()
-    startVisualization()
-    
-    appStore.addToLog('Voice recording started successfully', 'info')
-    showNotification('Grabación iniciada', 'success')
-    
-    emit('recording', { message: 'Grabación en progreso...', progress: 50 })
-    
   } catch (error) {
-    appStore.addToLog(`Voice recording failed: ${error.message}`, 'error')
-    showNotification(`Error iniciando grabación: ${error.message}`, 'error')
-    emit('error', error)
-    
-    // Limpiar recursos
-    cleanupRecording()
+    showNotification(`Error en grabación: ${error.message}`, 'error')
   }
 }
 
-/**
- * Detiene la grabación
- */
-const stopRecording = () => {
-  if (!isRecording.value) return
-  
-  try {
-    appStore.addToLog('Stopping voice recording', 'info')
-    
-    // Detener MediaRecorder
-    if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
-      mediaRecorder.value.stop()
-    }
-    
-    // Limpiar recursos
-    cleanupRecording()
-    
-    isRecording.value = false
-    isPaused.value = false
-    
-    appStore.addToLog('Voice recording stopped', 'info')
-    showNotification('Grabación detenida', 'info')
-    
-    emit('stopped', { duration: recordingDuration.value })
-    
-  } catch (error) {
-    appStore.addToLog(`Error stopping recording: ${error.message}`, 'error')
-    showNotification(`Error deteniendo grabación: ${error.message}`, 'error')
-  }
-}
-
-/**
- * Pausa la grabación
- */
-const pauseRecording = () => {
-  if (!isRecording.value || isPaused.value) return
-  
-  try {
-    if (mediaRecorder.value && mediaRecorder.value.state === 'recording') {
-      mediaRecorder.value.pause()
-      isPaused.value = true
-      
-      // Pausar timers
-      if (recordingTimer.value) {
-        clearInterval(recordingTimer.value)
-        recordingTimer.value = null
-      }
-      
-      showNotification('Grabación pausada', 'info')
-    }
-  } catch (error) {
-    showNotification('Error pausando grabación', 'error')
-  }
-}
-
-/**
- * Reanuda la grabación
- */
-const resumeRecording = () => {
-  if (!isRecording.value || !isPaused.value) return
-  
-  try {
-    if (mediaRecorder.value && mediaRecorder.value.state === 'paused') {
-      mediaRecorder.value.resume()
-      isPaused.value = false
-      
-      // Reanudar timer
-      startRecordingTimer()
-      
-      showNotification('Grabación reanudada', 'info')
-    }
-  } catch (error) {
-    showNotification('Error reanudando grabación', 'error')
-  }
-}
-
-/**
- * Limpia la grabación actual
- */
 const clearRecording = () => {
-  if (isRecording.value) return
-  
-  try {
-    // Limpiar audio player
-    if (audioPlayer.value) {
-      audioPlayer.value.src = ''
-      audioPlayer.value.load()
-    }
-    
-    // Limpiar recording actual
-    if (currentRecording.value?.url) {
-      URL.revokeObjectURL(currentRecording.value.url)
-    }
-    
-    currentRecording.value = null
-    hasRecording.value = false
-    isPlaying.value = false
-    currentTime.value = 0
-    totalDuration.value = 0
-    
-    // Limpiar canvas
-    clearVisualizer()
-    
-    showNotification('Grabación limpiada', 'info')
-    
-  } catch (error) {
-    showNotification('Error limpiando grabación', 'error')
-  }
+  emit('clear-results')
 }
 
 // ============================================================================
-// CONFIGURACIÓN DE AUDIO
-// ============================================================================
-
-const setupAudioAnalysis = (stream) => {
-  try {
-    audioContext.value = new (window.AudioContext || window.webkitAudioContext)()
-    analyser.value = audioContext.value.createAnalyser()
-    
-    const source = audioContext.value.createMediaStreamSource(stream)
-    source.connect(analyser.value)
-    
-    analyser.value.fftSize = 256
-    analyser.value.smoothingTimeConstant = 0.8
-    
-  } catch (error) {
-    console.warn('Error setting up audio analysis:', error)
-  }
-}
-
-const setupMediaRecorder = (stream) => {
-  try {
-    // Determinar formato MIME
-    const mimeTypes = [
-      `audio/webm;codecs=opus`,
-      `audio/webm`,
-      `audio/mp4`,
-      `audio/wav`
-    ]
-    
-    let selectedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type))
-    
-    if (!selectedMimeType) {
-      throw new Error('No hay formatos de audio soportados')
-    }
-    
-    mediaRecorder.value = new MediaRecorder(stream, {
-      mimeType: selectedMimeType,
-      audioBitsPerSecond: qualitySettings.value.bitrate
-    })
-    
-    const chunks = []
-    
-    mediaRecorder.value.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        chunks.push(event.data)
-      }
-    }
-    
-    mediaRecorder.value.onstop = () => {
-      const blob = new Blob(chunks, { type: selectedMimeType })
-      const url = URL.createObjectURL(blob)
-      
-      currentRecording.value = {
-        id: `recording_${Date.now()}`,
-        name: `voice_${new Date().toISOString().replace(/[:.]/g, '-')}.${getFileExtension(selectedMimeType)}`,
-        blob,
-        url,
-        size: blob.size,
-        duration: recordingDuration.value,
-        timestamp: Date.now(),
-        mimeType: selectedMimeType
-      }
-      
-      // Configurar audio player
-      if (audioPlayer.value) {
-        audioPlayer.value.src = url
-        audioPlayer.value.load()
-      }
-      
-      hasRecording.value = true
-      chunks.length = 0 // Limpiar chunks
-    }
-    
-  } catch (error) {
-    throw new Error(`Error configurando MediaRecorder: ${error.message}`)
-  }
-}
-
-// ============================================================================
-// TIMERS Y MONITOREO
-// ============================================================================
-
-const startRecordingTimer = () => {
-  recordingTimer.value = setInterval(() => {
-    recordingDuration.value += 1
-  }, 1000)
-}
-
-const startVolumeMonitoring = () => {
-  if (!analyser.value) return
-  
-  const dataArray = new Uint8Array(analyser.value.frequencyBinCount)
-  
-  const updateVolume = () => {
-    if (!analyser.value || !isRecording.value) return
-    
-    analyser.value.getByteFrequencyData(dataArray)
-    
-    // Calcular nivel de volumen promedio
-    const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
-    volumeLevel.value = (average / 255) * 100
-    
-    volumeTimer.value = requestAnimationFrame(updateVolume)
-  }
-  
-  updateVolume()
-}
-
-const startVisualization = () => {
-  if (!analyser.value || !visualizerCanvas.value) return
-  
-  const canvas = visualizerCanvas.value
-  const ctx = canvas.getContext('2d')
-  const dataArray = new Uint8Array(analyser.value.frequencyBinCount)
-  
-  const draw = () => {
-    if (!analyser.value || !isRecording.value) return
-    
-    analyser.value.getByteFrequencyData(dataArray)
-    
-    // Limpiar canvas
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    
-    // Dibujar barras de frecuencia
-    const barWidth = canvas.width / dataArray.length
-    let x = 0
-    
-    for (let i = 0; i < dataArray.length; i++) {
-      const barHeight = (dataArray[i] / 255) * canvas.height
-      
-      // Gradiente de color basado en frecuencia
-      const hue = (i / dataArray.length) * 360
-      ctx.fillStyle = `hsl(${hue}, 70%, 60%)`
-      
-      ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight)
-      x += barWidth
-    }
-    
-    visualizerAnimationId.value = requestAnimationFrame(draw)
-  }
-  
-  draw()
-}
-
-const cleanupRecording = () => {
-  // Detener stream
-  if (mediaStream.value) {
-    mediaStream.value.getTracks().forEach(track => track.stop())
-    mediaStream.value = null
-  }
-  
-  // Limpiar AudioContext
-  if (audioContext.value) {
-    audioContext.value.close()
-    audioContext.value = null
-  }
-  
-  // Limpiar timers
-  if (recordingTimer.value) {
-    clearInterval(recordingTimer.value)
-    recordingTimer.value = null
-  }
-  
-  if (volumeTimer.value) {
-    cancelAnimationFrame(volumeTimer.value)
-    volumeTimer.value = null
-  }
-  
-  if (visualizerAnimationId.value) {
-    cancelAnimationFrame(visualizerAnimationId.value)
-    visualizerAnimationId.value = null
-  }
-  
-  volumeLevel.value = 0
-}
-
-// ============================================================================
-// REPRODUCCIÓN
-// ============================================================================
-
-const togglePlayback = () => {
-  if (!audioPlayer.value || !hasRecording.value) return
-  
-  if (isPlaying.value) {
-    audioPlayer.value.pause()
-  } else {
-    audioPlayer.value.play()
-  }
-}
-
-const seekTo = (event) => {
-  if (!audioPlayer.value || totalDuration.value === 0) return
-  
-  const rect = event.currentTarget.getBoundingClientRect()
-  const percent = (event.clientX - rect.left) / rect.width
-  const newTime = percent * totalDuration.value
-  
-  audioPlayer.value.currentTime = newTime
-}
-
-const updatePlaybackTime = () => {
-  if (audioPlayer.value) {
-    currentTime.value = audioPlayer.value.currentTime
-    isPlaying.value = !audioPlayer.value.paused
-  }
-}
-
-const onPlaybackEnded = () => {
-  isPlaying.value = false
-  currentTime.value = 0
-}
-
-const onAudioLoaded = () => {
-  if (audioPlayer.value) {
-    totalDuration.value = audioPlayer.value.duration || 0
-  }
-}
-
-// ============================================================================
-// ACCIONES DE ARCHIVO
+// ACCIONES DE ARCHIVO - COMO SCRIPT.JS
 // ============================================================================
 
 const downloadRecording = () => {
-  if (!currentRecording.value) return
+  if (!props.results?.url) return
   
   try {
     const a = document.createElement('a')
-    a.href = currentRecording.value.url
-    a.download = currentRecording.value.name
+    a.href = props.results.url
+    a.download = `voice_recording_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -810,41 +310,43 @@ const downloadRecording = () => {
   }
 }
 
-const processWithAPI = async () => {
-  if (!currentRecording.value) return
+const processRecording = async () => {
+  if (!props.results?.blob) return
   
-  isProcessing.value = true
+  if (!appStore.currentCompanyId) {
+    showNotification('Por favor selecciona una empresa primero', 'warning')
+    return
+  }
   
   try {
-    const formData = new FormData()
-    formData.append('audio', currentRecording.value.blob, currentRecording.value.name)
+    // Crear archivo para procesamiento - COMO SCRIPT.JS
+    const file = new File(
+      [props.results.blob], 
+      `voice_recording_${Date.now()}.webm`, 
+      { type: 'audio/webm' }
+    )
     
-    const response = await apiRequest('/api/multimedia/audio', {
-      method: 'POST',
-      body: formData
-    })
+    // Esto debería delegar al AudioProcessor o directamente al composable
+    // Por ahora, mostrar notificación
+    showNotification('Iniciando procesamiento de grabación...', 'info')
     
-    showNotification('Audio procesado exitosamente', 'success')
-    
-    // Mostrar resultados (aquí podrías abrir un modal o navegar a otra vista)
-    console.log('API Response:', response)
+    // TODO: Integrar con processAudio del composable
+    appStore.addToLog('Voice recording processing requested', 'info')
     
   } catch (error) {
-    showNotification(`Error procesando audio: ${error.message}`, 'error')
-  } finally {
-    isProcessing.value = false
+    showNotification(`Error procesando grabación: ${error.message}`, 'error')
   }
 }
 
 const shareRecording = async () => {
-  if (!currentRecording.value) return
+  if (!props.results?.blob) return
   
   try {
     if (navigator.share && navigator.canShare) {
       const shareData = {
-        title: currentRecording.value.name,
-        files: [new File([currentRecording.value.blob], currentRecording.value.name, { 
-          type: currentRecording.value.mimeType 
+        title: 'Grabación de Voz',
+        files: [new File([props.results.blob], 'voice_recording.webm', { 
+          type: 'audio/webm' 
         })]
       }
       
@@ -858,7 +360,7 @@ const shareRecording = async () => {
     // Fallback: copiar al portapapeles
     await navigator.clipboard.write([
       new ClipboardItem({
-        [currentRecording.value.mimeType]: currentRecording.value.blob
+        'audio/webm': props.results.blob
       })
     ])
     
@@ -869,87 +371,14 @@ const shareRecording = async () => {
   }
 }
 
-const saveToLibrary = () => {
-  if (!currentRecording.value) return
-  
+const requestPermissions = async () => {
   try {
-    recordings.value.unshift({ ...currentRecording.value })
-    
-    // Guardar en localStorage si está disponible
-    try {
-      const recordingsData = recordings.value.map(r => ({
-        ...r,
-        url: undefined, // No guardar URLs
-        blob: undefined // No guardar blobs en localStorage
-      }))
-      localStorage.setItem('voiceRecorderLibrary', JSON.stringify(recordingsData))
-    } catch (error) {
-      // Ignorar errores de localStorage
-    }
-    
-    showNotification('Grabación guardada en biblioteca', 'success')
-    
+    await navigator.mediaDevices.getUserMedia({ audio: true })
+    checkSupport()
+    showNotification('Permisos concedidos', 'success')
   } catch (error) {
-    showNotification('Error guardando en biblioteca', 'error')
+    showNotification('Permisos denegados', 'error')
   }
-}
-
-// ============================================================================
-// GESTIÓN DE BIBLIOTECA
-// ============================================================================
-
-const playLibraryRecording = (recording) => {
-  if (audioPlayer.value && recording.url) {
-    audioPlayer.value.src = recording.url
-    audioPlayer.value.load()
-    audioPlayer.value.play()
-  }
-}
-
-const downloadLibraryRecording = (recording) => {
-  if (recording.url) {
-    const a = document.createElement('a')
-    a.href = recording.url
-    a.download = recording.name
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-  }
-}
-
-const deleteLibraryRecording = (recordingId) => {
-  const index = recordings.value.findIndex(r => r.id === recordingId)
-  if (index !== -1) {
-    const recording = recordings.value[index]
-    if (recording.url) {
-      URL.revokeObjectURL(recording.url)
-    }
-    recordings.value.splice(index, 1)
-    showNotification('Grabación eliminada de biblioteca', 'info')
-  }
-}
-
-const clearLibrary = () => {
-  recordings.value.forEach(recording => {
-    if (recording.url) {
-      URL.revokeObjectURL(recording.url)
-    }
-  })
-  recordings.value = []
-  
-  try {
-    localStorage.removeItem('voiceRecorderLibrary')
-  } catch (error) {
-    // Ignorar errores
-  }
-  
-  showNotification('Biblioteca limpiada', 'info')
-}
-
-const exportLibrary = () => {
-  recordings.value.forEach(recording => {
-    setTimeout(() => downloadLibraryRecording(recording), 100)
-  })
 }
 
 // ============================================================================
@@ -957,18 +386,9 @@ const exportLibrary = () => {
 // ============================================================================
 
 const formatDuration = (seconds) => {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
+  const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
-  
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`
-}
-
-const formatDateTime = (timestamp) => {
-  return new Date(timestamp).toLocaleString()
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
 const formatFileSize = (bytes) => {
@@ -981,39 +401,6 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
-const getFileExtension = (mimeType) => {
-  if (mimeType.includes('webm')) return 'webm'
-  if (mimeType.includes('mp4')) return 'm4a'
-  if (mimeType.includes('wav')) return 'wav'
-  return 'audio'
-}
-
-const clearVisualizer = () => {
-  if (visualizerCanvas.value) {
-    const ctx = visualizerCanvas.value.getContext('2d')
-    ctx.clearRect(0, 0, visualizerCanvas.value.width, visualizerCanvas.value.height)
-  }
-}
-
-const requestPermissions = async () => {
-  try {
-    await navigator.mediaDevices.getUserMedia({ audio: true })
-    await checkSupport()
-    showNotification('Permisos concedidos', 'success')
-  } catch (error) {
-    showNotification('Permisos denegados', 'error')
-  }
-}
-
-const loadAudioDevices = async () => {
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices()
-    audioDevices.value = devices.filter(device => device.kind === 'audioinput')
-  } catch (error) {
-    console.warn('Error loading audio devices:', error)
-  }
-}
-
 const checkSupport = async () => {
   try {
     // Verificar APIs necesarias
@@ -1022,10 +409,6 @@ const checkSupport = async () => {
       navigator.mediaDevices.getUserMedia &&
       window.MediaRecorder
     )
-    
-    if (isSupported.value) {
-      await loadAudioDevices()
-    }
     
   } catch (error) {
     isSupported.value = false
@@ -1039,36 +422,11 @@ const checkSupport = async () => {
 
 onMounted(async () => {
   await checkSupport()
-  
-  // Configurar tamaño del visualizador
-  await nextTick()
-  if (visualizerContainer.value) {
-    visualizerWidth.value = visualizerContainer.value.clientWidth
-  }
-  
   appStore.addToLog('VoiceRecorder component mounted', 'info')
-  
-  // EXPONER FUNCIÓN GLOBAL PARA COMPATIBILIDAD
-  window.toggleVoiceRecording = toggleRecording
 })
 
 onUnmounted(() => {
-  // Limpiar recursos
-  cleanupRecording()
-  clearRecording()
-  clearLibrary()
-  
-  // Limpiar función global
-  if (typeof window !== 'undefined') {
-    delete window.toggleVoiceRecording
-  }
-  
   appStore.addToLog('VoiceRecorder component unmounted', 'info')
-})
-
-// Watchers
-watch(() => config.value.quality, () => {
-  appStore.addToLog(`Voice recording quality changed to: ${config.value.quality}`, 'info')
 })
 </script>
 
@@ -1107,18 +465,24 @@ watch(() => config.value.quality, () => {
   background: rgba(245, 101, 101, 0.1);
   color: var(--error-color);
   border: 1px solid var(--error-color);
+  animation: pulse 1.5s infinite;
 }
 
-.status-indicator.paused {
-  background: rgba(237, 137, 54, 0.1);
-  color: var(--warning-color);
-  border: 1px solid var(--warning-color);
+.status-indicator.completed {
+  background: rgba(72, 187, 120, 0.1);
+  color: var(--success-color);
+  border: 1px solid var(--success-color);
 }
 
 .status-indicator.not-supported {
   background: rgba(160, 174, 192, 0.1);
   color: var(--text-muted);
   border: 1px solid var(--text-muted);
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
 }
 
 .status-icon {
@@ -1140,30 +504,88 @@ watch(() => config.value.quality, () => {
   border: 1px solid var(--border-color);
   height: 120px;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.audio-visualizer canvas {
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(45deg, #1a1a2e, #16213e);
+.recording-animation {
+  display: flex;
+  align-items: center;
+  gap: 20px;
 }
 
-.visualizer-placeholder {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+.pulse-dot {
+  width: 20px;
+  height: 20px;
+  background: var(--error-color);
+  border-radius: 50%;
+  animation: pulse-dot 1s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { 
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% { 
+    transform: scale(1.5);
+    opacity: 0.7;
+  }
+}
+
+.sound-bars {
+  display: flex;
+  gap: 4px;
+  align-items: end;
+  height: 40px;
+}
+
+.sound-bar {
+  width: 4px;
+  height: 10px;
+  background: var(--primary-color);
+  border-radius: 2px;
+  opacity: 0.3;
+  transition: all 0.2s ease;
+}
+
+.sound-bar.active {
+  animation: sound-bar 0.8s infinite;
+}
+
+@keyframes sound-bar {
+  0%, 100% { 
+    height: 10px;
+    opacity: 0.3;
+  }
+  50% { 
+    height: 30px;
+    opacity: 1;
+  }
+}
+
+.recording-complete {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
+}
+
+.complete-icon {
+  font-size: 2rem;
+}
+
+.visualizer-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   color: var(--text-secondary);
 }
 
 .placeholder-icon {
   font-size: 2rem;
-  margin-bottom: 10px;
   opacity: 0.6;
 }
 
@@ -1171,7 +593,6 @@ watch(() => config.value.quality, () => {
   display: flex;
   gap: 10px;
   margin-bottom: 25px;
-  flex-wrap: wrap;
   justify-content: center;
 }
 
@@ -1188,20 +609,12 @@ watch(() => config.value.quality, () => {
 }
 
 .btn-record {
-  background: var(--primary-color);
-  color: white;
   font-size: 1.1rem;
   padding: 12px 20px;
 }
 
 .btn-record.recording {
-  background: var(--error-color);
   animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
 }
 
 .btn-primary {
@@ -1219,24 +632,9 @@ watch(() => config.value.quality, () => {
   color: white;
 }
 
-.btn-success {
-  background: var(--success-color);
-  color: white;
-}
-
 .btn-danger {
   background: var(--error-color);
   color: white;
-}
-
-.btn-xs {
-  padding: 4px 8px;
-  font-size: 0.8rem;
-}
-
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 0.9rem;
 }
 
 .btn:hover:not(:disabled) {
@@ -1290,58 +688,6 @@ watch(() => config.value.quality, () => {
   margin: 0;
 }
 
-.volume-control {
-  margin-bottom: 25px;
-}
-
-.volume-control h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.volume-meter {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-
-.volume-label {
-  color: var(--text-primary);
-  font-weight: 500;
-  min-width: 120px;
-}
-
-.volume-bar {
-  flex: 1;
-  height: 12px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  position: relative;
-}
-
-.volume-fill {
-  height: 100%;
-  background: var(--success-color);
-  border-radius: var(--radius-sm);
-  transition: width 0.1s ease;
-}
-
-.volume-fill.volume-medium {
-  background: var(--warning-color);
-}
-
-.volume-fill.volume-high {
-  background: var(--error-color);
-}
-
-.volume-value {
-  color: var(--text-primary);
-  font-weight: 500;
-  min-width: 40px;
-  text-align: right;
-}
-
 .recording-player {
   margin-bottom: 25px;
 }
@@ -1351,103 +697,50 @@ watch(() => config.value.quality, () => {
   margin-bottom: 15px;
 }
 
-.player-controls {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  margin-bottom: 10px;
-}
-
-.playback-time {
-  color: var(--text-secondary);
-  font-family: monospace;
-}
-
-.progress-bar {
-  height: 8px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  margin-bottom: 15px;
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--primary-color);
-  border-radius: var(--radius-sm);
-  transition: width 0.1s ease;
-}
-
-.file-actions {
-  margin-bottom: 25px;
-}
-
-.file-actions h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.recordings-library {
-  margin-bottom: 25px;
-}
-
-.recordings-library h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.library-controls {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 15px;
-}
-
-.recordings-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.recording-item {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
+.player-info {
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
-}
-
-.recording-info {
-  flex: 1;
-}
-
-.recording-name {
-  font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 4px;
+  border-radius: var(--radius-md);
+  padding: 15px;
+  margin-bottom: 15px;
 }
 
 .recording-details {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  margin-bottom: 2px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
-.recording-date {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-.recording-actions {
+.detail-item {
   display: flex;
-  gap: 5px;
+  justify-content: space-between;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.detail-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.detail-value {
+  color: var(--text-secondary);
+}
+
+.player-controls {
+  margin-bottom: 15px;
+}
+
+.player-controls audio {
+  width: 100%;
+}
+
+.player-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .not-supported {
@@ -1481,36 +774,12 @@ watch(() => config.value.quality, () => {
     grid-template-columns: 1fr;
   }
   
-  .volume-meter {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .volume-label {
-    min-width: auto;
-  }
-  
-  .player-controls {
-    flex-direction: column;
-    align-items: stretch;
-    text-align: center;
-  }
-  
-  .action-buttons {
+  .player-actions {
     flex-direction: column;
   }
   
-  .library-controls {
-    flex-direction: column;
-  }
-  
-  .recording-item {
-    flex-direction: column;
-    text-align: center;
-  }
-  
-  .recording-actions {
-    justify-content: center;
+  .recording-details {
+    grid-template-columns: 1fr;
   }
 }
 </style>
