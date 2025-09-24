@@ -7,7 +7,7 @@
       <div :class="['status-indicator', recordingStatus]">
         <span class="status-icon">{{ statusIcon }}</span>
         <span class="status-text">{{ statusText }}</span>
-        <span v-if="isRecording" class="recording-duration">{{ formatDuration(duration) }}</span>
+        <span v-if="isRecording" class="recording-duration">{{ formatDuration(recordingDuration) }}</span>
       </div>
     </div>
 
@@ -25,9 +25,9 @@
         </div>
       </div>
       
-      <div v-else-if="results" class="recording-complete">
+      <div v-else-if="voiceRecordingResults" class="recording-complete">
         <div class="complete-icon">✅</div>
-        <p>Grabación completada ({{ formatDuration(results.duration || 0) }})</p>
+        <p>Grabación completada ({{ formatDuration(voiceRecordingResults.duration || 0) }})</p>
       </div>
       
       <div v-else class="visualizer-placeholder">
@@ -45,14 +45,14 @@
         @click="toggleRecording"
         :disabled="!isSupported"
       >
-        <span v-if="isRecording">⏹️ Detener{{ duration > 0 ? ` (${formatDuration(duration)})` : '' }}</span>
+        <span v-if="isRecording">⏹️ Detener{{ recordingDuration > 0 ? ` (${formatDuration(recordingDuration)})` : '' }}</span>
         <span v-else>🎤 Grabar Voz</span>
       </button>
       
       <button 
         class="btn btn-secondary"
         @click="clearRecording"
-        :disabled="isRecording || !results"
+        :disabled="isRecording || !voiceRecordingResults"
       >
         🗑️ Limpiar
       </button>
@@ -123,18 +123,18 @@
     </div>
 
     <!-- Reproductor de grabación - COMO SCRIPT.JS -->
-    <div v-if="results" class="recording-player">
+    <div v-if="voiceRecordingResults" class="recording-player">
       <h4>🎵 Grabación Completada</h4>
       
       <div class="player-info">
         <div class="recording-details">
           <div class="detail-item">
             <span class="detail-label">Duración:</span>
-            <span class="detail-value">{{ formatDuration(results.duration || 0) }}</span>
+            <span class="detail-value">{{ formatDuration(voiceRecordingResults.duration || 0) }}</span>
           </div>
           <div class="detail-item">
             <span class="detail-label">Tamaño:</span>
-            <span class="detail-value">{{ formatFileSize(results.blob?.size || 0) }}</span>
+            <span class="detail-value">{{ formatFileSize(voiceRecordingResults.blob?.size || 0) }}</span>
           </div>
           <div class="detail-item">
             <span class="detail-label">Formato:</span>
@@ -144,7 +144,7 @@
       </div>
       
       <div class="player-controls">
-        <audio v-if="results.url" :src="results.url" controls></audio>
+        <audio v-if="voiceRecordingResults.url" :src="voiceRecordingResults.url" controls></audio>
       </div>
       
       <div class="player-actions">
@@ -166,6 +166,10 @@
       </div>
     </div>
 
+    <!-- Contenedor específico para la respuesta del procesamiento de la grabación.
+         useMultimedia.processAudio(..., { source: 'recorder' }) escribirá aquí (si existe). -->
+    <div id="voiceResult" style="margin-top: 16px;"></div>
+
     <!-- Mensaje de no compatibilidad -->
     <div v-if="!isSupported" class="not-supported">
       <div class="not-supported-icon">⚠️</div>
@@ -180,49 +184,34 @@
         🎤 Solicitar Permisos
       </button>
     </div>
+
+    <!-- Hidden input que usa el composable: audioUserId -->
+    <input id="audioUserId" type="hidden" :value="userId" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, defineProps, defineEmits } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNotifications } from '@/composables/useNotifications'
+import { useMultimedia } from '@/composables/useMultimedia'
 
-// ============================================================================
-// PROPS & EMITS - INTERFACE CON MULTIMEDIATAB
-// ============================================================================
-
-const props = defineProps({
-  isRecording: {
-    type: Boolean,
-    default: false
-  },
-  duration: {
-    type: Number,
-    default: 0
-  },
-  results: {
-    type: Object,
-    default: null
-  }
-})
-
-const emit = defineEmits(['toggle-recording', 'clear-results'])
-
-// ============================================================================
-// STORES & COMPOSABLES
-// ============================================================================
+// Composable principal
+const {
+  isRecording,
+  toggleVoiceRecording,
+  recordingDuration,
+  voiceRecordingResults,
+  clearResults,
+  processAudio
+} = useMultimedia()
 
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
 
-// ============================================================================
-// ESTADO LOCAL - SIMPLE COMO SCRIPT.JS
-// ============================================================================
-
+// Local state
+const userId = ref('')
 const isSupported = ref(false)
-
-// Configuración simple
 const config = ref({
   quality: 'high',
   echoCancellation: true,
@@ -230,14 +219,14 @@ const config = ref({
   autoProcess: true
 })
 
-// ============================================================================
-// COMPUTED
-// ============================================================================
+// Expose useful values to template
+// recordingDuration and isRecording and voiceRecordingResults come from composable
 
+// --- computed helpers for status UI ---
 const recordingStatus = computed(() => {
   if (!isSupported.value) return 'not-supported'
-  if (props.isRecording) return 'recording'
-  if (props.results) return 'completed'
+  if (isRecording.value) return 'recording'
+  if (voiceRecordingResults.value) return 'completed'
   return 'ready'
 })
 
@@ -261,131 +250,139 @@ const statusText = computed(() => {
   }
 })
 
-const qualitySettings = computed(() => {
-  const settings = {
-    standard: { sampleRate: 16000, bitrate: 64000 },
-    high: { sampleRate: 44100, bitrate: 128000 },
-    ultra: { sampleRate: 48000, bitrate: 192000 }
+// update hidden input audioUserId whenever visible userId changes (so composable.finds it)
+watch(userId, (val) => {
+  let el = document.getElementById('audioUserId')
+  if (!el) {
+    el = document.createElement('input')
+    el.type = 'hidden'
+    el.id = 'audioUserId'
+    document.body.appendChild(el)
   }
-  
-  return settings[config.value.quality] || settings.high
+  el.value = val || ''
 })
 
-// ============================================================================
-// MÉTODOS PRINCIPALES - DELEGAR AL COMPOSABLE
-// ============================================================================
+// helper functions
+const formatDuration = (seconds) => {
+  const mins = Math.floor((seconds || 0) / 60)
+  const secs = (seconds || 0) % 60
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
 
-/**
- * Toggle grabación - DELEGAR AL COMPOSABLE COMO SCRIPT.JS
- */
-const toggleRecording = async () => {
+const formatFileSize = (bytes) => {
+  if (!bytes) return '0 Bytes'
+  const k = 1024
+  const sizes = ['Bytes', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+// Toggle recording delegating to the composable
+const toggleRecordingHandler = async () => {
   if (!isSupported.value) {
     showNotification('Grabación de voz no soportada', 'error')
     return
   }
-  
+
   try {
-    appStore.addToLog(`Voice recording toggle - currently recording: ${props.isRecording}`, 'info')
-    
-    // Delegar al composable via emit
-    await emit('toggle-recording', {
-      quality: config.value.quality,
-      echoCancellation: config.value.echoCancellation,
-      noiseSuppression: config.value.noiseSuppression,
-      autoProcess: config.value.autoProcess
-    })
-    
-  } catch (error) {
-    showNotification(`Error en grabación: ${error.message}`, 'error')
+    // Ensure hidden input exists and is up-to-date before toggling (composable reads it)
+    const el = document.getElementById('audioUserId')
+    if (el) el.value = userId.value || ''
+
+    await toggleVoiceRecording()
+  } catch (err) {
+    showNotification(`Error en grabación: ${err?.message || err}`, 'error')
   }
 }
 
+// use the name conflict with the composable's function
+const toggleRecording = toggleRecordingHandler
+
 const clearRecording = () => {
-  emit('clear-results')
+  // limpiar composable y DOM containers
+  clearResults()
+  // also clear local userId? keep as is (user may want to reuse)
 }
 
-// ============================================================================
-// ACCIONES DE ARCHIVO - COMO SCRIPT.JS
-// ============================================================================
-
+// download
 const downloadRecording = () => {
-  if (!props.results?.url) return
-  
+  if (!voiceRecordingResults.value?.url) return
   try {
     const a = document.createElement('a')
-    a.href = props.results.url
+    a.href = voiceRecordingResults.value.url
     a.download = `voice_recording_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    
     showNotification('Grabación descargada', 'success')
   } catch (error) {
     showNotification('Error descargando grabación', 'error')
   }
 }
 
+// process recording (manually invoked by user)
 const processRecording = async () => {
-  if (!props.results?.blob) return
-  
+  const blob = voiceRecordingResults.value?.blob
+  if (!blob) {
+    showNotification('No hay grabación para procesar', 'warning')
+    return
+  }
+
   if (!appStore.currentCompanyId) {
     showNotification('Por favor selecciona una empresa primero', 'warning')
     return
   }
-  
+
   try {
-    // Crear archivo para procesamiento - COMO SCRIPT.JS
-    const file = new File(
-      [props.results.blob], 
-      `voice_recording_${Date.now()}.webm`, 
-      { type: 'audio/webm' }
-    )
-    
-    // Esto debería delegar al AudioProcessor o directamente al composable
-    // Por ahora, mostrar notificación
+    const file = new File([blob], `voice_recording_${Date.now()}.webm`, { type: 'audio/webm' })
     showNotification('Iniciando procesamiento de grabación...', 'info')
-    
-    // TODO: Integrar con processAudio del composable
-    appStore.addToLog('Voice recording processing requested', 'info')
-    
+
+    // ensure hidden input has userId value for composable fallback
+    const el = document.getElementById('audioUserId')
+    if (el) el.value = userId.value || ''
+
+    // call composable processAudio with source 'recorder' so response goes to #voiceResult
+    await processAudio(file, { source: 'recorder' })
   } catch (error) {
-    showNotification(`Error procesando grabación: ${error.message}`, 'error')
+    showNotification(`Error procesando grabación: ${error?.message || error}`, 'error')
   }
 }
 
+// share recording
 const shareRecording = async () => {
-  if (!props.results?.blob) return
-  
+  const blob = voiceRecordingResults.value?.blob
+  if (!blob) {
+    showNotification('No hay grabación para compartir', 'warning')
+    return
+  }
+
   try {
-    if (navigator.share && navigator.canShare) {
-      const shareData = {
-        title: 'Grabación de Voz',
-        files: [new File([props.results.blob], 'voice_recording.webm', { 
-          type: 'audio/webm' 
-        })]
+    if (navigator.share) {
+      const file = new File([blob], 'voice_recording.webm', { type: 'audio/webm' })
+      const shareData = { title: 'Grabación de Voz', files: [file] }
+      // some browsers require navigator.canShare
+      if (navigator.canShare && !navigator.canShare(shareData)) {
+        throw new Error('El dispositivo no soporta compartir archivos')
       }
-      
-      if (navigator.canShare(shareData)) {
-        await navigator.share(shareData)
-        showNotification('Compartido exitosamente', 'success')
-        return
-      }
+      await navigator.share(shareData)
+      showNotification('Compartido exitosamente', 'success')
+      return
     }
-    
-    // Fallback: copiar al portapapeles
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        'audio/webm': props.results.blob
-      })
-    ])
-    
-    showNotification('Copiado al portapapeles', 'success')
-    
+
+    // fallback: copy the blob to clipboard (may not be supported everywhere)
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([new ClipboardItem({ 'audio/webm': blob })])
+      showNotification('Grabación copiada al portapapeles', 'success')
+      return
+    }
+
+    showNotification('Compartir no soportado en este navegador', 'warning')
   } catch (error) {
     showNotification('Error compartiendo grabación', 'error')
   }
 }
 
+// request mic permissions
 const requestPermissions = async () => {
   try {
     await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -396,56 +393,36 @@ const requestPermissions = async () => {
   }
 }
 
-// ============================================================================
-// UTILIDADES
-// ============================================================================
-
-const formatDuration = (seconds) => {
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+// check support
+const checkSupport = () => {
+  isSupported.value = !!(
+    navigator.mediaDevices &&
+    navigator.mediaDevices.getUserMedia &&
+    window.MediaRecorder
+  )
 }
 
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 Bytes'
-  
-  const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-const checkSupport = async () => {
-  try {
-    // Verificar APIs necesarias
-    isSupported.value = !!(
-      navigator.mediaDevices &&
-      navigator.mediaDevices.getUserMedia &&
-      window.MediaRecorder
-    )
-    
-  } catch (error) {
-    isSupported.value = false
-    appStore.addToLog('Voice recording not supported in this environment', 'warning')
+// lifecycle
+onMounted(() => {
+  checkSupport()
+  // ensure hidden input exists for composable
+  let el = document.getElementById('audioUserId')
+  if (!el) {
+    el = document.createElement('input')
+    el.type = 'hidden'
+    el.id = 'audioUserId'
+    document.body.appendChild(el)
   }
-}
-
-// ============================================================================
-// LIFECYCLE
-// ============================================================================
-
-onMounted(async () => {
-  await checkSupport()
-  appStore.addToLog('VoiceRecorder component mounted', 'info')
+  el.value = userId.value || ''
 })
 
 onUnmounted(() => {
-  appStore.addToLog('VoiceRecorder component unmounted', 'info')
+  // nothing special to cleanup here; composable handles its own cleanup
 })
 </script>
 
 <style scoped>
+/* --- (estilos exactamente como pegaste) --- */
 .voice-recorder {
   padding: 20px;
   height: 100%;
