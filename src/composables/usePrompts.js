@@ -7,6 +7,7 @@ import { ref, computed, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
+import { useSystemLog } from '@/composables/useSystemLog'
 
 export const usePrompts = () => {
   const appStore = useAppStore()
