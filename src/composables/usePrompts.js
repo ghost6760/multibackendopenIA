@@ -13,6 +13,7 @@ export const usePrompts = () => {
   const appStore = useAppStore()
   const { apiRequest } = useApiRequest()
   const { showNotification } = useNotifications()
+  const { addToLog } = useSystemLog()
 
   // ============================================================================
   // ESTADO REACTIVO - MIGRADO DE PROMPTSTAB.VUE
