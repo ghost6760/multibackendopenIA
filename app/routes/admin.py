@@ -1329,6 +1329,25 @@ def update_company_configuration(company_id):
         
         logger.info(f"✅ Company {company_id} configuration updated: {list(updates.keys())}")
         
+        # Invalidar cache del endpoint /api/companies para sincronizar CompanySelector
+        try:
+            company_manager = get_company_manager()
+            
+            if hasattr(company_manager, '_configs'):
+                company_manager._configs.clear()
+                logger.info("Cleared company_manager._configs cache that affects /api/companies")
+            
+            if hasattr(company_manager, '_load_company_configs'):
+                company_manager._load_company_configs()
+                logger.info("Reloaded company_manager configurations from PostgreSQL")
+            
+            factory = get_multi_agent_factory()
+            factory.clear_all_cache()
+            logger.info("Cleared factory cache for complete synchronization")
+            
+        except Exception as cache_error:
+            logger.warning(f"Could not invalidate /api/companies cache: {cache_error}")
+        
         return create_success_response({
             "message": f"Company {company_id} updated successfully",
             "company_id": company_id,
@@ -1337,10 +1356,6 @@ def update_company_configuration(company_id):
             "configuration": asdict(updated_config) if updated_config else None,
             "cache_invalidated": True
         })
-        
-    except Exception as e:
-        logger.error(f"Error updating company {company_id}: {e}")
-        return create_error_response(f"Failed to update company: {str(e)}", 500)
 
 
 @bp.route('/companies', methods=['GET'])
