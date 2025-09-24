@@ -3,6 +3,7 @@
 // CRÍTICO: Mantener comportamiento idéntico para preservar compatibilidad
 // 🔧 CORREGIDO: Eliminar conflictos DOM directo vs Vue reactivo
 
+
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
