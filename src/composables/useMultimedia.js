@@ -1,8 +1,9 @@
 /**
  * useMultimedia.js - Composable para Procesamiento Multimedia
- * MIGRADO DE: script.js funciones processAudio(), processImage(), testMultimediaIntegration(), captureScreen(), toggleVoiceRecording()
- * PRESERVAR: Comportamiento exacto de las funciones originales
- * COMPATIBILIDAD: 100% con el script.js original
+ * MIGRADO Y ACTUALIZADO desde script.js 
+ * PRESERVA: Comportamiento exacto de las funciones originales
+ * ENDPOINTS: Idénticos a script.js
+ * VALIDACIONES: Exactas como script.js
  */
 
 import { ref, computed } from 'vue'
@@ -18,7 +19,7 @@ export const useMultimedia = () => {
   const { addToLog } = useSystemLog()
 
   // ============================================================================
-  // ESTADO LOCAL
+  // ESTADO LOCAL REACTIVO
   // ============================================================================
 
   const isProcessingAudio = ref(false)
@@ -33,9 +34,12 @@ export const useMultimedia = () => {
   const screenCaptureResults = ref(null)
   const voiceRecordingResults = ref(null)
   
+  // Media recording state
   const mediaRecorder = ref(null)
   const recordedChunks = ref([])
   const processingProgress = ref(0)
+  const recordingDuration = ref(0)
+  const recordingInterval = ref(null)
 
   // ============================================================================
   // COMPUTED PROPERTIES
@@ -52,21 +56,25 @@ export const useMultimedia = () => {
     audio: !!navigator.mediaDevices?.getUserMedia,
     screen: !!navigator.mediaDevices?.getDisplayMedia,
     files: !!window.File && !!window.FileReader,
-    webrtc: !!window.RTCPeerConnection
+    webrtc: !!window.RTCPeerConnection,
+    webgl: !!window.WebGLRenderingContext
   }))
 
-  const recordingDuration = ref(0)
-  const recordingInterval = ref(null)
-
   // ============================================================================
-  // FUNCIONES PRINCIPALES MIGRADAS DEL SCRIPT.JS
+  // FUNCIONES PRINCIPALES - EXACTAS A SCRIPT.JS
   // ============================================================================
 
   /**
    * Procesa archivo de audio - MIGRADO: processAudio() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * PRESERVAR: Comportamiento y endpoints exactos
    */
   const processAudio = async (audioFile = null, options = {}) => {
+    // Validar empresa seleccionada - PRESERVAR lógica script.js
+    if (!appStore.currentCompanyId) {
+      showNotification('Por favor selecciona una empresa primero', 'warning')
+      return null
+    }
+
     // Si no se pasa archivo, intentar obtenerlo del DOM como en script.js
     if (!audioFile) {
       const fileInput = document.getElementById('audioFile')
@@ -90,12 +98,12 @@ export const useMultimedia = () => {
       addToLog(`Starting audio processing: ${audioFile.name}`, 'info')
       showNotification('Procesando archivo de audio...', 'info')
 
-      // PRESERVAR: Validaciones como en script.js
+      // PRESERVAR: Validaciones exactas como en script.js
       if (!audioFile.type.startsWith('audio/')) {
         throw new Error('El archivo debe ser de audio')
       }
 
-      // PRESERVAR: Límite de tamaño como script.js
+      // PRESERVAR: Límite de tamaño exacto como script.js
       const maxSize = 50 * 1024 * 1024 // 50MB
       if (audioFile.size > maxSize) {
         throw new Error('El archivo es demasiado grande. Máximo 50MB')
@@ -105,7 +113,10 @@ export const useMultimedia = () => {
       const formData = new FormData()
       formData.append('audio', audioFile)
 
-      // PRESERVAR: Obtener userId del DOM como script.js
+      // PRESERVAR: Company ID handling exacto
+      formData.append('company_id', appStore.currentCompanyId)
+      
+      // PRESERVAR: Obtener userId del DOM como script.js (si existe)
       const userIdInput = document.getElementById('audioUserId')
       if (userIdInput && userIdInput.value.trim()) {
         formData.append('user_id', userIdInput.value.trim())
@@ -117,8 +128,9 @@ export const useMultimedia = () => {
 
       processingProgress.value = 25
 
-      // PRESERVAR: Llamada API exacta como script.js
-      const response = await apiRequest('/api/multimedia/audio', {
+      // PRESERVAR: Endpoint exacto como script.js CORREGIDO
+      // script.js usa '/api/multimedia/process-voice' en la versión corregida
+      const response = await apiRequest('/api/multimedia/process-voice', {
         method: 'POST',
         body: formData
       })
@@ -126,17 +138,40 @@ export const useMultimedia = () => {
       processingProgress.value = 100
       audioResults.value = response
 
-      // PRESERVAR: Mostrar resultados en DOM como script.js
+      // PRESERVAR: Actualizar DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('audioResult')
       if (resultContainer) {
-        resultContainer.innerHTML = `
+        // MEJORADO: Extraer campos de manera robusta como script.js corregido
+        const transcript = response.transcript || response.transcription || 'Sin transcripción'
+        const botResponse = response.bot_response || response.response || response.message || null
+        const companyId = response.company_id || appStore.currentCompanyId
+        const processingTime = response.processing_time || response.time || null
+        
+        let resultHTML = `
           <div class="result-container result-success">
-            <h4>✅ Audio Procesado Exitosamente</h4>
-            <div class="json-container">
-              <pre>${JSON.stringify(response, null, 2)}</pre>
-            </div>
-          </div>
+            <h4>🎵 Procesamiento de Audio Completado</h4>
+            <p><strong>Transcripción:</strong></p>
+            <div class="code-block">${escapeHTML(transcript)}</div>
         `
+        
+        if (botResponse) {
+          resultHTML += `
+            <p><strong>Respuesta del Bot:</strong></p>
+            <div class="code-block">${escapeHTML(botResponse)}</div>
+          `
+        }
+        
+        resultHTML += `
+            <p><strong>Empresa:</strong> ${companyId}</p>
+        `
+        
+        if (processingTime) {
+          resultHTML += `<p><strong>Tiempo:</strong> ${processingTime}ms</p>`
+        }
+        
+        resultHTML += `</div>`
+        
+        resultContainer.innerHTML = resultHTML
       }
 
       addToLog('Audio processing completed successfully', 'success')
@@ -148,13 +183,14 @@ export const useMultimedia = () => {
       addToLog(`Audio processing failed: ${error.message}`, 'error')
       showNotification(`Error procesando audio: ${error.message}`, 'error')
 
-      // PRESERVAR: Mostrar error en DOM como script.js
+      // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('audioResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
           <div class="result-container result-error">
             <p>❌ Error al procesar audio</p>
-            <p>${error.message}</p>
+            <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+            <p><strong>Empresa:</strong> ${appStore.currentCompanyId}</p>
           </div>
         `
       }
@@ -168,10 +204,16 @@ export const useMultimedia = () => {
   }
 
   /**
-   * Procesa imagen - MIGRADO: processImage() de script.js
-   * PRESERVAR: Comportamiento exacto de la función original
+   * Procesa imagen - MIGRADO: processImage() de script.js  
+   * PRESERVAR: Comportamiento y endpoints exactos
    */
   const processImage = async (imageFile = null, options = {}) => {
+    // Validar empresa seleccionada
+    if (!appStore.currentCompanyId) {
+      showNotification('Por favor selecciona una empresa primero', 'warning')
+      return null
+    }
+
     // Si no se pasa archivo, intentar obtenerlo del DOM como en script.js
     if (!imageFile) {
       const fileInput = document.getElementById('imageFile')
@@ -195,12 +237,12 @@ export const useMultimedia = () => {
       addToLog(`Starting image processing: ${imageFile.name}`, 'info')
       showNotification('Procesando imagen...', 'info')
 
-      // PRESERVAR: Validaciones como en script.js
+      // PRESERVAR: Validaciones exactas como en script.js
       if (!imageFile.type.startsWith('image/')) {
         throw new Error('El archivo debe ser una imagen')
       }
 
-      // PRESERVAR: Límite de tamaño como script.js
+      // PRESERVAR: Límite de tamaño exacto como script.js
       const maxSize = 20 * 1024 * 1024 // 20MB
       if (imageFile.size > maxSize) {
         throw new Error('La imagen es demasiado grande. Máximo 20MB')
@@ -210,6 +252,9 @@ export const useMultimedia = () => {
       const formData = new FormData()
       formData.append('image', imageFile)
 
+      // PRESERVAR: Company ID handling exacto
+      formData.append('company_id', appStore.currentCompanyId)
+      
       // PRESERVAR: Obtener userId del DOM como script.js
       const userIdInput = document.getElementById('imageUserId')
       if (userIdInput && userIdInput.value.trim()) {
@@ -222,8 +267,9 @@ export const useMultimedia = () => {
 
       processingProgress.value = 25
 
-      // PRESERVAR: Llamada API exacta como script.js
-      const response = await apiRequest('/api/multimedia/image', {
+      // PRESERVAR: Endpoint exacto como script.js CORREGIDO
+      // script.js usa '/api/multimedia/process-image' en la versión corregida
+      const response = await apiRequest('/api/multimedia/process-image', {
         method: 'POST',
         body: formData
       })
@@ -231,17 +277,40 @@ export const useMultimedia = () => {
       processingProgress.value = 100
       imageResults.value = response
 
-      // PRESERVAR: Mostrar resultados en DOM como script.js
+      // PRESERVAR: Actualizar DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('imageResult')
       if (resultContainer) {
-        resultContainer.innerHTML = `
+        // MEJORADO: Extraer campos de manera robusta como script.js corregido
+        const analysis = response.analysis || response.description || response.image_analysis || 'Sin análisis'
+        const botResponse = response.bot_response || response.response || response.message || null
+        const companyId = response.company_id || appStore.currentCompanyId
+        const processingTime = response.processing_time || response.time || null
+        
+        let resultHTML = `
           <div class="result-container result-success">
-            <h4>✅ Imagen Procesada Exitosamente</h4>
-            <div class="json-container">
-              <pre>${JSON.stringify(response, null, 2)}</pre>
-            </div>
-          </div>
+            <h4>📸 Procesamiento de Imagen Completado</h4>
+            <p><strong>Análisis:</strong></p>
+            <div class="code-block">${escapeHTML(analysis)}</div>
         `
+        
+        if (botResponse) {
+          resultHTML += `
+            <p><strong>Respuesta del Bot:</strong></p>
+            <div class="code-block">${escapeHTML(botResponse)}</div>
+          `
+        }
+        
+        resultHTML += `
+            <p><strong>Empresa:</strong> ${companyId}</p>
+        `
+        
+        if (processingTime) {
+          resultHTML += `<p><strong>Tiempo:</strong> ${processingTime}ms</p>`
+        }
+        
+        resultHTML += `</div>`
+        
+        resultContainer.innerHTML = resultHTML
       }
 
       addToLog('Image processing completed successfully', 'success')
@@ -253,13 +322,14 @@ export const useMultimedia = () => {
       addToLog(`Image processing failed: ${error.message}`, 'error')
       showNotification(`Error procesando imagen: ${error.message}`, 'error')
 
-      // PRESERVAR: Mostrar error en DOM como script.js
+      // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('imageResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
           <div class="result-container result-error">
             <p>❌ Error al procesar imagen</p>
-            <p>${error.message}</p>
+            <p><strong>Error:</strong> ${escapeHTML(error.message)}</p>
+            <p><strong>Empresa:</strong> ${appStore.currentCompanyId}</p>
           </div>
         `
       }
@@ -277,6 +347,12 @@ export const useMultimedia = () => {
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const testMultimediaIntegration = async () => {
+    // Validar empresa seleccionada
+    if (!appStore.currentCompanyId) {
+      showNotification('Por favor selecciona una empresa primero', 'warning')
+      return null
+    }
+
     if (isTestingIntegration.value) {
       showNotification('Ya se está ejecutando un test de integración', 'warning')
       return
@@ -289,22 +365,43 @@ export const useMultimedia = () => {
       addToLog('Starting multimedia integration test', 'info')
       showNotification('Ejecutando test de integración multimedia...', 'info')
 
-      // PRESERVAR: Llamada API exacta como script.js
-      const response = await apiRequest('/api/multimedia/test', {
-        method: 'GET'
+      // PRESERVAR: Endpoint exacto como script.js  
+      // script.js usa '/api/admin/multimedia/test' en testMultimediaIntegration()
+      const response = await apiRequest('/api/admin/multimedia/test', {
+        method: 'POST',
+        body: {
+          company_id: appStore.currentCompanyId
+        }
       })
 
       integrationResults.value = response
 
-      // PRESERVAR: Mostrar resultados en DOM como script.js
+      // PRESERVAR: Mostrar resultados en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('multimediaTestResult')
       if (resultContainer) {
+        const integration = response.multimedia_integration || {}
+        
         resultContainer.innerHTML = `
           <div class="result-container result-success">
-            <h4>✅ Test de Integración Multimedia</h4>
-            <div class="json-container">
-              <pre>${JSON.stringify(response, null, 2)}</pre>
+            <h4>🧪 Test de Integración Multimedia</h4>
+            <div class="health-status ${integration.fully_integrated ? 'healthy' : 'warning'}">
+              <span class="status-indicator status-${integration.fully_integrated ? 'healthy' : 'warning'}"></span>
+              Integración completa: ${integration.fully_integrated ? '✅' : '❌'}
             </div>
+            <div class="health-status ${integration.transcribe_audio_from_url ? 'healthy' : 'error'}">
+              <span class="status-indicator status-${integration.transcribe_audio_from_url ? 'healthy' : 'error'}"></span>
+              Transcripción de audio: ${integration.transcribe_audio_from_url ? '✅' : '❌'}
+            </div>
+            <div class="health-status ${integration.analyze_image_from_url ? 'healthy' : 'error'}">
+              <span class="status-indicator status-${integration.analyze_image_from_url ? 'healthy' : 'error'}"></span>
+              Análisis de imagen: ${integration.analyze_image_from_url ? '✅' : '❌'}
+            </div>
+            <div class="health-status ${integration.process_attachment ? 'healthy' : 'error'}">
+              <span class="status-indicator status-${integration.process_attachment ? 'healthy' : 'error'}"></span>
+              Procesamiento de archivos: ${integration.process_attachment ? '✅' : '❌'}
+            </div>
+            <p><strong>OpenAI disponible:</strong> ${response.openai_service_available ? '✅' : '❌'}</p>
+            <p><strong>Empresa:</strong> ${response.company_id}</p>
           </div>
         `
       }
@@ -318,13 +415,13 @@ export const useMultimedia = () => {
       addToLog(`Multimedia integration test failed: ${error.message}`, 'error')
       showNotification(`Error en test de integración: ${error.message}`, 'error')
 
-      // PRESERVAR: Mostrar error en DOM como script.js
+      // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('multimediaTestResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
           <div class="result-container result-error">
             <p>❌ Error en test de integración</p>
-            <p>${error.message}</p>
+            <p>${escapeHTML(error.message)}</p>
           </div>
         `
       }
@@ -340,7 +437,7 @@ export const useMultimedia = () => {
    * Captura pantalla - MIGRADO: captureScreen() de script.js
    * PRESERVAR: Comportamiento exacto de la función original
    */
-  const captureScreen = async () => {
+  const captureScreen = async (options = {}) => {
     if (isCapturingScreen.value) {
       showNotification('Ya se está capturando pantalla', 'warning')
       return
@@ -358,7 +455,11 @@ export const useMultimedia = () => {
 
       // PRESERVAR: Configuración de captura como script.js
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: 'screen' },
+        video: { 
+          mediaSource: 'screen',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
         audio: false
       })
 
@@ -366,50 +467,56 @@ export const useMultimedia = () => {
       video.srcObject = stream
       video.play()
 
-      video.addEventListener('loadedmetadata', () => {
-        const canvas = document.createElement('canvas')
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(video, 0, 0)
-
-        // Convertir a blob
-        canvas.toBlob((blob) => {
-          const url = URL.createObjectURL(blob)
-          
-          screenCaptureResults.value = {
-            url,
-            blob,
-            timestamp: new Date().toISOString(),
-            dimensions: {
-              width: canvas.width,
-              height: canvas.height
-            }
-          }
-
-          // PRESERVAR: Mostrar resultado como script.js
-          const resultContainer = document.getElementById('screenCaptureResult')
-          if (resultContainer) {
-            resultContainer.innerHTML = `
-              <div class="result-container result-success">
-                <h4>✅ Pantalla Capturada</h4>
-                <p>Dimensiones: ${canvas.width}x${canvas.height}px</p>
-                <img src="${url}" style="max-width: 300px; border: 1px solid #ccc;" alt="Screen capture">
-                <br>
-                <button onclick="window.open('${url}')" class="btn btn-primary" style="margin-top: 10px;">
-                  Ver Pantalla Completa
-                </button>
-              </div>
-            `
-          }
-
-          addToLog('Screen capture completed successfully', 'success')
-          showNotification('Pantalla capturada exitosamente', 'success')
-
-          // Detener stream
-          stream.getTracks().forEach(track => track.stop())
-        }, 'image/png')
+      await new Promise(resolve => {
+        video.onloadedmetadata = resolve
       })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(video, 0, 0)
+
+      // Detener stream
+      stream.getTracks().forEach(track => track.stop())
+
+      // Convertir a blob
+      const blob = await new Promise(resolve => {
+        canvas.toBlob(resolve, 'image/png')
+      })
+
+      const url = URL.createObjectURL(blob)
+      
+      screenCaptureResults.value = {
+        url,
+        blob,
+        timestamp: new Date().toISOString(),
+        dimensions: {
+          width: canvas.width,
+          height: canvas.height
+        }
+      }
+
+      // PRESERVAR: Mostrar resultado como script.js SI EXISTE
+      const resultContainer = document.getElementById('screenCaptureResult')
+      if (resultContainer) {
+        resultContainer.innerHTML = `
+          <div class="result-container result-success">
+            <h4>✅ Pantalla Capturada</h4>
+            <p>Dimensiones: ${canvas.width}x${canvas.height}px</p>
+            <img src="${url}" style="max-width: 300px; border: 1px solid #ccc;" alt="Screen capture">
+            <br>
+            <button onclick="window.open('${url}')" class="btn btn-primary" style="margin-top: 10px;">
+              Ver Pantalla Completa
+            </button>
+          </div>
+        `
+      }
+
+      addToLog('Screen capture completed successfully', 'success')
+      showNotification('Pantalla capturada exitosamente', 'success')
+
+      return screenCaptureResults.value
 
     } catch (error) {
       addToLog(`Screen capture failed: ${error.message}`, 'error')
@@ -420,10 +527,12 @@ export const useMultimedia = () => {
         resultContainer.innerHTML = `
           <div class="result-container result-error">
             <p>❌ Error al capturar pantalla</p>
-            <p>${error.message}</p>
+            <p>${escapeHTML(error.message)}</p>
           </div>
         `
       }
+
+      throw error
 
     } finally {
       isCapturingScreen.value = false
@@ -443,7 +552,7 @@ export const useMultimedia = () => {
   }
 
   /**
-   * Inicia grabación de voz
+   * Inicia grabación de voz - MIGRADO de script.js
    */
   const startVoiceRecording = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -455,7 +564,13 @@ export const useMultimedia = () => {
       addToLog('Starting voice recording', 'info')
       showNotification('Iniciando grabación de voz...', 'info')
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        }
+      })
       
       mediaRecorder.value = new MediaRecorder(stream)
       recordedChunks.value = []
@@ -477,7 +592,7 @@ export const useMultimedia = () => {
           timestamp: new Date().toISOString()
         }
 
-        // PRESERVAR: Actualizar botón como script.js
+        // PRESERVAR: Actualizar botón como script.js SI EXISTE
         const recordButton = document.getElementById('recordVoiceButton')
         if (recordButton) {
           recordButton.textContent = '🎤 Grabar Voz'
@@ -487,7 +602,7 @@ export const useMultimedia = () => {
         addToLog(`Voice recording completed (${recordingDuration.value}s)`, 'success')
         showNotification(`Grabación completada (${recordingDuration.value}s)`, 'success')
 
-        // Procesar automáticamente el audio grabado
+        // PRESERVAR: Procesamiento automático como script.js
         try {
           const file = new File([blob], `voice_recording_${Date.now()}.webm`, { type: 'audio/webm' })
           await processAudio(file)
@@ -499,7 +614,7 @@ export const useMultimedia = () => {
       mediaRecorder.value.start()
       isRecording.value = true
 
-      // PRESERVAR: Actualizar botón como script.js
+      // PRESERVAR: Actualizar botón como script.js SI EXISTE
       const recordButton = document.getElementById('recordVoiceButton')
       if (recordButton) {
         recordButton.textContent = '⏹️ Detener'
@@ -525,7 +640,7 @@ export const useMultimedia = () => {
   }
 
   /**
-   * Detiene grabación de voz
+   * Detiene grabación de voz - MIGRADO de script.js
    */
   const stopVoiceRecording = async () => {
     if (!isRecording.value || !mediaRecorder.value) return
@@ -579,7 +694,7 @@ export const useMultimedia = () => {
     screenCaptureResults.value = null
     voiceRecordingResults.value = null
     
-    // Limpiar contenedores DOM
+    // Limpiar contenedores DOM SI EXISTEN
     const containers = [
       'audioResult', 'imageResult', 'multimediaTestResult',
       'screenCaptureResult'
@@ -594,6 +709,13 @@ export const useMultimedia = () => {
 
     addToLog('Multimedia results cleared', 'info')
     showNotification('Resultados limpiados', 'info')
+  }
+
+  // HELPER: Escape HTML para evitar XSS - PRESERVAR de script.js
+  const escapeHTML = (text) => {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
   }
 
   // ============================================================================
@@ -633,6 +755,7 @@ export const useMultimedia = () => {
     stopVoiceRecording,
     checkMultimediaCapabilities,
     clearResults,
-    formatFileSize
+    formatFileSize,
+    escapeHTML
   }
 }
