@@ -25,7 +25,7 @@
           <p class="drop-text">Arrastra un archivo de audio aquí</p>
           <p class="drop-subtext">o haz clic para seleccionar</p>
           <div class="supported-formats">
-            Formatos: MP3, WAV, M4A, AAC, OGG
+            Formatos: MP3, WAV, M4A, AAC, OGG, WebM
           </div>
         </div>
         
@@ -42,42 +42,41 @@
       </div>
     </div>
 
-    <!-- Configuración de procesamiento -->
-    <div class="processing-config">
-      <h4>⚙️ Configuración</h4>
+    <!-- Campos exactos como script.js -->
+    <div class="form-fields">
+      <div class="form-group">
+        <label for="audioUserId">ID de Usuario:</label>
+        <input 
+          id="audioUserId"
+          type="text" 
+          v-model="userId"
+          placeholder="usuario_123"
+          class="form-input"
+        />
+      </div>
       
-      <div class="config-grid">
-        <div class="config-item">
-          <label for="language">Idioma:</label>
-          <select id="language" v-model="config.language">
-            <option value="auto">Auto-detectar</option>
-            <option value="es">Español</option>
-            <option value="en">Inglés</option>
-            <option value="fr">Francés</option>
-            <option value="de">Alemán</option>
-            <option value="it">Italiano</option>
-            <option value="pt">Portugués</option>
-          </select>
-        </div>
-        
-        <div class="config-item">
-          <label for="quality">Calidad:</label>
-          <select id="quality" v-model="config.quality">
-            <option value="standard">Estándar</option>
-            <option value="high">Alta</option>
-            <option value="ultra">Ultra</option>
-          </select>
-        </div>
-        
-        <div class="config-item full-width">
-          <label for="prompt">Prompt personalizado (opcional):</label>
-          <textarea
-            id="prompt"
-            v-model="config.prompt"
-            placeholder="Proporciona contexto o instrucciones específicas para el procesamiento..."
-            rows="3"
-          ></textarea>
-        </div>
+      <div class="form-group">
+        <label for="audioLanguage">Idioma (opcional):</label>
+        <select id="audioLanguage" v-model="config.language" class="form-select">
+          <option value="">Auto-detectar</option>
+          <option value="es">Español</option>
+          <option value="en">Inglés</option>
+          <option value="fr">Francés</option>
+          <option value="de">Alemán</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Portugués</option>
+        </select>
+      </div>
+      
+      <div class="form-group full-width">
+        <label for="audioPrompt">Prompt personalizado (opcional):</label>
+        <textarea
+          id="audioPrompt"
+          v-model="config.prompt"
+          placeholder="Proporciona contexto específico para el procesamiento del audio..."
+          rows="3"
+          class="form-textarea"
+        ></textarea>
       </div>
     </div>
 
@@ -86,7 +85,7 @@
       <button 
         class="btn btn-primary"
         @click="processAudio"
-        :disabled="!selectedFile || isProcessing"
+        :disabled="!selectedFile || !userId.trim() || isProcessing"
       >
         <span v-if="isProcessing">⏳ Procesando...</span>
         <span v-else>🔄 Procesar Audio</span>
@@ -105,40 +104,30 @@
     <div v-if="isProcessing" class="processing-progress">
       <div class="progress-header">
         <span>{{ processingStage }}</span>
-        <span>{{ processingProgress }}%</span>
+        <span>{{ progress }}%</span>
       </div>
       <div class="progress-bar">
         <div 
           class="progress-fill"
-          :style="{ width: processingProgress + '%' }"
+          :style="{ width: progress + '%' }"
         ></div>
       </div>
     </div>
 
-    <!-- Resultados -->
-    <div v-if="result" class="processing-result">
+    <!-- Resultados - ESTRUCTURA EXACTA COMO SCRIPT.JS -->
+    <div v-if="results" class="processing-result">
       <h4>📊 Resultado del Procesamiento</h4>
-      
-      <div class="result-tabs">
-        <button 
-          v-for="tab in resultTabs"
-          :key="tab.id"
-          :class="['result-tab', { active: activeResultTab === tab.id }]"
-          @click="activeResultTab = tab.id"
-        >
-          {{ tab.icon }} {{ tab.name }}
-        </button>
-      </div>
       
       <div class="result-content">
         <!-- Transcripción -->
-        <div v-if="activeResultTab === 'transcription'" class="result-section">
+        <div class="result-section">
+          <h5>📝 Transcripción:</h5>
           <div class="transcription-text">
-            {{ result.transcription || 'No se pudo generar transcripción' }}
+            {{ getTranscription(results) }}
           </div>
           
           <div class="transcription-actions">
-            <button @click="copyToClipboard(result.transcription)" class="btn btn-sm">
+            <button @click="copyToClipboard(getTranscription(results))" class="btn btn-sm">
               📋 Copiar
             </button>
             <button @click="downloadTranscription" class="btn btn-sm">
@@ -147,88 +136,83 @@
           </div>
         </div>
         
-        <!-- Análisis -->
-        <div v-if="activeResultTab === 'analysis'" class="result-section">
-          <div v-if="result.analysis" class="analysis-grid">
-            <div v-for="(value, key) in result.analysis" :key="key" class="analysis-item">
-              <label>{{ formatAnalysisKey(key) }}:</label>
-              <span>{{ value }}</span>
+        <!-- Respuesta del Bot - COMO SCRIPT.JS CORREGIDO -->
+        <div v-if="getBotResponse(results)" class="result-section">
+          <h5>🤖 Respuesta del Bot:</h5>
+          <div class="bot-response-text">
+            {{ getBotResponse(results) }}
+          </div>
+        </div>
+        
+        <!-- Información técnica -->
+        <div class="result-section technical-info">
+          <h5>🔧 Información Técnica:</h5>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Empresa:</span>
+              <span class="info-value">{{ getCompanyId(results) }}</span>
+            </div>
+            <div v-if="getProcessingTime(results)" class="info-item">
+              <span class="info-label">Tiempo de procesamiento:</span>
+              <span class="info-value">{{ getProcessingTime(results) }}ms</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Archivo:</span>
+              <span class="info-value">{{ selectedFile?.name }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Tamaño:</span>
+              <span class="info-value">{{ formatFileSize(selectedFile?.size || 0) }}</span>
             </div>
           </div>
-          <div v-else class="no-analysis">
-            No hay análisis disponible
-          </div>
         </div>
-        
-        <!-- Metadatos -->
-        <div v-if="activeResultTab === 'metadata'" class="result-section">
-          <div class="metadata-content">
-            <details>
-              <summary>Ver metadatos completos</summary>
-              <pre>{{ formatJSON(result.metadata || {}) }}</pre>
-            </details>
-          </div>
-        </div>
-        
-        <!-- Audio procesado -->
-        <div v-if="activeResultTab === 'audio' && result.processed_audio" class="result-section">
-          <div class="audio-player">
-            <audio controls :src="result.processed_audio">
-              Tu navegador no soporta el reproductor de audio.
-            </audio>
-          </div>
-          
-          <div class="audio-actions">
-            <button @click="downloadAudio" class="btn btn-sm">
-              💾 Descargar Audio
-            </button>
-          </div>
+
+        <!-- Debug Info si disponible -->
+        <div v-if="results.debug_info || results.metadata" class="result-section">
+          <details>
+            <summary>Ver información de depuración</summary>
+            <pre>{{ formatJSON(results.debug_info || results.metadata || {}) }}</pre>
+          </details>
         </div>
       </div>
     </div>
 
-    <!-- Historial reciente -->
-    <div v-if="recentResults.length > 0" class="recent-results">
-      <h4>📚 Procesamiento Reciente</h4>
-      <div class="recent-list">
-        <div 
-          v-for="(item, index) in recentResults"
-          :key="index"
-          class="recent-item"
-          @click="loadRecentResult(item)"
-        >
-          <div class="recent-icon">🎵</div>
-          <div class="recent-info">
-            <div class="recent-name">{{ item.filename }}</div>
-            <div class="recent-time">{{ formatTime(item.timestamp) }}</div>
-          </div>
-          <div class="recent-status">
-            {{ item.status === 'success' ? '✅' : '❌' }}
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- Compatible with DOM manipulation from script.js -->
+    <div id="audioResult" style="margin-top: 20px;"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, defineProps, defineEmits } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
 
 // ============================================================================
-// PROPS & EMITS
+// PROPS & EMITS - INTERFACE CON MULTIMEDIATAB
 // ============================================================================
 
-const emit = defineEmits(['processing', 'completed', 'error'])
+const props = defineProps({
+  isProcessing: {
+    type: Boolean,
+    default: false
+  },
+  results: {
+    type: Object,
+    default: null
+  },
+  progress: {
+    type: Number,
+    default: 0
+  }
+})
+
+const emit = defineEmits(['process-audio', 'clear-results'])
 
 // ============================================================================
 // STORES & COMPOSABLES
 // ============================================================================
 
 const appStore = useAppStore()
-const { apiRequest } = useApiRequest()
 const { showNotification } = useNotifications()
 
 // ============================================================================
@@ -238,55 +222,34 @@ const { showNotification } = useNotifications()
 const fileInput = ref(null)
 
 // ============================================================================
-// ESTADO LOCAL
+// ESTADO LOCAL - ESTRUCTURA EXACTA SCRIPT.JS
 // ============================================================================
 
 const selectedFile = ref(null)
 const isDragOver = ref(false)
-const isProcessing = ref(false)
 const processingStage = ref('')
-const processingProgress = ref(0)
-const result = ref(null)
-const activeResultTab = ref('transcription')
-const recentResults = ref([])
 
-// Configuración de procesamiento
+// Campos exactos como en script.js DOM
+const userId = ref('')
 const config = ref({
-  language: 'auto',
-  quality: 'standard',
-  prompt: ''
+  language: '', // Corresponde a script.js language option
+  prompt: ''    // Corresponde a script.js prompt option
 })
 
 // ============================================================================
 // COMPUTED
 // ============================================================================
 
-const resultTabs = computed(() => {
-  const tabs = [
-    { id: 'transcription', name: 'Transcripción', icon: '📝' }
-  ]
-  
-  if (result.value?.analysis) {
-    tabs.push({ id: 'analysis', name: 'Análisis', icon: '📊' })
-  }
-  
-  if (result.value?.metadata) {
-    tabs.push({ id: 'metadata', name: 'Metadatos', icon: '📋' })
-  }
-  
-  if (result.value?.processed_audio) {
-    tabs.push({ id: 'audio', name: 'Audio', icon: '🎵' })
-  }
-  
-  return tabs
+const canProcess = computed(() => {
+  return selectedFile.value && userId.value.trim() && !props.isProcessing && appStore.currentCompanyId
 })
 
 // ============================================================================
-// MÉTODOS DE MANEJO DE ARCHIVOS
+// MÉTODOS DE MANEJO DE ARCHIVOS - VALIDACIONES EXACTAS SCRIPT.JS
 // ============================================================================
 
 const triggerFileInput = () => {
-  if (!isProcessing.value) {
+  if (!props.isProcessing) {
     fileInput.value?.click()
   }
 }
@@ -309,21 +272,20 @@ const handleDrop = (event) => {
 }
 
 const validateAndSetFile = (file) => {
-  // Validar tipo de archivo
+  // PRESERVAR: Validaciones exactas como script.js
   if (!file.type.startsWith('audio/')) {
-    showNotification('Por favor selecciona un archivo de audio válido', 'error')
+    showNotification('El archivo debe ser de audio', 'error')
     return
   }
   
-  // Validar tamaño (max 50MB)
-  const maxSize = 50 * 1024 * 1024
+  // PRESERVAR: Límite de tamaño exacto como script.js
+  const maxSize = 50 * 1024 * 1024 // 50MB
   if (file.size > maxSize) {
     showNotification('El archivo es demasiado grande. Máximo 50MB', 'error')
     return
   }
   
   selectedFile.value = file
-  result.value = null // Limpiar resultado anterior
   
   appStore.addToLog(`Audio file selected: ${file.name} (${formatFileSize(file.size)})`, 'info')
 }
@@ -337,116 +299,77 @@ const clearFile = () => {
 
 const clearAll = () => {
   clearFile()
-  result.value = null
+  userId.value = ''
+  config.value.language = ''
   config.value.prompt = ''
+  emit('clear-results')
 }
 
 // ============================================================================
-// PROCESAMIENTO DE AUDIO
+// PROCESAMIENTO - DELEGAR AL COMPOSABLE
 // ============================================================================
 
 const processAudio = async () => {
-  if (!selectedFile.value) {
-    showNotification('Por favor selecciona un archivo de audio', 'warning')
+  if (!canProcess.value) {
+    if (!appStore.currentCompanyId) {
+      showNotification('Por favor selecciona una empresa primero', 'warning')
+      return
+    }
+    if (!selectedFile.value) {
+      showNotification('Por favor selecciona un archivo de audio', 'warning')
+      return
+    }
+    if (!userId.value.trim()) {
+      showNotification('Por favor ingresa un ID de usuario', 'warning')
+      return
+    }
     return
   }
   
-  isProcessing.value = true
-  processingProgress.value = 0
+  processingStage.value = 'Preparando archivo de audio...'
   
   try {
-    emit('processing', { 
-      message: 'Preparando archivo de audio...', 
-      progress: 0 
-    })
+    // ESTRUCTURA EXACTA: Pasar datos como script.js
+    const options = {}
+    if (config.value.language) options.language = config.value.language
+    if (config.value.prompt.trim()) options.prompt = config.value.prompt.trim()
     
-    appStore.addToLog(`Starting audio processing: ${selectedFile.value.name}`, 'info')
+    // IMPORTANTE: También actualizar DOM para compatibilidad script.js
+    const userIdInput = document.getElementById('audioUserId')
+    if (userIdInput) userIdInput.value = userId.value
     
-    // Crear FormData
-    const formData = new FormData()
-    formData.append('audio', selectedFile.value)
-    
-    // Agregar configuración
-    if (config.value.language !== 'auto') {
-      formData.append('language', config.value.language)
-    }
-    formData.append('quality', config.value.quality)
-    if (config.value.prompt.trim()) {
-      formData.append('prompt', config.value.prompt.trim())
-    }
-    
-    updateProgress('Enviando archivo al servidor...', 25)
-    
-    // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/multimedia/audio', {
-      method: 'POST',
-      body: formData
-    })
-    
-    updateProgress('Procesando audio...', 75)
-    
-    // Simular progreso adicional si no hay WebSocket
-    await simulateProgress(75, 95, 'Finalizando procesamiento...')
-    
-    updateProgress('Completado', 100)
-    
-    // Guardar resultado
-    result.value = response
-    activeResultTab.value = 'transcription'
-    
-    // Agregar al historial
-    addToRecentResults({
-      filename: selectedFile.value.name,
-      timestamp: Date.now(),
-      status: 'success',
-      result: response
-    })
-    
-    appStore.addToLog('Audio processing completed successfully', 'info')
-    showNotification('Audio procesado exitosamente', 'success')
-    
-    emit('completed', response)
+    // Delegar al composable via emit
+    await emit('process-audio', selectedFile.value, options)
     
   } catch (error) {
-    appStore.addToLog(`Audio processing failed: ${error.message}`, 'error')
     showNotification(`Error procesando audio: ${error.message}`, 'error')
-    
-    // Agregar al historial como error
-    addToRecentResults({
-      filename: selectedFile.value.name,
-      timestamp: Date.now(),
-      status: 'error',
-      error: error.message
-    })
-    
-    emit('error', error)
-    
-  } finally {
-    isProcessing.value = false
-    processingProgress.value = 0
-    processingStage.value = ''
   }
 }
 
-const updateProgress = (stage, progress) => {
-  processingStage.value = stage
-  processingProgress.value = progress
+// ============================================================================
+// EXTRACTORS - ESTRUCTURA EXACTA COMO SCRIPT.JS CORREGIDO
+// ============================================================================
+
+const getTranscription = (results) => {
+  if (!results) return 'Sin transcripción'
   
-  emit('processing', { 
-    message: stage, 
-    progress 
-  })
+  // PRESERVAR: Orden exacto de campos como script.js corregido
+  return results.transcript || results.transcription || 'Sin transcripción'
 }
 
-const simulateProgress = async (start, end, message) => {
-  const steps = 10
-  const increment = (end - start) / steps
-  const delay = 100
+const getBotResponse = (results) => {
+  if (!results) return null
   
-  for (let i = 0; i < steps; i++) {
-    await new Promise(resolve => setTimeout(resolve, delay))
-    updateProgress(message, start + (increment * (i + 1)))
-  }
+  // PRESERVAR: Orden exacto de campos como script.js corregido
+  return results.bot_response || results.response || results.message || null
+}
+
+const getCompanyId = (results) => {
+  return results?.company_id || appStore.currentCompanyId
+}
+
+const getProcessingTime = (results) => {
+  return results?.processing_time || results?.time || null
 }
 
 // ============================================================================
@@ -463,20 +386,12 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
-const formatTime = (timestamp) => {
-  return new Date(timestamp).toLocaleString()
-}
-
 const formatJSON = (obj) => {
   try {
     return JSON.stringify(obj, null, 2)
   } catch (error) {
     return 'Error formatting JSON: ' + error.message
   }
-}
-
-const formatAnalysisKey = (key) => {
-  return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
 const copyToClipboard = async (text) => {
@@ -489,14 +404,15 @@ const copyToClipboard = async (text) => {
 }
 
 const downloadTranscription = () => {
-  if (!result.value?.transcription) return
+  if (!props.results) return
   
-  const blob = new Blob([result.value.transcription], { type: 'text/plain' })
+  const transcription = getTranscription(props.results)
+  const blob = new Blob([transcription], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   
   const a = document.createElement('a')
   a.href = url
-  a.download = `transcription_${selectedFile.value.name.replace(/\.[^/.]+$/, '')}.txt`
+  a.download = `transcription_${selectedFile.value?.name.replace(/\.[^/.]+$/, '') || 'audio'}.txt`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -505,69 +421,12 @@ const downloadTranscription = () => {
   showNotification('Transcripción descargada', 'success')
 }
 
-const downloadAudio = () => {
-  if (!result.value?.processed_audio) return
-  
-  const a = document.createElement('a')
-  a.href = result.value.processed_audio
-  a.download = `processed_${selectedFile.value.name}`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  
-  showNotification('Audio descargado', 'success')
-}
-
-// ============================================================================
-// HISTORIAL
-// ============================================================================
-
-const addToRecentResults = (item) => {
-  recentResults.value.unshift(item)
-  
-  // Mantener solo los últimos 5 resultados
-  if (recentResults.value.length > 5) {
-    recentResults.value.pop()
-  }
-  
-  // Guardar en localStorage si está disponible
-  try {
-    localStorage.setItem('audioProcessorRecent', JSON.stringify(recentResults.value))
-  } catch (error) {
-    // Ignorar errores de localStorage
-  }
-}
-
-const loadRecentResult = (item) => {
-  if (item.status === 'success' && item.result) {
-    result.value = item.result
-    activeResultTab.value = 'transcription'
-    showNotification('Resultado cargado del historial', 'info')
-  }
-}
-
-const loadRecentResults = () => {
-  try {
-    const saved = localStorage.getItem('audioProcessorRecent')
-    if (saved) {
-      recentResults.value = JSON.parse(saved)
-    }
-  } catch (error) {
-    // Ignorar errores de localStorage
-  }
-}
-
 // ============================================================================
 // LIFECYCLE
 // ============================================================================
 
 onMounted(() => {
-  loadRecentResults()
   appStore.addToLog('AudioProcessor component mounted', 'info')
-})
-
-onUnmounted(() => {
-  appStore.addToLog('AudioProcessor component unmounted', 'info')
 })
 </script>
 
@@ -584,7 +443,7 @@ onUnmounted(() => {
 }
 
 .upload-area {
-  margin-bottom: 25px;
+  margin-bottom: 20px;
 }
 
 .file-drop-zone {
@@ -686,38 +545,31 @@ onUnmounted(() => {
   font-size: 0.8rem;
 }
 
-.processing-config {
-  margin-bottom: 25px;
-}
-
-.processing-config h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.config-grid {
+.form-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 15px;
+  margin-bottom: 20px;
 }
 
-.config-item {
+.form-group {
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.config-item.full-width {
+.form-group.full-width {
   grid-column: 1 / -1;
 }
 
-.config-item label {
+.form-group label {
   font-weight: 500;
   color: var(--text-primary);
 }
 
-.config-item select,
-.config-item textarea {
+.form-input,
+.form-select,
+.form-textarea {
   padding: 8px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -725,7 +577,7 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-.config-item textarea {
+.form-textarea {
   resize: vertical;
   min-height: 80px;
 }
@@ -811,33 +663,6 @@ onUnmounted(() => {
   margin-bottom: 15px;
 }
 
-.result-tabs {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 15px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  padding: 4px;
-}
-
-.result-tab {
-  flex: 1;
-  padding: 8px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: var(--transition-fast);
-  font-size: 0.9rem;
-}
-
-.result-tab.active {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
-}
-
 .result-content {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -845,118 +670,89 @@ onUnmounted(() => {
   padding: 20px;
 }
 
-.transcription-text {
+.result-section {
+  margin-bottom: 20px;
+}
+
+.result-section:last-child {
+  margin-bottom: 0;
+}
+
+.result-section h5 {
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.transcription-text,
+.bot-response-text {
   background: var(--bg-secondary);
   padding: 15px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-light);
   line-height: 1.6;
   margin-bottom: 15px;
-  min-height: 100px;
+  min-height: 60px;
   white-space: pre-wrap;
 }
 
-.transcription-actions,
-.audio-actions {
+.transcription-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
-.analysis-grid {
+.technical-info {
+  border-top: 1px solid var(--border-color);
+  padding-top: 15px;
+}
+
+.info-grid {
   display: grid;
   gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
-.analysis-item {
+.info-item {
   display: flex;
   justify-content: space-between;
-  padding: 10px;
+  padding: 8px;
   background: var(--bg-secondary);
   border-radius: var(--radius-sm);
 }
 
-.analysis-item label {
+.info-label {
   font-weight: 500;
   color: var(--text-primary);
 }
 
-.metadata-content pre {
+.info-value {
+  color: var(--text-secondary);
+}
+
+details {
+  margin-top: 15px;
+}
+
+details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-primary);
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+details pre {
   background: var(--bg-secondary);
   padding: 15px;
   border-radius: var(--radius-md);
   overflow-x: auto;
   font-size: 0.9rem;
-}
-
-.audio-player {
-  margin-bottom: 15px;
-}
-
-.audio-player audio {
-  width: 100%;
-}
-
-.recent-results {
-  margin-top: 30px;
-}
-
-.recent-results h4 {
-  color: var(--text-primary);
-  margin-bottom: 15px;
-}
-
-.recent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.recent-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: var(--transition-fast);
-}
-
-.recent-item:hover {
-  background: var(--bg-tertiary);
-  transform: translateX(4px);
-}
-
-.recent-icon {
-  font-size: 1.2rem;
-}
-
-.recent-info {
-  flex: 1;
-}
-
-.recent-name {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.recent-time {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-}
-
-.recent-status {
-  font-size: 1.1rem;
-}
-
-.no-analysis {
-  text-align: center;
-  color: var(--text-secondary);
-  padding: 40px;
+  margin-top: 10px;
 }
 
 @media (max-width: 768px) {
-  .config-grid {
+  .form-fields {
     grid-template-columns: 1fr;
   }
   
@@ -964,13 +760,17 @@ onUnmounted(() => {
     flex-direction: column;
   }
   
-  .result-tabs {
+  .transcription-actions {
     flex-direction: column;
   }
   
-  .transcription-actions,
-  .audio-actions {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .info-item {
     flex-direction: column;
+    gap: 4px;
   }
 }
 </style>
