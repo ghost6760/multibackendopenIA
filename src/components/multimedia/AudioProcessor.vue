@@ -114,9 +114,9 @@
       </div>
     </div>
 
-    <!-- IMPORTANTE: Resultados SOLO para archivos de audio (NO grabaciones) -->
+    <!-- Resultados - ESTRUCTURA EXACTA COMO SCRIPT.JS -->
     <div v-if="results" class="processing-result">
-      <h4>📊 Resultado del Procesamiento de Audio</h4>
+      <h4>📊 Resultado del Procesamiento</h4>
       
       <div class="result-content">
         <!-- Transcripción -->
@@ -136,7 +136,7 @@
           </div>
         </div>
         
-        <!-- Respuesta del Bot -->
+        <!-- Respuesta del Bot - COMO SCRIPT.JS CORREGIDO -->
         <div v-if="getBotResponse(results)" class="result-section">
           <h5>🤖 Respuesta del Bot:</h5>
           <div class="bot-response-text">
@@ -163,10 +163,6 @@
             <div class="info-item">
               <span class="info-label">Tamaño:</span>
               <span class="info-value">{{ formatFileSize(selectedFile?.size || 0) }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">Tipo:</span>
-              <span class="info-value">Archivo subido</span>
             </div>
           </div>
         </div>
@@ -342,8 +338,7 @@ const processAudio = async () => {
     const userIdInput = document.getElementById('audioUserId')
     if (userIdInput) userIdInput.value = userId.value
     
-    // IMPORTANTE: Usar processAudio (NO processVoiceRecording)
-    // Esto va al composable y usa audioResults
+    // Delegar al composable via emit
     await emit('process-audio', selectedFile.value, options)
     
   } catch (error) {
@@ -417,7 +412,7 @@ const downloadTranscription = () => {
   
   const a = document.createElement('a')
   a.href = url
-  a.download = `audio_transcription_${selectedFile.value?.name.replace(/\.[^/.]+$/, '') || 'audio'}.txt`
+  a.download = `transcription_${selectedFile.value?.name.replace(/\.[^/.]+$/, '') || 'audio'}.txt`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -431,7 +426,7 @@ const downloadTranscription = () => {
 // ============================================================================
 
 onMounted(() => {
-  appStore.addToLog('AudioProcessor component mounted (independent)', 'info')
+  appStore.addToLog('AudioProcessor component mounted', 'info')
 })
 </script>
 
