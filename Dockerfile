@@ -6,6 +6,7 @@
 FROM node:18-bullseye AS frontend-builder
 WORKDIR /frontend
 
+
 # Herramientas útiles
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates && \
