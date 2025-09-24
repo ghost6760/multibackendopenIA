@@ -1328,28 +1328,6 @@ def update_company_configuration(company_id):
         
         logger.info(f"✅ Company {company_id} configuration updated: {list(updates.keys())}")
         
-        # NUEVO: Invalidar cache de companies para sincronizar CompanySelector
-        try:
-            # Importar company_manager para limpiar su cache interno  
-            from app.config.company_config import get_company_manager
-            company_manager = get_company_manager()
-            
-            # Limpiar cache interno del company_manager
-            if hasattr(company_manager, '_configs'):
-                # Forzar recarga de configuraciones desde PostgreSQL
-                if hasattr(company_manager, '_load_company_configs'):
-                    company_manager._configs.clear()
-                    company_manager._load_company_configs()
-                    logger.info("Cleared and reloaded company_manager cache for CompanySelector sync")
-            
-            # Limpiar TODO el cache de factory (no solo una empresa)
-            factory = get_multi_agent_factory()
-            factory.clear_all_cache()
-            logger.info("Cleared all factory cache to ensure CompanySelector synchronization")
-            
-        except Exception as cache_error:
-            logger.warning(f"Could not clear companies cache (non-critical): {cache_error}")
-        
         return create_success_response({
             "message": f"Company {company_id} updated successfully",
             "company_id": company_id,
