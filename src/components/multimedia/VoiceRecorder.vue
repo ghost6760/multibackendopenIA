@@ -88,6 +88,31 @@
         </div>
         
         <div class="config-item">
+          <label for="voiceLanguage">Idioma para procesamiento:</label>
+          <select id="voiceLanguage" v-model="config.language" :disabled="isRecording">
+            <option value="">Auto-detectar</option>
+            <option value="es">Español</option>
+            <option value="en">Inglés</option>
+            <option value="fr">Francés</option>
+            <option value="de">Alemán</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Portugués</option>
+          </select>
+        </div>
+        
+        <div class="config-item full-width">
+          <label for="voicePrompt">Prompt para procesamiento:</label>
+          <textarea
+            id="voicePrompt"
+            v-model="config.prompt"
+            placeholder="Contexto específico para el procesamiento..."
+            rows="2"
+            :disabled="isRecording"
+            class="form-textarea"
+          ></textarea>
+        </div>
+        
+        <div class="config-item">
           <label>
             <input 
               type="checkbox" 
@@ -118,6 +143,54 @@
             />
             Procesamiento automático
           </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resultados del procesamiento de grabación de voz -->
+    <div v-if="results?.processing" class="voice-processing-result">
+      <h4>🤖 Procesamiento de Grabación Completado</h4>
+      
+      <div class="processing-content">
+        <!-- Transcripción -->
+        <div class="result-section">
+          <h5>📝 Transcripción:</h5>
+          <div class="transcription-text">
+            {{ results.transcript || results.processing.transcript || results.processing.transcription || 'Sin transcripción' }}
+          </div>
+          
+          <div class="transcription-actions">
+            <button @click="copyToClipboard(results.transcript || results.processing.transcript || results.processing.transcription || '')" class="btn btn-sm">
+              📋 Copiar
+            </button>
+          </div>
+        </div>
+        
+        <!-- Respuesta del Bot -->
+        <div v-if="results.bot_response || results.processing.bot_response" class="result-section">
+          <h5>🤖 Respuesta del Bot:</h5>
+          <div class="bot-response-text">
+            {{ results.bot_response || results.processing.bot_response || results.processing.response || results.processing.message }}
+          </div>
+        </div>
+        
+        <!-- Información técnica del procesamiento -->
+        <div class="result-section technical-info">
+          <h5>🔧 Información del Procesamiento:</h5>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Empresa:</span>
+              <span class="info-value">{{ results.company_id || results.processing.company_id || appStore.currentCompanyId }}</span>
+            </div>
+            <div v-if="results.processing_time || results.processing.processing_time" class="info-item">
+              <span class="info-label">Tiempo de procesamiento:</span>
+              <span class="info-value">{{ results.processing_time || results.processing.processing_time }}ms</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Duración original:</span>
+              <span class="info-value">{{ formatDuration(results.duration || 0) }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -155,7 +228,7 @@
         <button 
           @click="processRecording" 
           class="btn btn-info"
-          :disabled="!appStore.currentCompanyId"
+          :disabled="!appStore.currentCompanyId || !userId.trim()"
         >
           🔄 Procesar con IA
         </button>
@@ -187,6 +260,7 @@
 import { ref, computed, onMounted, onUnmounted, defineProps, defineEmits } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNotifications } from '@/composables/useNotifications'
+import { useMultimedia } from '@/composables/useMultimedia'
 
 // ============================================================================
 // PROPS & EMITS - INTERFACE CON MULTIMEDIATAB
@@ -216,18 +290,24 @@ const emit = defineEmits(['toggle-recording', 'clear-results'])
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
 
+// Importar la función específica del composable
+const { processVoiceRecording } = useMultimedia()
+
 // ============================================================================
 // ESTADO LOCAL - SIMPLE COMO SCRIPT.JS
 // ============================================================================
 
 const isSupported = ref(false)
+const userId = ref('') // Usuario ID específico para grabación de voz
 
 // Configuración simple
 const config = ref({
   quality: 'high',
   echoCancellation: true,
   noiseSuppression: true,
-  autoProcess: true
+  autoProcess: true,
+  language: '', // Para procesamiento opcional
+  prompt: ''    // Para contexto opcional
 })
 
 // ============================================================================
@@ -326,27 +406,29 @@ const downloadRecording = () => {
 }
 
 const processRecording = async () => {
-  if (!props.results?.blob) return
-  
+  if (!props.results?.blob) {
+    showNotification('No hay grabación para procesar', 'warning')
+    return
+  }
+
   if (!appStore.currentCompanyId) {
     showNotification('Por favor selecciona una empresa primero', 'warning')
     return
   }
-  
+
+  if (!userId.value.trim()) {
+    showNotification('Por favor ingresa un ID de usuario', 'warning')
+    return
+  }
+
   try {
-    // Crear archivo para procesamiento - COMO SCRIPT.JS
-    const file = new File(
-      [props.results.blob], 
-      `voice_recording_${Date.now()}.webm`, 
-      { type: 'audio/webm' }
-    )
+    // Usar la función específica del composable
+    await processVoiceRecording(userId.value, {
+      language: config.value.language || undefined,
+      prompt: config.value.prompt?.trim() || undefined
+    })
     
-    // Esto debería delegar al AudioProcessor o directamente al composable
-    // Por ahora, mostrar notificación
-    showNotification('Iniciando procesamiento de grabación...', 'info')
-    
-    // TODO: Integrar con processAudio del composable
-    appStore.addToLog('Voice recording processing requested', 'info')
+    appStore.addToLog('Voice recording processed successfully', 'info')
     
   } catch (error) {
     showNotification(`Error procesando grabación: ${error.message}`, 'error')
@@ -414,6 +496,15 @@ const formatFileSize = (bytes) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+const copyToClipboard = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    showNotification('Copiado al portapapeles', 'success')
+  } catch (error) {
+    showNotification('Error al copiar al portapapeles', 'error')
+  }
 }
 
 const checkSupport = async () => {
@@ -611,6 +702,29 @@ onUnmounted(() => {
   justify-content: center;
 }
 
+.user-id-section {
+  margin-bottom: 20px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-group label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.form-input {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 .btn {
   padding: 10px 16px;
   border: none;
@@ -652,6 +766,11 @@ onUnmounted(() => {
   color: white;
 }
 
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
 .btn:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
@@ -683,6 +802,10 @@ onUnmounted(() => {
   gap: 5px;
 }
 
+.config-item.full-width {
+  grid-column: 1 / -1;
+}
+
 .config-item label {
   font-weight: 500;
   color: var(--text-primary);
@@ -699,8 +822,94 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
+.form-textarea {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
 .config-item input[type="checkbox"] {
   margin: 0;
+}
+
+.voice-processing-result {
+  margin-bottom: 25px;
+}
+
+.voice-processing-result h4 {
+  color: var(--text-primary);
+  margin-bottom: 15px;
+}
+
+.processing-content {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 20px;
+}
+
+.result-section {
+  margin-bottom: 20px;
+}
+
+.result-section:last-child {
+  margin-bottom: 0;
+}
+
+.result-section h5 {
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.transcription-text,
+.bot-response-text {
+  background: var(--bg-secondary);
+  padding: 15px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  line-height: 1.6;
+  margin-bottom: 15px;
+  min-height: 60px;
+  white-space: pre-wrap;
+}
+
+.transcription-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.technical-info {
+  border-top: 1px solid var(--border-color);
+  padding-top: 15px;
+}
+
+.info-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.info-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.info-value {
+  color: var(--text-secondary);
 }
 
 .recording-player {
