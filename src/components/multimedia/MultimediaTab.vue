@@ -44,7 +44,7 @@
           :voice-processing-progress="voiceProcessingProgress"
           @toggle-recording="handleToggleVoiceRecording"
           @process-voice-recording="handleProcessVoiceRecording"
-          @clear-results="clearVoiceResults"
+          @clear-results="handleClearVoiceResults"
         />
       </div>
 
@@ -258,7 +258,7 @@ const {
   // Funciones auxiliares
   checkMultimediaCapabilities,
   clearResults,
-  clearVoiceResults,            // NUEVO
+  clearVoiceResults,            // IMPORTADO del composable
   formatFileSize
 } = useMultimedia()
 
@@ -396,6 +396,13 @@ const handleToggleVoiceRecording = async () => {
 }
 
 /**
+ * NUEVO: Maneja limpieza de resultados de voz - USA COMPOSABLE
+ */
+const handleClearVoiceResults = () => {
+  clearVoiceResults() // Función del composable
+}
+
+/**
  * Maneja test de integración - DELEGAR AL COMPOSABLE
  */
 const handleTestIntegration = async () => {
@@ -437,10 +444,6 @@ const clearScreenResults = () => {
   screenCaptureResults.value = null
   const container = document.getElementById('screenCaptureResult')
   if (container) container.innerHTML = ''
-}
-
-const clearVoiceResults = () => {
-  clearVoiceResults()
 }
 
 const clearAllResults = () => {
