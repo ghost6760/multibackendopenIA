@@ -4,7 +4,7 @@
     <div class="tab-header">
       <h2 class="tab-title">🎤 Procesamiento Multimedia</h2>
       <p class="tab-subtitle">
-        Procesamiento de audio, imágenes, grabación de voz y captura de pantalla
+        Procesamiento de audio, imágenes y captura de pantalla
       </p>
       
       <!-- Indicador de capacidades -->
@@ -21,7 +21,7 @@
 
     <!-- Grid principal de componentes multimedia -->
     <div class="multimedia-grid">
-      <!-- Audio Processor - INDEPENDIENTE -->
+      <!-- Audio Processor -->
       <div class="multimedia-card">
         <AudioProcessor 
           ref="audioProcessorRef"
@@ -29,22 +29,7 @@
           :results="audioResults"
           :progress="processingProgress"
           @process-audio="handleProcessAudio"
-          @clear-results="clearAudioResults"
-        />
-      </div>
-
-      <!-- Voice Recorder - INDEPENDIENTE -->
-      <div class="multimedia-card">
-        <VoiceRecorder 
-          ref="voiceRecorderRef"
-          :is-recording="isRecording"
-          :duration="recordingDuration"
-          :results="voiceRecordingResults"
-          :is-processing-voice="isProcessingVoiceRecording"
-          :voice-processing-progress="voiceProcessingProgress"
-          @toggle-recording="handleToggleVoiceRecording"
-          @process-voice-recording="handleProcessVoiceRecording"
-          @clear-results="handleClearVoiceResults"
+          @clear-results="clearResults"
         />
       </div>
 
@@ -56,7 +41,7 @@
           :results="imageResults"
           :progress="processingProgress"
           @process-image="handleProcessImage"
-          @clear-results="clearImageResults"
+          @clear-results="clearResults"
         />
       </div>
 
@@ -67,7 +52,19 @@
           :is-capturing="isCapturingScreen"
           :results="screenCaptureResults"
           @capture-screen="handleCaptureScreen"
-          @clear-results="clearScreenResults"
+          @clear-results="clearResults"
+        />
+      </div>
+
+      <!-- Voice Recorder -->
+      <div class="multimedia-card">
+        <VoiceRecorder 
+          ref="voiceRecorderRef"
+          :is-recording="isRecording"
+          :duration="recordingDuration"
+          :results="voiceRecordingResults"
+          @toggle-recording="handleToggleVoiceRecording"
+          @clear-results="clearResults"
         />
       </div>
     </div>
@@ -173,36 +170,6 @@
         <span class="warning-text">Selecciona una empresa para usar las funciones multimedia</span>
       </div>
     </div>
-
-    <!-- Resumen de estado -->
-    <div class="status-summary">
-      <div class="status-grid">
-        <div class="status-item">
-          <span class="status-label">Audio:</span>
-          <span :class="['status-value', isProcessingAudio ? 'active' : 'idle']">
-            {{ isProcessingAudio ? 'Procesando' : 'Inactivo' }}
-          </span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">Voz:</span>
-          <span :class="['status-value', isRecording ? 'active' : isProcessingVoiceRecording ? 'processing' : 'idle']">
-            {{ isRecording ? 'Grabando' : isProcessingVoiceRecording ? 'Procesando' : 'Inactivo' }}
-          </span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">Imagen:</span>
-          <span :class="['status-value', isProcessingImage ? 'active' : 'idle']">
-            {{ isProcessingImage ? 'Procesando' : 'Inactivo' }}
-          </span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">Pantalla:</span>
-          <span :class="['status-value', isCapturingScreen ? 'active' : 'idle']">
-            {{ isCapturingScreen ? 'Capturando' : 'Inactivo' }}
-          </span>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -225,31 +192,28 @@ const { showNotification } = useNotifications()
 
 // USAR COMPOSABLE - EVITAR DUPLICACIONES
 const {
-  // Estado reactivo SEPARADO
+  // Estado reactivo
   isProcessingAudio,
   isProcessingImage,
   isTestingIntegration,
   isRecording,
   isCapturingScreen,
-  isProcessingVoiceRecording,    // NUEVO: Para grabación de voz
   isAnyProcessing,
   processingProgress,
-  voiceProcessingProgress,       // NUEVO: Para grabación de voz
   recordingDuration,
   
-  // Resultados SEPARADOS
-  audioResults,                  // Solo AudioProcessor
-  imageResults,                  // Solo ImageProcessor
-  integrationResults,            // Solo tests
-  screenCaptureResults,          // Solo ScreenCapture
-  voiceRecordingResults,         // Solo VoiceRecorder
+  // Resultados
+  audioResults,
+  imageResults,
+  integrationResults,
+  screenCaptureResults,
+  voiceRecordingResults,
   
   // Capacidades
   multimediaCapabilities,
 
-  // Funciones principales SEPARADAS
-  processAudio,                  // Solo para archivos de audio
-  processVoiceRecording,         // NUEVO: Solo para grabación de voz
+  // Funciones principales - USAR COMPOSABLE DIRECTAMENTE
+  processAudio,
   processImage,
   testMultimediaIntegration,
   captureScreen,
@@ -258,7 +222,6 @@ const {
   // Funciones auxiliares
   checkMultimediaCapabilities,
   clearResults,
-  clearVoiceResults,            // IMPORTADO del composable
   formatFileSize
 } = useMultimedia()
 
@@ -291,42 +254,18 @@ const canUseMultimedia = computed(() => {
 })
 
 // ============================================================================
-// EVENT HANDLERS - SEPARADOS POR FUNCIONALIDAD
+// EVENT HANDLERS - DELEGAR AL COMPOSABLE
 // ============================================================================
 
 /**
- * Maneja procesamiento de audio - SOLO PARA ARCHIVOS
- * DELEGAR AL COMPOSABLE
+ * Maneja procesamiento de audio - DELEGAR AL COMPOSABLE
  */
 const handleProcessAudio = async (audioFile, options = {}) => {
   updateGlobalProgress(true, 'Procesando Audio', 'Iniciando...', 0)
   
   try {
     const result = await processAudio(audioFile, options)
-    updateGlobalProgress(true, 'Procesamiento de Audio', 'Completado', 100)
-    
-    setTimeout(() => {
-      updateGlobalProgress(false)
-    }, 1000)
-    
-    return result
-    
-  } catch (error) {
-    updateGlobalProgress(false)
-    throw error
-  }
-}
-
-/**
- * NUEVO: Maneja procesamiento de grabación de voz - INDEPENDIENTE
- * DELEGAR AL COMPOSABLE processVoiceRecording
- */
-const handleProcessVoiceRecording = async (voiceBlob, userId, options = {}) => {
-  updateGlobalProgress(true, 'Procesando Grabación de Voz', 'Iniciando...', 0)
-  
-  try {
-    const result = await processVoiceRecording(voiceBlob, userId, options)
-    updateGlobalProgress(true, 'Procesamiento de Voz', 'Completado', 100)
+    updateGlobalProgress(true, 'Procesando Audio', 'Completado', 100)
     
     setTimeout(() => {
       updateGlobalProgress(false)
@@ -348,7 +287,7 @@ const handleProcessImage = async (imageFile, options = {}) => {
   
   try {
     const result = await processImage(imageFile, options)
-    updateGlobalProgress(true, 'Procesamiento de Imagen', 'Completado', 100)
+    updateGlobalProgress(true, 'Procesando Imagen', 'Completado', 100)
     
     setTimeout(() => {
       updateGlobalProgress(false)
@@ -370,7 +309,7 @@ const handleCaptureScreen = async (options = {}) => {
   
   try {
     const result = await captureScreen(options)
-    updateGlobalProgress(true, 'Captura de Pantalla', 'Completado', 100)
+    updateGlobalProgress(true, 'Capturando Pantalla', 'Completado', 100)
     
     setTimeout(() => {
       updateGlobalProgress(false)
@@ -396,13 +335,6 @@ const handleToggleVoiceRecording = async () => {
 }
 
 /**
- * NUEVO: Maneja limpieza de resultados de voz - USA COMPOSABLE
- */
-const handleClearVoiceResults = () => {
-  clearVoiceResults() // Función del composable
-}
-
-/**
  * Maneja test de integración - DELEGAR AL COMPOSABLE
  */
 const handleTestIntegration = async () => {
@@ -425,33 +357,6 @@ const handleTestIntegration = async () => {
 }
 
 // ============================================================================
-// FUNCIONES DE LIMPIEZA SEPARADAS
-// ============================================================================
-
-const clearAudioResults = () => {
-  audioResults.value = null
-  const container = document.getElementById('audioResult')
-  if (container) container.innerHTML = ''
-}
-
-const clearImageResults = () => {
-  imageResults.value = null
-  const container = document.getElementById('imageResult')
-  if (container) container.innerHTML = ''
-}
-
-const clearScreenResults = () => {
-  screenCaptureResults.value = null
-  const container = document.getElementById('screenCaptureResult')
-  if (container) container.innerHTML = ''
-}
-
-const clearAllResults = () => {
-  clearResults()
-  globalProgress.value.active = false
-}
-
-// ============================================================================
 // UTILIDADES DEL COMPONENTE
 // ============================================================================
 
@@ -462,6 +367,11 @@ const updateGlobalProgress = (active, title = '', message = '', percentage = 0) 
     message,
     percentage: Math.min(100, Math.max(0, percentage))
   }
+}
+
+const clearAllResults = () => {
+  clearResults()
+  globalProgress.value.active = false
 }
 
 const checkCapabilities = () => {
@@ -573,7 +483,6 @@ onMounted(() => {
   
   // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON script.js
   window.processAudio = processAudio
-  window.processVoiceRecording = processVoiceRecording  // NUEVO
   window.processImage = processImage
   window.testMultimediaIntegration = testMultimediaIntegration
   window.captureScreen = captureScreen
@@ -587,7 +496,6 @@ onUnmounted(() => {
   // Limpiar funciones globales
   if (typeof window !== 'undefined') {
     delete window.processAudio
-    delete window.processVoiceRecording      // NUEVO
     delete window.processImage
     delete window.testMultimediaIntegration
     delete window.captureScreen
@@ -607,15 +515,10 @@ watch(() => appStore.currentCompanyId, (newCompany, oldCompany) => {
   }
 })
 
-// Watcher para mostrar progreso en tiempo real - SEPARADO
-watch([processingProgress, voiceProcessingProgress, isAnyProcessing], ([progress, voiceProgress, processing]) => {
+// Watcher para mostrar progreso en tiempo real
+watch([processingProgress, isAnyProcessing], ([progress, processing]) => {
   if (processing && globalProgress.value.active) {
-    // Usar el progreso apropiado dependiendo del tipo de procesamiento
-    if (isProcessingVoiceRecording.value) {
-      globalProgress.value.percentage = voiceProgress
-    } else {
-      globalProgress.value.percentage = progress
-    }
+    globalProgress.value.percentage = progress
   }
 })
 </script>
@@ -950,57 +853,6 @@ watch([processingProgress, voiceProcessingProgress, isAnyProcessing], ([progress
   font-size: 1.2rem;
 }
 
-/* NUEVO: Resumen de estado */
-.status-summary {
-  margin-top: 20px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  padding: 15px;
-  border: 1px solid var(--border-color);
-}
-
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-}
-
-.status-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-}
-
-.status-label {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.status-value {
-  font-size: 0.9rem;
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.status-value.idle {
-  color: var(--text-muted);
-  background: rgba(160, 174, 192, 0.1);
-}
-
-.status-value.active {
-  color: var(--success-color);
-  background: rgba(72, 187, 120, 0.1);
-}
-
-.status-value.processing {
-  color: var(--primary-color);
-  background: rgba(102, 126, 234, 0.1);
-}
-
 @media (max-width: 768px) {
   .multimedia-grid {
     grid-template-columns: 1fr;
@@ -1035,10 +887,6 @@ watch([processingProgress, voiceProcessingProgress, isAnyProcessing], ([progress
     left: 10px;
     right: 10px;
     transform: none;
-  }
-  
-  .status-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>
