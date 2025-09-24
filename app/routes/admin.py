@@ -1356,6 +1356,19 @@ def update_company_configuration(company_id):
             "configuration": asdict(updated_config) if updated_config else None,
             "cache_invalidated": True
         })
+        
+        return create_success_response({
+            "message": f"Company {company_id} updated successfully",
+            "company_id": company_id,
+            "fields_updated": list(updates.keys()),
+            "new_version": updated_config.version if updated_config else "unknown",
+            "configuration": asdict(updated_config) if updated_config else None,
+            "cache_invalidated": True
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating company {company_id}: {e}")
+        return create_error_response(f"Failed to update company: {str(e)}", 500)
 
 
 @bp.route('/companies', methods=['GET'])
