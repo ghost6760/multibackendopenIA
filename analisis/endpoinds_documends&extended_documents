@@ -1,0 +1,103 @@
+Perfecto — aquí tienes un listado claro de **endpoints** y una **breve descripción de lo que hace cada uno** para los dos archivos que subiste.
+
+# 1) `documents_extended.py` (Blueprint `documents_extended`, `url_prefix='/api/documents'`)&#x20;
+
+* **GET /api/documents/\<doc\_id>/vectors**
+
+  * **Qué hace:** Devuelve los vectores (embeddings) asociados a un documento específico (`doc_id`).
+  * **Parámetros / entradas:** `company_id` vía query param (`?company_id=...`) o header `X-Company-ID`.
+  * **Validaciones:** Requiere `company_id`; valida la compañía con `get_company_manager().validate_company_id(...)`.
+  * **Salida:** Lista simulada de vectores con metadata, `document_id`, `company_id`, y `total_vectors`. Manejo de errores con códigos 400/500.&#x20;
+
+* **GET /api/documents/stats**
+
+  * **Qué hace:** Devuelve estadísticas agregadas de documentos para la empresa (total docs, chunks, vectors, uso de almacenamiento, categorías, last\_updated).
+  * **Parámetros / entradas:** `company_id` vía query param o header `X-Company-ID`.
+  * **Validaciones:** Requiere `company_id` y valida la compañía.
+  * **Salida:** Objeto `stats` (en el código está simulado). Manejo de errores con códigos 400/500.&#x20;
+
+* **POST /api/documents/search**
+
+  * **Qué hace:** Búsqueda de documentos por similitud (semantic search simulada).
+  * **Parámetros / entradas (JSON):** `{ "company_id": "...", "query": "...", "limit": 10 }` — `company_id` también puede ir por header `X-Company-ID`.
+  * **Validaciones:** `company_id` y `query` son obligatorios; valida la compañía.
+  * **Salida:** `results` (lista simulada), `query`, `total_results`, `company_id`. Manejo de errores con códigos 400/500.&#x20;
+
+---
+
+# 2) `documents.py` (Blueprint `bp`; rutas definidas a nivel de la ruta raíz del blueprint)&#x20;
+
+> Nota: este blueprint usa rutas como `''`, `'/search'`, etc. El path final en la app depende de en qué prefijo se registre el blueprint (en tu app podría registrarse bajo `/api/documents` o similar). Las rutas tal como están en el archivo son las que describo abajo. También incluye utilidades comunes: `_get_company_id_from_request()` que extrae `company_id` desde header `X-Company-ID`, query param, body JSON, o usa por defecto `'benova'`.&#x20;
+
+* **POST ''**  — *add\_document*
+
+  * **Qué hace:** Añade un único documento al vectorstore para la empresa (multitenant).
+  * **Parámetros / entradas (JSON):** body con datos del documento; `company_id` puede ir en headers/args/body (si no se pasa, por defecto `benova`).
+  * **Validaciones:** valida `company_id` y el contenido con `validate_document_data`.
+  * **Interacción interna:** usa `DocumentManager(company_id)`, obtiene `orchestrator` del `get_multi_agent_factory()` y usa `orchestrator.vectorstore_service` para guardar.
+  * **Salida:** `document_id`, `chunk_count`, mensaje. Respuesta HTTP 201 en éxito; errores 400/503/500 según el caso.&#x20;
+
+* **GET ''** — *list\_documents*
+
+  * **Qué hace:** Lista documentos con paginación para la `company_id`.
+  * **Parámetros / entradas:** `company_id` (header/arg/body/default), `page` (default 1), `page_size` (default 50, max 100).
+  * **Interacción interna:** `DocumentManager.list_documents(page, page_size)`.
+  * **Salida:** Resultado paginado (estructura retornada por `doc_manager`). Errores 400/500.&#x20;
+
+* **POST /search** — *search\_documents*
+
+  * **Qué hace:** Búsqueda semántica real (no simulada) utilizando el `vectorstore_service` de la compañía.
+  * **Parámetros / entradas (JSON):** `{ "query": "...", "k": optional }` — `company_id` extraído con `_get_company_id_from_request()`.
+  * **Validaciones:** `query` obligatorio y no vacío; valida `company_id`. `k` limitado a 20.
+  * **Interacción interna:** invoca `orchestrator.vectorstore_service.search_by_company(query, company_id, k)` y devuelve resultados. Manejo de errores y 503 si el servicio no está disponible.&#x20;
+
+* **POST /bulk** — *bulk\_add\_documents*
+
+  * **Qué hace:** Agrega varios documentos en lote.
+  * **Parámetros / entradas (JSON):** `{ "documents": [...] }` (array no vacío). `company_id` extraído como siempre.
+  * **Validaciones:** `documents` debe ser un arreglo no vacío; valida `company_id`.
+  * **Interacción interna:** `doc_manager.bulk_add_documents(documents, orchestrator.vectorstore_service)`; devuelve resultado agregado y 201 en éxito.&#x20;
+
+* **DELETE /\<doc\_id>** — *delete\_document*
+
+  * **Qué hace:** Elimina un documento y sus vectores asociados.
+  * **Parámetros / entradas:** `doc_id` en la ruta; `company_id` extraído.
+  * **Interacción interna:** llama `doc_manager.delete_document(doc_id, vectorstore_service)`; si no encontrado devuelve 404.&#x20;
+
+* **POST /cleanup** — *cleanup\_orphaned\_vectors*
+
+  * **Qué hace:** Limpia vectores huérfanos (orphaned vectors) en el vectorstore.
+  * **Decoradores:** `@require_api_key` (requiere API key) y `@handle_errors`.
+  * **Parámetros / entradas (JSON):** `{ "dry_run": true|false }` (por defecto `true` si no se envía). `company_id` extraído como siempre.
+  * **Interacción interna:** `doc_manager.cleanup_orphaned_vectors(orchestrator.vectorstore_service, dry_run)`; devuelve resultado de la limpieza (simulada/real según implementación).&#x20;
+
+* **GET /diagnostics** — *document\_diagnostics*
+
+  * **Qué hace:** Devuelve diagnósticos del sistema de documentos (salud/configuración/estadísticas internas).
+  * **Parámetros / entradas:** `company_id`.
+  * **Interacción interna:** `doc_manager.get_diagnostics(orchestrator.vectorstore_service)` y retorna el resultado.&#x20;
+
+---
+
+## Resumen rápido / puntos clave
+
+* Ambos módulos exponen funcionalidades relacionadas con documentos y vectores, pero:
+
+  * `documents.py` contiene las operaciones CRUD y de mantenimiento (add, list, search real, bulk add, delete, cleanup, diagnostics) y se apoya en `DocumentManager`, `multi_agent_factory` y `vectorstore_service`.&#x20;
+  * `documents_extended.py` aporta endpoints adicionales/auxiliares centrados en vectores, estadísticas y una búsqueda simulada más simple; su blueprint tiene `url_prefix='/api/documents'` en el archivo.&#x20;
+* `company_id` se extrae y valida en ambos archivos; en `documents.py` hay una función helper `_get_company_id_from_request()` que incluye un **default `'benova'`** si no se pasa `company_id`.&#x20;
+* `cleanup` en `documents.py` exige `require_api_key` (autenticación adicional).&#x20;
+
+
+| Endpoint                          | Método | Parámetros principales                                                                       | Descripción breve                                                                                       |       Códigos de estado | Fuente |
+| --------------------------------- | -----: | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------: | ------ |
+| `/api/documents/<doc_id>/vectors` |    GET | `company_id` (query o header `X-Company-ID`)                                                 | Devuelve los vectores (embeddings) asociados a un documento específico (`doc_id`).                      |           200, 400, 500 |        |
+| `/api/documents/stats`            |    GET | `company_id` (query o header `X-Company-ID`)                                                 | Retorna estadísticas agregadas de documentos (total docs, chunks, vectors, almacenamiento, categorías). |           200, 400, 500 |        |
+| `/api/documents/search`           |   POST | `company_id` (header/query/body opcional), `query` (body), `limit` (body opcional)           | Búsqueda semántica (simulada en `documents_extended.py`) que devuelve resultados por similitud.         |           200, 400, 500 |        |
+| `/api/documents`                  |   POST | `company_id` (header/arg/body; default `benova` si no se provee), datos del documento (body) | Agrega un documento al vectorstore para la compañía; valida y orquesta el guardado de vectores/chunks.  |      201, 400, 503, 500 |        |
+| `/api/documents`                  |    GET | `company_id` (header/arg/body), `page` (query), `page_size` (query)                          | Lista documentos paginados para la compañía indicada.                                                   |           200, 400, 500 |        |
+| `/api/documents/search`           |   POST | `company_id` (extraído), `query` (body), `k` (body, opcional, ≤20)                           | Búsqueda semántica real usando el servicio `vectorstore` de la compañía.                                |      200, 400, 503, 500 |        |
+| `/api/documents/bulk`             |   POST | `company_id` (extraído), `documents` (array en body)                                         | Agrega múltiples documentos en lote al vectorstore.                                                     |      201, 400, 503, 500 |        |
+| `/api/documents/<doc_id>`         | DELETE | `company_id` (extraído)                                                                      | Elimina un documento y sus vectores asociados; devuelve 404 si no existe.                               |      200, 404, 400, 500 |        |
+| `/api/documents/cleanup`          |   POST | `company_id` (extraído), `dry_run` (body, default `true`) — requiere API key                 | Limpia vectores huérfanos en el vectorstore; endpoint protegido con `require_api_key`.                  | 200, 400, 401, 503, 500 |        |
+| `/api/documents/diagnostics`      |    GET | `company_id` (extraído)                                                                      | Devuelve diagnósticos/estado del sistema de documentos y `vectorstore` para la compañía.                |           200, 400, 500 |        |
