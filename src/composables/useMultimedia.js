@@ -67,6 +67,7 @@ export const useMultimedia = () => {
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const processAudio = async (audioFile = null, options = {}) => {
+    // Si no se pasa archivo, intentar obtenerlo del DOM como en script.js
     if (!audioFile) {
       const fileInput = document.getElementById('audioFile')
       if (!fileInput || !fileInput.files[0]) {
@@ -75,59 +76,57 @@ export const useMultimedia = () => {
       }
       audioFile = fileInput.files[0]
     }
-  
+
     if (isProcessingAudio.value) {
       showNotification('Ya se está procesando un archivo de audio', 'warning')
       return null
     }
-  
+
     try {
       isProcessingAudio.value = true
       processingProgress.value = 0
       audioResults.value = null
-  
+
       addToLog(`Starting audio processing: ${audioFile.name}`, 'info')
       showNotification('Procesando archivo de audio...', 'info')
-  
+
+      // PRESERVAR: Validaciones como en script.js
       if (!audioFile.type.startsWith('audio/')) {
         throw new Error('El archivo debe ser de audio')
       }
-  
+
+      // PRESERVAR: Límite de tamaño como script.js
       const maxSize = 50 * 1024 * 1024 // 50MB
       if (audioFile.size > maxSize) {
         throw new Error('El archivo es demasiado grande. Máximo 50MB')
       }
-  
+
+      // Crear FormData - PRESERVAR: Estructura exacta como script.js
       const formData = new FormData()
       formData.append('audio', audioFile)
-  
-      // user_id (mantener campo exacto)
+
+      // PRESERVAR: Obtener userId del DOM como script.js
       const userIdInput = document.getElementById('audioUserId')
       if (userIdInput && userIdInput.value.trim()) {
         formData.append('user_id', userIdInput.value.trim())
       }
-  
-      // company_id (AHORA incluido para alinear comportamiento con script.js)
-      const companyId = getCompanyId()
-      if (companyId) {
-        formData.append('company_id', companyId)
-      }
-  
+
+      // Agregar opciones adicionales
       if (options.language) formData.append('language', options.language)
       if (options.prompt) formData.append('prompt', options.prompt)
-  
+
       processingProgress.value = 25
-  
-      // ENDPOINT actualizado y misma estructura (POST FormData) — coincide con script.js
-      const response = await apiRequest('/api/multimedia/process-voice', {
+
+      // PRESERVAR: Llamada API exacta como script.js
+      const response = await apiRequest('/api/multimedia/audio', {
         method: 'POST',
         body: formData
       })
-  
+
       processingProgress.value = 100
       audioResults.value = response
-  
-      // actualizar DOM si existe (comportamiento preservado)
+
+      // PRESERVAR: Mostrar resultados en DOM como script.js
       const resultContainer = document.getElementById('audioResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -139,16 +138,17 @@ export const useMultimedia = () => {
           </div>
         `
       }
-  
+
       addToLog('Audio processing completed successfully', 'success')
       showNotification('Audio procesado exitosamente', 'success')
-  
+
       return response
-  
+
     } catch (error) {
       addToLog(`Audio processing failed: ${error.message}`, 'error')
       showNotification(`Error procesando audio: ${error.message}`, 'error')
-  
+
+      // PRESERVAR: Mostrar error en DOM como script.js
       const resultContainer = document.getElementById('audioResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -158,9 +158,9 @@ export const useMultimedia = () => {
           </div>
         `
       }
-  
+
       throw error
-  
+
     } finally {
       isProcessingAudio.value = false
       processingProgress.value = 0
@@ -172,6 +172,7 @@ export const useMultimedia = () => {
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const processImage = async (imageFile = null, options = {}) => {
+    // Si no se pasa archivo, intentar obtenerlo del DOM como en script.js
     if (!imageFile) {
       const fileInput = document.getElementById('imageFile')
       if (!fileInput || !fileInput.files[0]) {
@@ -180,56 +181,57 @@ export const useMultimedia = () => {
       }
       imageFile = fileInput.files[0]
     }
-  
+
     if (isProcessingImage.value) {
       showNotification('Ya se está procesando una imagen', 'warning')
       return null
     }
-  
+
     try {
       isProcessingImage.value = true
       processingProgress.value = 0
       imageResults.value = null
-  
+
       addToLog(`Starting image processing: ${imageFile.name}`, 'info')
       showNotification('Procesando imagen...', 'info')
-  
+
+      // PRESERVAR: Validaciones como en script.js
       if (!imageFile.type.startsWith('image/')) {
         throw new Error('El archivo debe ser una imagen')
       }
-  
+
+      // PRESERVAR: Límite de tamaño como script.js
       const maxSize = 20 * 1024 * 1024 // 20MB
       if (imageFile.size > maxSize) {
         throw new Error('La imagen es demasiado grande. Máximo 20MB')
       }
-  
+
+      // Crear FormData - PRESERVAR: Estructura exacta como script.js
       const formData = new FormData()
       formData.append('image', imageFile)
-  
+
+      // PRESERVAR: Obtener userId del DOM como script.js
       const userIdInput = document.getElementById('imageUserId')
       if (userIdInput && userIdInput.value.trim()) {
         formData.append('user_id', userIdInput.value.trim())
       }
-  
-      const companyId = getCompanyId()
-      if (companyId) {
-        formData.append('company_id', companyId)
-      }
-  
+
+      // Agregar opciones adicionales
       if (options.analysis_type) formData.append('analysis_type', options.analysis_type)
       if (options.prompt) formData.append('prompt', options.prompt)
-  
+
       processingProgress.value = 25
-  
-      // ENDPOINT actualizado y misma estructura (POST FormData)
-      const response = await apiRequest('/api/multimedia/process-image', {
+
+      // PRESERVAR: Llamada API exacta como script.js
+      const response = await apiRequest('/api/multimedia/image', {
         method: 'POST',
         body: formData
       })
-  
+
       processingProgress.value = 100
       imageResults.value = response
-  
+
+      // PRESERVAR: Mostrar resultados en DOM como script.js
       const resultContainer = document.getElementById('imageResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -241,16 +243,17 @@ export const useMultimedia = () => {
           </div>
         `
       }
-  
+
       addToLog('Image processing completed successfully', 'success')
       showNotification('Imagen procesada exitosamente', 'success')
-  
+
       return response
-  
+
     } catch (error) {
       addToLog(`Image processing failed: ${error.message}`, 'error')
       showNotification(`Error procesando imagen: ${error.message}`, 'error')
-  
+
+      // PRESERVAR: Mostrar error en DOM como script.js
       const resultContainer = document.getElementById('imageResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -260,9 +263,9 @@ export const useMultimedia = () => {
           </div>
         `
       }
-  
+
       throw error
-  
+
     } finally {
       isProcessingImage.value = false
       processingProgress.value = 0
@@ -278,25 +281,22 @@ export const useMultimedia = () => {
       showNotification('Ya se está ejecutando un test de integración', 'warning')
       return
     }
-  
+
     try {
       isTestingIntegration.value = true
       integrationResults.value = null
-  
+
       addToLog('Starting multimedia integration test', 'info')
       showNotification('Ejecutando test de integración multimedia...', 'info')
-  
-      const companyId = getCompanyId()
-      const body = companyId ? { company_id: companyId } : {}
-  
-      // Usamos el mismo endpoint y contract que script.js
-      const response = await apiRequest('/api/admin/multimedia/test', {
-        method: 'POST',
-        body
+
+      // PRESERVAR: Llamada API exacta como script.js
+      const response = await apiRequest('/api/multimedia/test', {
+        method: 'GET'
       })
-  
+
       integrationResults.value = response
-  
+
+      // PRESERVAR: Mostrar resultados en DOM como script.js
       const resultContainer = document.getElementById('multimediaTestResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -308,16 +308,17 @@ export const useMultimedia = () => {
           </div>
         `
       }
-  
+
       addToLog('Multimedia integration test completed successfully', 'success')
       showNotification('Test de integración completado exitosamente', 'success')
-  
+
       return response
-  
+
     } catch (error) {
       addToLog(`Multimedia integration test failed: ${error.message}`, 'error')
       showNotification(`Error en test de integración: ${error.message}`, 'error')
-  
+
+      // PRESERVAR: Mostrar error en DOM como script.js
       const resultContainer = document.getElementById('multimediaTestResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -327,13 +328,14 @@ export const useMultimedia = () => {
           </div>
         `
       }
-  
+
       throw error
-  
+
     } finally {
       isTestingIntegration.value = false
     }
   }
+
   /**
    * Captura pantalla - MIGRADO: captureScreen() de script.js
    * PRESERVAR: Comportamiento exacto de la función original
