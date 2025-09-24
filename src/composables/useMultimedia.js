@@ -4,7 +4,6 @@
  * PRESERVA: Comportamiento exacto de las funciones originales
  * ENDPOINTS: Idénticos a script.js
  * VALIDACIONES: Exactas como script.js
- * NUEVO: Procesamiento independiente para grabación de voz
  */
 
 import { ref, computed } from 'vue'
@@ -20,7 +19,7 @@ export const useMultimedia = () => {
   const { addToLog } = useSystemLog()
 
   // ============================================================================
-  // ESTADO LOCAL REACTIVO - SEPARADO POR FUNCIONALIDAD
+  // ESTADO LOCAL REACTIVO
   // ============================================================================
 
   const isProcessingAudio = ref(false)
@@ -29,23 +28,18 @@ export const useMultimedia = () => {
   const isRecording = ref(false)
   const isCapturingScreen = ref(false)
   
-  // SEPARADO: Resultados independientes
-  const audioResults = ref(null)              // Solo para AudioProcessor
-  const imageResults = ref(null)              // Solo para ImageProcessor
-  const integrationResults = ref(null)        // Solo para tests
-  const screenCaptureResults = ref(null)      // Solo para ScreenCapture
-  const voiceRecordingResults = ref(null)     // Solo para VoiceRecorder
+  const audioResults = ref(null)
+  const imageResults = ref(null)
+  const integrationResults = ref(null)
+  const screenCaptureResults = ref(null)
+  const voiceRecordingResults = ref(null)
   
-  // Media recording state - SOLO PARA GRABACIÓN
+  // Media recording state
   const mediaRecorder = ref(null)
   const recordedChunks = ref([])
   const processingProgress = ref(0)
   const recordingDuration = ref(0)
   const recordingInterval = ref(null)
-
-  // NUEVO: Estado específico para procesamiento de grabación de voz
-  const isProcessingVoiceRecording = ref(false)
-  const voiceProcessingProgress = ref(0)
 
   // ============================================================================
   // COMPUTED PROPERTIES
@@ -55,8 +49,7 @@ export const useMultimedia = () => {
     isProcessingAudio.value || 
     isProcessingImage.value || 
     isTestingIntegration.value ||
-    isCapturingScreen.value ||
-    isProcessingVoiceRecording.value
+    isCapturingScreen.value
   )
 
   const multimediaCapabilities = computed(() => ({
@@ -74,7 +67,6 @@ export const useMultimedia = () => {
   /**
    * Procesa archivo de audio - MIGRADO: processAudio() de script.js
    * PRESERVAR: Comportamiento y endpoints exactos
-   * SOLO para AudioProcessor - NO para grabaciones de voz
    */
   const processAudio = async (audioFile = null, options = {}) => {
     // Validar empresa seleccionada - PRESERVAR lógica script.js
@@ -137,6 +129,7 @@ export const useMultimedia = () => {
       processingProgress.value = 25
 
       // PRESERVAR: Endpoint exacto como script.js CORREGIDO
+      // script.js usa '/api/multimedia/process-voice' en la versión corregida
       const response = await apiRequest('/api/multimedia/process-voice', {
         method: 'POST',
         body: formData
@@ -148,6 +141,7 @@ export const useMultimedia = () => {
       // PRESERVAR: Actualizar DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('audioResult')
       if (resultContainer) {
+        // MEJORADO: Extraer campos de manera robusta como script.js corregido
         const transcript = response.transcript || response.transcription || 'Sin transcripción'
         const botResponse = response.bot_response || response.response || response.message || null
         const companyId = response.company_id || appStore.currentCompanyId
@@ -189,6 +183,7 @@ export const useMultimedia = () => {
       addToLog(`Audio processing failed: ${error.message}`, 'error')
       showNotification(`Error procesando audio: ${error.message}`, 'error')
 
+      // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('audioResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -205,92 +200,6 @@ export const useMultimedia = () => {
     } finally {
       isProcessingAudio.value = false
       processingProgress.value = 0
-    }
-  }
-
-  /**
-   * NUEVO: Procesa grabación de voz - INDEPENDIENTE del procesamiento de audio
-   * Usa endpoint idéntico pero resultados separados
-   */
-  const processVoiceRecording = async (voiceBlob, userId, options = {}) => {
-    if (!appStore.currentCompanyId) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return null
-    }
-
-    if (!voiceBlob) {
-      showNotification('No hay grabación de voz para procesar', 'warning')
-      return null
-    }
-
-    if (isProcessingVoiceRecording.value) {
-      showNotification('Ya se está procesando una grabación de voz', 'warning')
-      return null
-    }
-
-    try {
-      isProcessingVoiceRecording.value = true
-      voiceProcessingProgress.value = 0
-
-      addToLog('Starting voice recording processing', 'info')
-      showNotification('Procesando grabación de voz...', 'info')
-
-      // Crear archivo desde blob
-      const file = new File([voiceBlob], `voice_recording_${Date.now()}.webm`, { type: 'audio/webm' })
-
-      // Crear FormData igual que processAudio pero para grabación
-      const formData = new FormData()
-      formData.append('audio', file)
-      formData.append('company_id', appStore.currentCompanyId)
-      
-      if (userId && userId.trim()) {
-        formData.append('user_id', userId.trim())
-      }
-
-      // Agregar opciones adicionales
-      if (options.language) formData.append('language', options.language)
-      if (options.prompt) formData.append('prompt', options.prompt)
-
-      voiceProcessingProgress.value = 25
-
-      // MISMO endpoint pero resultados van a voiceRecordingResults
-      const response = await apiRequest('/api/multimedia/process-voice', {
-        method: 'POST',
-        body: formData
-      })
-
-      voiceProcessingProgress.value = 100
-
-      // IMPORTANTE: Los resultados van a voiceRecordingResults, NO a audioResults
-      voiceRecordingResults.value = {
-        ...voiceRecordingResults.value, // Preservar blob, url, duration, etc.
-        processed: true,
-        transcript: response.transcript || response.transcription || 'Sin transcripción',
-        bot_response: response.bot_response || response.response || response.message || null,
-        company_id: response.company_id || appStore.currentCompanyId,
-        processing_time: response.processing_time || response.time || null,
-        full_response: response
-      }
-
-      addToLog('Voice recording processing completed successfully', 'success')
-      showNotification('Grabación de voz procesada exitosamente', 'success')
-
-      return voiceRecordingResults.value
-
-    } catch (error) {
-      addToLog(`Voice recording processing failed: ${error.message}`, 'error')
-      showNotification(`Error procesando grabación: ${error.message}`, 'error')
-
-      // Actualizar voiceRecordingResults con error
-      if (voiceRecordingResults.value) {
-        voiceRecordingResults.value.processingError = error.message
-      }
-
-      throw error
-
-    } finally {
-      isProcessingVoiceRecording.value = false
-      voiceProcessingProgress.value = 0
     }
   }
 
@@ -359,6 +268,7 @@ export const useMultimedia = () => {
       processingProgress.value = 25
 
       // PRESERVAR: Endpoint exacto como script.js CORREGIDO
+      // script.js usa '/api/multimedia/process-image' en la versión corregida
       const response = await apiRequest('/api/multimedia/process-image', {
         method: 'POST',
         body: formData
@@ -370,6 +280,7 @@ export const useMultimedia = () => {
       // PRESERVAR: Actualizar DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('imageResult')
       if (resultContainer) {
+        // MEJORADO: Extraer campos de manera robusta como script.js corregido
         const analysis = response.analysis || response.description || response.image_analysis || 'Sin análisis'
         const botResponse = response.bot_response || response.response || response.message || null
         const companyId = response.company_id || appStore.currentCompanyId
@@ -411,6 +322,7 @@ export const useMultimedia = () => {
       addToLog(`Image processing failed: ${error.message}`, 'error')
       showNotification(`Error procesando imagen: ${error.message}`, 'error')
 
+      // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('imageResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -435,6 +347,7 @@ export const useMultimedia = () => {
    * PRESERVAR: Comportamiento exacto de la función original
    */
   const testMultimediaIntegration = async () => {
+    // Validar empresa seleccionada
     if (!appStore.currentCompanyId) {
       showNotification('Por favor selecciona una empresa primero', 'warning')
       return null
@@ -452,6 +365,8 @@ export const useMultimedia = () => {
       addToLog('Starting multimedia integration test', 'info')
       showNotification('Ejecutando test de integración multimedia...', 'info')
 
+      // PRESERVAR: Endpoint exacto como script.js  
+      // script.js usa '/api/admin/multimedia/test' en testMultimediaIntegration()
       const response = await apiRequest('/api/admin/multimedia/test', {
         method: 'POST',
         body: {
@@ -461,6 +376,7 @@ export const useMultimedia = () => {
 
       integrationResults.value = response
 
+      // PRESERVAR: Mostrar resultados en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('multimediaTestResult')
       if (resultContainer) {
         const integration = response.multimedia_integration || {}
@@ -499,6 +415,7 @@ export const useMultimedia = () => {
       addToLog(`Multimedia integration test failed: ${error.message}`, 'error')
       showNotification(`Error en test de integración: ${error.message}`, 'error')
 
+      // PRESERVAR: Mostrar error en DOM como script.js SI EXISTE
       const resultContainer = document.getElementById('multimediaTestResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -536,6 +453,7 @@ export const useMultimedia = () => {
       addToLog('Starting screen capture', 'info')
       showNotification('Iniciando captura de pantalla...', 'info')
 
+      // PRESERVAR: Configuración de captura como script.js
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { 
           mediaSource: 'screen',
@@ -559,8 +477,10 @@ export const useMultimedia = () => {
       const ctx = canvas.getContext('2d')
       ctx.drawImage(video, 0, 0)
 
+      // Detener stream
       stream.getTracks().forEach(track => track.stop())
 
+      // Convertir a blob
       const blob = await new Promise(resolve => {
         canvas.toBlob(resolve, 'image/png')
       })
@@ -577,6 +497,7 @@ export const useMultimedia = () => {
         }
       }
 
+      // PRESERVAR: Mostrar resultado como script.js SI EXISTE
       const resultContainer = document.getElementById('screenCaptureResult')
       if (resultContainer) {
         resultContainer.innerHTML = `
@@ -620,7 +541,7 @@ export const useMultimedia = () => {
 
   /**
    * Alterna grabación de voz - MIGRADO: toggleVoiceRecording() de script.js
-   * MODIFICADO: Ya NO procesa automáticamente al finalizar
+   * PRESERVAR: Comportamiento exacto de la función original
    */
   const toggleVoiceRecording = async () => {
     if (isRecording.value) {
@@ -632,7 +553,6 @@ export const useMultimedia = () => {
 
   /**
    * Inicia grabación de voz - MIGRADO de script.js
-   * MODIFICADO: Ya NO procesa automáticamente
    */
   const startVoiceRecording = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -665,15 +585,14 @@ export const useMultimedia = () => {
       mediaRecorder.value.onstop = async () => {
         const blob = new Blob(recordedChunks.value, { type: 'audio/webm' })
         
-        // IMPORTANTE: Los resultados van SOLO a voiceRecordingResults
         voiceRecordingResults.value = {
           blob,
           url: URL.createObjectURL(blob),
           duration: recordingDuration.value,
-          timestamp: new Date().toISOString(),
-          processed: false // Indica que aún no está procesado
+          timestamp: new Date().toISOString()
         }
 
+        // PRESERVAR: Actualizar botón como script.js SI EXISTE
         const recordButton = document.getElementById('recordVoiceButton')
         if (recordButton) {
           recordButton.textContent = '🎤 Grabar Voz'
@@ -683,19 +602,26 @@ export const useMultimedia = () => {
         addToLog(`Voice recording completed (${recordingDuration.value}s)`, 'success')
         showNotification(`Grabación completada (${recordingDuration.value}s)`, 'success')
 
-        // ELIMINADO: Ya no procesa automáticamente
-        // El usuario debe hacer clic en "Procesar con IA" manualmente
+        // PRESERVAR: Procesamiento automático como script.js
+        try {
+          const file = new File([blob], `voice_recording_${Date.now()}.webm`, { type: 'audio/webm' })
+          await processAudio(file)
+        } catch (error) {
+          addToLog(`Error processing recorded audio: ${error.message}`, 'error')
+        }
       }
 
       mediaRecorder.value.start()
       isRecording.value = true
 
+      // PRESERVAR: Actualizar botón como script.js SI EXISTE
       const recordButton = document.getElementById('recordVoiceButton')
       if (recordButton) {
         recordButton.textContent = '⏹️ Detener'
         recordButton.className = 'btn btn-danger'
       }
 
+      // Contador de duración
       recordingInterval.value = setInterval(() => {
         recordingDuration.value++
         if (recordButton) {
@@ -785,15 +711,6 @@ export const useMultimedia = () => {
     showNotification('Resultados limpiados', 'info')
   }
 
-  // NUEVO: Limpiar solo resultados de grabación de voz
-  const clearVoiceResults = () => {
-    if (voiceRecordingResults.value?.url) {
-      URL.revokeObjectURL(voiceRecordingResults.value.url)
-    }
-    voiceRecordingResults.value = null
-    addToLog('Voice recording results cleared', 'info')
-  }
-
   // HELPER: Escape HTML para evitar XSS - PRESERVAR de script.js
   const escapeHTML = (text) => {
     const div = document.createElement('div')
@@ -812,25 +729,22 @@ export const useMultimedia = () => {
     isTestingIntegration,
     isRecording,
     isCapturingScreen,
-    isProcessingVoiceRecording,  // NUEVO
     isAnyProcessing,
     processingProgress,
-    voiceProcessingProgress,     // NUEVO
     recordingDuration,
     
-    // Resultados SEPARADOS
-    audioResults,              // Solo AudioProcessor
-    imageResults,              // Solo ImageProcessor
-    integrationResults,        // Solo tests
-    screenCaptureResults,      // Solo ScreenCapture
-    voiceRecordingResults,     // Solo VoiceRecorder
+    // Resultados
+    audioResults,
+    imageResults,
+    integrationResults,
+    screenCaptureResults,
+    voiceRecordingResults,
     
     // Capacidades
     multimediaCapabilities,
 
     // Funciones principales (PRESERVAR nombres exactos de script.js)
-    processAudio,              // Solo para archivos de audio
-    processVoiceRecording,     // NUEVO: Solo para grabaciones de voz
+    processAudio,
     processImage,
     testMultimediaIntegration,
     captureScreen,
@@ -841,7 +755,6 @@ export const useMultimedia = () => {
     stopVoiceRecording,
     checkMultimediaCapabilities,
     clearResults,
-    clearVoiceResults,         // NUEVO
     formatFileSize,
     escapeHTML
   }
