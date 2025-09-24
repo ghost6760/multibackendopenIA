@@ -29,7 +29,7 @@
           :results="audioResults"
           :progress="processingProgress"
           @process-audio="handleProcessAudio"
-          @clear-results="clearResults"
+          @clear-results="clearAudioResults"
         />
       </div>
 
@@ -41,18 +41,7 @@
           :results="imageResults"
           :progress="processingProgress"
           @process-image="handleProcessImage"
-          @clear-results="clearResults"
-        />
-      </div>
-
-      <!-- Screen Capture -->
-      <div class="multimedia-card">
-        <ScreenCapture 
-          ref="screenCaptureRef"
-          :is-capturing="isCapturingScreen"
-          :results="screenCaptureResults"
-          @capture-screen="handleCaptureScreen"
-          @clear-results="clearResults"
+          @clear-results="clearImageResults"
         />
       </div>
 
@@ -64,7 +53,19 @@
           :duration="recordingDuration"
           :results="voiceRecordingResults"
           @toggle-recording="handleToggleVoiceRecording"
-          @clear-results="clearResults"
+          @process-recording="handleProcessVoiceRecording"
+          @clear-results="clearVoiceResults"
+        />
+      </div>
+
+      <!-- Screen Capture -->
+      <div class="multimedia-card">
+        <ScreenCapture 
+          ref="screenCaptureRef"
+          :is-capturing="isCapturingScreen"
+          :results="screenCaptureResults"
+          @capture-screen="handleCaptureScreen"
+          @clear-results="clearScreenResults"
         />
       </div>
     </div>
@@ -215,6 +216,7 @@ const {
   // Funciones principales - USAR COMPOSABLE DIRECTAMENTE
   processAudio,
   processImage,
+  processVoiceRecording,
   testMultimediaIntegration,
   captureScreen,
   toggleVoiceRecording,
@@ -326,11 +328,33 @@ const handleCaptureScreen = async (options = {}) => {
 /**
  * Maneja grabación de voz - DELEGAR AL COMPOSABLE
  */
-const handleToggleVoiceRecording = async () => {
+const handleToggleVoiceRecording = async (options = {}) => {
   try {
-    await toggleVoiceRecording()
+    await toggleVoiceRecording(options)
   } catch (error) {
     showNotification(`Error en grabación: ${error.message}`, 'error')
+  }
+}
+
+/**
+ * Maneja procesamiento de grabación de voz - NUEVA FUNCIÓN
+ */
+const handleProcessVoiceRecording = async ({ userId, options = {} }) => {
+  updateGlobalProgress(true, 'Procesando Grabación de Voz', 'Iniciando...', 0)
+  
+  try {
+    const result = await processVoiceRecording(userId, options)
+    updateGlobalProgress(true, 'Procesando Grabación de Voz', 'Completado', 100)
+    
+    setTimeout(() => {
+      updateGlobalProgress(false)
+    }, 1000)
+    
+    return result
+    
+  } catch (error) {
+    updateGlobalProgress(false)
+    throw error
   }
 }
 
@@ -357,6 +381,37 @@ const handleTestIntegration = async () => {
 }
 
 // ============================================================================
+// FUNCIONES DE LIMPIEZA ESPECÍFICAS
+// ============================================================================
+
+const clearAudioResults = () => {
+  audioResults.value = null
+  const container = document.getElementById('audioResult')
+  if (container) container.innerHTML = ''
+}
+
+const clearImageResults = () => {
+  imageResults.value = null
+  const container = document.getElementById('imageResult')
+  if (container) container.innerHTML = ''
+}
+
+const clearVoiceResults = () => {
+  voiceRecordingResults.value = null
+}
+
+const clearScreenResults = () => {
+  screenCaptureResults.value = null
+  const container = document.getElementById('screenCaptureResult')
+  if (container) container.innerHTML = ''
+}
+
+const clearAllResults = () => {
+  clearResults()
+  globalProgress.value.active = false
+}
+
+// ============================================================================
 // UTILIDADES DEL COMPONENTE
 // ============================================================================
 
@@ -367,11 +422,6 @@ const updateGlobalProgress = (active, title = '', message = '', percentage = 0) 
     message,
     percentage: Math.min(100, Math.max(0, percentage))
   }
-}
-
-const clearAllResults = () => {
-  clearResults()
-  globalProgress.value.active = false
 }
 
 const checkCapabilities = () => {
@@ -484,6 +534,7 @@ onMounted(() => {
   // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD CON script.js
   window.processAudio = processAudio
   window.processImage = processImage
+  window.processVoiceRecording = processVoiceRecording
   window.testMultimediaIntegration = testMultimediaIntegration
   window.captureScreen = captureScreen
   window.toggleVoiceRecording = toggleVoiceRecording
@@ -497,6 +548,7 @@ onUnmounted(() => {
   if (typeof window !== 'undefined') {
     delete window.processAudio
     delete window.processImage
+    delete window.processVoiceRecording
     delete window.testMultimediaIntegration
     delete window.captureScreen
     delete window.toggleVoiceRecording
