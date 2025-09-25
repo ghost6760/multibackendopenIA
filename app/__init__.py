@@ -22,7 +22,6 @@ from app.routes.diagnostic import diagnostic_bp
 # Importar nuevos blueprints integrados
 from app.routes.admin import bp as admin_bp
 from app.routes.companies import bp as companies_bp
-from app.routes.documents_extended import documents_extended_bp
 from app.routes.conversations_extended import conversations_extended_bp
 
 import logging
@@ -159,7 +158,6 @@ def create_app(config_class=Config):
     # Registrar nuevos blueprints integrados
     app.register_blueprint(admin_bp)  # Ya tiene prefix /api/admin
     app.register_blueprint(companies_bp)  # Ya tiene prefix /api/companies
-    app.register_blueprint(documents_extended_bp)  # Ya tiene prefix /api/documents
     app.register_blueprint(conversations_extended_bp)  # Ya tiene prefix /api/conversations
 
     # Registrar blueprint temporal
