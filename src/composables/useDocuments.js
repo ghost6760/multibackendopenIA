@@ -1,5 +1,6 @@
-// composables/useDocuments.js - VERSIÓN CORREGIDA
-// FIXES: Conflictos de nombres, referencias globales, manejo de IDs
+// composables/useDocuments.js
+// Composable para gestión de documentos - MIGRACIÓN desde script.js
+// CRÍTICO: Mantener comportamiento idéntico para preservar compatibilidad
 
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
@@ -28,18 +29,23 @@ export const useDocuments = () => {
   // ============================================================================
   
   const hasDocuments = computed(() => documents.value.length > 0)
+  
   const documentsCount = computed(() => documents.value.length)
+  
   const hasSearchResults = computed(() => searchResults.value.length > 0)
+  
   const canUpload = computed(() => {
     return appStore.hasCompanySelected && !isUploading.value
   })
   
   // ============================================================================
-  // MÉTODOS PRINCIPALES - CORREGIDOS
+  // MÉTODOS PRINCIPALES - MIGRADOS DESDE SCRIPT.JS
   // ============================================================================
   
   /**
-   * Sube un documento al sistema - CORREGIDO
+   * Sube un documento al sistema
+   * MIGRADO: uploadDocument() de script.js
+   * ⚠️ NO MODIFICAR: Debe mantener comportamiento idéntico
    */
   const uploadDocument = async () => {
     if (!appStore.currentCompanyId) {
@@ -79,7 +85,10 @@ export const useDocuments = () => {
           file,
           content: content || ''
         })
+        
+        // Para archivos, no enviar Content-Type (FormData lo maneja)
         options.headers = {}
+        
       } else {
         // Subir solo contenido de texto
         requestData = {
@@ -132,7 +141,8 @@ export const useDocuments = () => {
   }
   
   /**
-   * Carga la lista de documentos - CORREGIDO
+   * Carga la lista de documentos
+   * MIGRADO: loadDocuments() de script.js
    */
   const loadDocuments = async () => {
     if (!appStore.currentCompanyId) {
@@ -152,17 +162,14 @@ export const useDocuments = () => {
                           response.documents ? response.documents :
                           response.data ? response.data : []
       
-      // 🆕 MEJORADO: Normalizar IDs de documentos
       documents.value = documentsList.map(doc => ({
         ...doc,
         // Asegurar campos requeridos
-        id: doc.id || doc._id || doc.doc_id || Date.now(),
+        id: doc.id || doc._id || Date.now(),
         title: doc.title || doc.name || 'Sin título',
         content: doc.content || doc.text || '',
         created_at: doc.created_at || doc.createdAt || new Date().toISOString(),
-        type: doc.type || doc.file_type || 'text',
-        // 🆕 CRÍTICO: Asegurar que el ID tenga formato correcto para el backend
-        _id: doc.id || doc._id || doc.doc_id
+        type: doc.type || doc.file_type || 'text'
       }))
       
       appStore.addToLog(`Loaded ${documents.value.length} documents`, 'info')
@@ -187,7 +194,8 @@ export const useDocuments = () => {
   }
   
   /**
-   * Busca documentos por query - CORREGIDO
+   * Busca documentos por query
+   * MIGRADO: searchDocuments() de script.js
    */
   const searchDocuments = async (query = null) => {
     if (!appStore.currentCompanyId) {
@@ -218,19 +226,15 @@ export const useDocuments = () => {
                      response.results ? response.results :
                      response.data ? response.data : []
       
-      // 🆕 MEJORADO: Normalizar resultados de búsqueda con IDs correctos
       searchResults.value = results.map(result => ({
         ...result,
         // Campos adicionales para resultados de búsqueda
         relevance: result.relevance || result.score || 1,
         highlight: result.highlight || result.excerpt || '',
-        matched_terms: result.matched_terms || [],
-        // 🆕 CRÍTICO: Asegurar ID correcto
-        id: result.id || result._id || result.doc_id,
-        _id: result.id || result._id || result.doc_id
+        matched_terms: result.matched_terms || []
       }))
       
-      // Mostrar resultados - MANTENER para compatibilidad
+      // Mostrar resultados
       displaySearchResults(searchResults.value)
       
       const message = searchResults.value.length > 0 
@@ -255,7 +259,8 @@ export const useDocuments = () => {
   }
   
   /**
-   * Visualiza un documento específico - CORREGIDO
+   * Visualiza un documento específico
+   * MIGRADO: viewDocument() de script.js
    */
   const viewDocument = async (docId) => {
     if (!docId) {
@@ -264,17 +269,14 @@ export const useDocuments = () => {
     }
     
     try {
-      // 🆕 CRÍTICO: Limpiar y validar docId
-      const cleanDocId = String(docId).trim()
+      appStore.addToLog(`Viewing document: ${docId}`, 'info')
       
-      appStore.addToLog(`Viewing document: ${cleanDocId}`, 'info')
-      
-      const response = await apiRequest(`/api/documents/${cleanDocId}`)
+      const response = await apiRequest(`/api/documents/${docId}`)
       
       currentDocument.value = response
       
-      // 🔧 CORREGIDO: Mostrar modal sin conflicto de nombres
-      showDocumentModalFixed(response)
+      // Mostrar modal con el documento
+      showDocumentModal(response)
       
       appStore.addToLog(`Document viewed: ${response.title}`, 'info')
       
@@ -289,7 +291,8 @@ export const useDocuments = () => {
   }
   
   /**
-   * Elimina un documento - CORREGIDO
+   * Elimina un documento
+   * MIGRADO: deleteDocument() de script.js
    */
   const deleteDocument = async (docId) => {
     if (!docId) {
@@ -303,27 +306,24 @@ export const useDocuments = () => {
     }
     
     try {
-      // 🆕 CRÍTICO: Limpiar docId
-      const cleanDocId = String(docId).trim()
+      appStore.addToLog(`Deleting document: ${docId}`, 'info')
       
-      appStore.addToLog(`Deleting document: ${cleanDocId}`, 'info')
-      
-      await apiRequest(`/api/documents/${cleanDocId}`, {
+      await apiRequest(`/api/documents/${docId}`, {
         method: 'DELETE'
       })
       
       // Remover de la lista local
       documents.value = documents.value.filter(doc => 
-        doc.id !== docId && doc._id !== docId && doc.doc_id !== docId
+        doc.id !== docId && doc._id !== docId
       )
       
       // Remover de resultados de búsqueda si está presente
       searchResults.value = searchResults.value.filter(doc => 
-        doc.id !== docId && doc._id !== docId && doc.doc_id !== docId
+        doc.id !== docId && doc._id !== docId
       )
       
       notifyApiSuccess('Documento eliminado')
-      appStore.addToLog(`Document deleted successfully: ${cleanDocId}`, 'info')
+      appStore.addToLog(`Document deleted successfully: ${docId}`, 'info')
       
       // Actualizar contador en el tab
       window.dispatchEvent(new CustomEvent('updateTabNotificationCount', {
@@ -341,11 +341,12 @@ export const useDocuments = () => {
   }
   
   // ============================================================================
-  // MÉTODOS DE UTILIDAD - CORREGIDOS
+  // MÉTODOS DE UTILIDAD
   // ============================================================================
   
   /**
-   * 🔧 CORREGIDO: Muestra los resultados de búsqueda sin conflictos
+   * Muestra los resultados de búsqueda en el DOM
+   * PRESERVAR: Lógica exacta del script.js original
    */
   const displaySearchResults = (results) => {
     const container = document.getElementById('searchResults')
@@ -370,10 +371,10 @@ export const useDocuments = () => {
             <div class="result-header">
               <h5 class="result-title">${escapeHTML(doc.title)}</h5>
               <div class="result-actions">
-                <button onclick="window.handleViewDocument('${doc.id || doc._id}')" class="btn-sm btn-primary">
+                <button onclick="window.viewDocument('${doc.id || doc._id}')" class="btn-sm btn-primary">
                   👁️ Ver
                 </button>
-                <button onclick="window.handleDeleteDocument('${doc.id || doc._id}')" class="btn-sm btn-danger">
+                <button onclick="window.deleteDocument('${doc.id || doc._id}')" class="btn-sm btn-danger">
                   🗑️ Eliminar
                 </button>
               </div>
@@ -394,51 +395,45 @@ export const useDocuments = () => {
   }
   
   /**
-   * 🔧 CORREGIDO: Modal sin conflicto de nombres
+   * Muestra el modal de visualización de documento
    */
-  const showDocumentModalFixed = (documentData) => {
-    // ✅ USAR documentData en lugar de document para evitar conflictos
-    const existingModal = window.document.querySelector('.document-modal')
+  const showDocumentModal = (document) => {
+    // Remover modal existente si hay uno
+    const existingModal = document.querySelector('.document-modal')
     if (existingModal) {
       existingModal.remove()
     }
     
-    const modal = window.document.createElement('div')
+    const modal = document.createElement('div')
     modal.className = 'modal-overlay document-modal'
     modal.innerHTML = `
       <div class="modal-content document-modal-content">
         <div class="modal-header">
-          <h3>📄 ${escapeHTML(documentData.title)}</h3>
-          <button onclick="closeDocumentModal()" class="modal-close">✕</button>
+          <h3>📄 ${escapeHTML(document.title)}</h3>
+          <button onclick="window.closeModal()" class="modal-close">✕</button>
         </div>
         <div class="modal-body">
           <div class="document-meta">
-            <p><strong>Creado:</strong> ${formatDate(documentData.created_at)}</p>
-            ${documentData.type ? `<p><strong>Tipo:</strong> ${documentData.type}</p>` : ''}
-            ${documentData.size ? `<p><strong>Tamaño:</strong> ${formatFileSize(documentData.size)}</p>` : ''}
+            <p><strong>Creado:</strong> ${formatDate(document.created_at)}</p>
+            ${document.type ? `<p><strong>Tipo:</strong> ${document.type}</p>` : ''}
+            ${document.size ? `<p><strong>Tamaño:</strong> ${formatFileSize(document.size)}</p>` : ''}
           </div>
           <div class="document-content">
             <h4>Contenido:</h4>
-            <pre class="document-text">${escapeHTML(documentData.content || 'Sin contenido disponible')}</pre>
+            <pre class="document-text">${escapeHTML(document.content || 'Sin contenido disponible')}</pre>
           </div>
         </div>
         <div class="modal-footer">
-          <button onclick="closeDocumentModal()" class="btn-primary">Cerrar</button>
-          <button onclick="window.handleDeleteDocument('${documentData.id || documentData._id}')" class="btn-danger">
+          <button onclick="window.closeModal()" class="btn-primary">Cerrar</button>
+          <button onclick="window.deleteDocument('${document.id || document._id}')" class="btn-danger">
             🗑️ Eliminar
           </button>
         </div>
       </div>
     `
     
-    window.document.body.appendChild(modal)
-    modal.onclick = (e) => { if (e.target === modal) closeDocumentModal() }
-    
-    // ✅ DEFINIR función de cierre globalmente
-    window.closeDocumentModal = () => {
-      modal.remove()
-      delete window.closeDocumentModal
-    }
+    document.body.appendChild(modal)
+    modal.onclick = (e) => { if (e.target === modal) window.closeModal() }
   }
   
   /**
@@ -489,19 +484,23 @@ export const useDocuments = () => {
   
   /**
    * Escapa HTML para prevenir XSS
+   * PRESERVAR: Función exacta del script.js
    */
   const escapeHTML = (text) => {
     if (!text) return ''
     
-    const div = window.document.createElement('div')
+    const div = document.createElement('div')
     div.textContent = text
     return div.innerHTML
   }
   
   // ============================================================================
-  // SETUP DE FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  // MÉTODOS DE CONFIGURACIÓN DE DRAG & DROP
   // ============================================================================
   
+  /**
+   * Configura drag and drop para upload de archivos
+   */
   const setupFileUploadHandlers = () => {
     const fileInput = document.getElementById('documentFile')
     const uploadArea = document.querySelector('.file-upload')
@@ -542,15 +541,6 @@ export const useDocuments = () => {
         showNotification(`📁 Archivo seleccionado: ${files[0].name}`, 'info')
       }
     }
-    
-    // 🆕 DEFINIR FUNCIONES GLOBALES PARA COMPATIBILIDAD CON displaySearchResults
-    window.handleViewDocument = (docId) => {
-      viewDocument(docId)
-    }
-    
-    window.handleDeleteDocument = (docId) => {
-      deleteDocument(docId)
-    }
   }
   
   // ============================================================================
@@ -582,7 +572,7 @@ export const useDocuments = () => {
     
     // Métodos de utilidad
     displaySearchResults,
-    showDocumentModalFixed,
+    showDocumentModal,
     setupFileUploadHandlers,
     getFileType,
     formatFileSize,
