@@ -139,13 +139,25 @@
             </div>
           </div>
           
+          <!-- 🔧 CRÍTICO: Botón para cerrar modals si hay problemas -->
+          <div v-if="isModalOpen" class="modal-alert">
+            <div class="alert alert-warning">
+              <span>⚠️ Hay un modal abierto</span>
+              <button @click="forceCloseModals" class="btn-close-modal">
+                ✕ Cerrar Modal
+              </button>
+            </div>
+          </div>
+          
           <!-- Search results -->
           <div id="searchResults" class="search-results-container">
             <SearchResults
               v-if="hasSearchResults"
               :results="searchResults"
+              :search-query="searchQuery"
               @view-document="viewDocument"
               @delete-document="deleteDocument"
+              @clear-results="clearSearchResults"
             />
             <div v-else-if="searchPerformed && !hasSearchResults" class="no-results">
               <p>❌ No se encontraron documentos que coincidan con la búsqueda</p>
@@ -170,6 +182,16 @@
               <span v-if="isLoading">⏳</span>
               <span v-else>🔄</span>
               Actualizar Lista
+            </button>
+            
+            <!-- 🔧 NUEVO: Botón de emergencia para cerrar modals -->
+            <button 
+              v-if="isModalOpen"
+              @click="forceCloseModals" 
+              class="btn btn-warning"
+              title="Cerrar todos los modals abiertos"
+            >
+              ✕ Cerrar Modals
             </button>
             
             <!-- Document stats -->
@@ -288,13 +310,19 @@ const {
   documentsCount,
   hasSearchResults,
   canUpload,
+  // 🆕 NUEVO: Estado del modal
+  isModalOpen,
+  modalDocument,
   uploadDocument,
   loadDocuments,
   searchDocuments,
   viewDocument,
   deleteDocument,
+  // 🆕 NUEVO: Función para cerrar modals
+  forceCloseAllModals,
   setupFileUploadHandlers,
-  formatFileSize
+  formatFileSize,
+  cleanup
 } = useDocuments()
 
 const { showNotification } = useNotifications()
@@ -326,6 +354,27 @@ const showAdminFunctions = computed(() => {
 })
 
 // ============================================================================
+// 🔧 WATCHERS PARA AUTO-CERRAR MODALS
+// ============================================================================
+
+// 🔧 CRÍTICO: Watch para cambios de pestaña activa
+watch(() => props.isActive, (newActive, oldActive) => {
+  if (oldActive && !newActive) {
+    console.log('[DOCUMENTS-TAB] Tab became inactive, closing modals')
+    forceCloseModals()
+  }
+})
+
+// 🔧 CRÍTICO: Watch para cambios de empresa
+watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
+  if (oldCompanyId && newCompanyId !== oldCompanyId) {
+    console.log('[DOCUMENTS-TAB] Company changed, closing modals and clearing search')
+    forceCloseModals()
+    clearSearchResults()
+  }
+})
+
+// ============================================================================
 // MÉTODOS DE UPLOAD
 // ============================================================================
 
@@ -337,6 +386,9 @@ const handleUpload = async () => {
     showNotification('❌ Complete todos los campos requeridos', 'error')
     return
   }
+  
+  // 🔧 IMPORTANTE: Cerrar cualquier modal antes del upload
+  forceCloseModals()
   
   // Actualizar los inputs del DOM para mantener compatibilidad
   const titleInput = document.getElementById('documentTitle')
@@ -437,13 +489,16 @@ const handleDrop = (event) => {
 // ============================================================================
 
 /**
- * Handle search
+ * Handle search - MEJORADO con cierre de modals
  */
 const handleSearch = async () => {
   if (!searchQuery.value.trim()) {
     showNotification('❌ Ingresa un término de búsqueda', 'error')
     return
   }
+  
+  // 🔧 CRÍTICO: Cerrar cualquier modal antes de nueva búsqueda
+  forceCloseModals()
   
   // Update DOM input for compatibility
   const searchInput = document.getElementById('searchQuery')
@@ -453,6 +508,38 @@ const handleSearch = async () => {
   
   searchPerformed.value = true
   await searchDocuments(searchQuery.value)
+}
+
+/**
+ * 🔧 NUEVO: Limpiar resultados de búsqueda
+ */
+const clearSearchResults = () => {
+  searchResults.value = []
+  searchPerformed.value = false
+  searchQuery.value = ''
+  
+  // Limpiar también el input DOM
+  const searchInput = document.getElementById('searchQuery')
+  if (searchInput) {
+    searchInput.value = ''
+  }
+  
+  // Cerrar cualquier modal abierto
+  forceCloseModals()
+  
+  showNotification('🔍 Resultados de búsqueda limpiados', 'info')
+}
+
+// ============================================================================
+// 🔧 MÉTODOS DE GESTIÓN DE MODALS - NUEVOS
+// ============================================================================
+
+/**
+ * 🔧 CRÍTICO: Función para forzar cierre de modals desde el componente
+ */
+const forceCloseModals = () => {
+  console.log('[DOCUMENTS-TAB] forceCloseModals called from component')
+  forceCloseAllModals()
 }
 
 // ============================================================================
@@ -537,13 +624,13 @@ const runDocumentMaintenance = () => {
 }
 
 // ============================================================================
-// LIFECYCLE HOOKS
+// LIFECYCLE HOOKS - MEJORADOS
 // ============================================================================
 
 onMounted(async () => {
   appStore.addToLog('DocumentsTab mounted', 'info')
   
-  // Setup file upload handlers
+  // 🔧 IMPORTANTE: Setup file upload handlers
   setupFileUploadHandlers()
   
   // Load documents if company is selected
@@ -553,15 +640,34 @@ onMounted(async () => {
   
   // Event listener for tab content loading
   window.addEventListener('loadTabContent', handleLoadTabContent)
+  
+  // 🔧 NUEVO: Event listeners para cerrar modals en casos especiales
+  window.addEventListener('beforeunload', forceCloseModals)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      console.log('[DOCUMENTS-TAB] Page hidden, closing modals')
+      forceCloseModals()
+    }
+  })
 })
 
 onUnmounted(() => {
+  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up')
+  
+  // 🔧 CRÍTICO: Limpiar todo antes de desmontar
+  forceCloseModals()
+  cleanup()
+  
+  // Remove event listeners
   window.removeEventListener('loadTabContent', handleLoadTabContent)
+  window.removeEventListener('beforeunload', forceCloseModals)
 })
 
 // Handle load tab content event
 const handleLoadTabContent = (event) => {
   if (event.detail.tabName === 'documents' && props.isActive) {
+    // 🔧 NUEVO: Cerrar modals al cargar pestaña
+    forceCloseModals()
     loadDocuments()
   }
 }
@@ -574,16 +680,37 @@ watch(() => appStore.currentCompanyId, (newCompanyId) => {
 })
 
 // ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - ACTUALIZADAS
 // ============================================================================
 
 onMounted(() => {
-  // Exponer funciones específicas de documentos
-  window.uploadDocument = uploadDocument
-  window.loadDocuments = loadDocuments
-  window.searchDocuments = searchDocuments
-  window.viewDocument = viewDocument
-  window.deleteDocument = deleteDocument
+  // 🔧 ACTUALIZADO: Exponer funciones con cierre de modals
+  window.uploadDocument = async () => {
+    forceCloseModals()
+    return await uploadDocument()
+  }
+  
+  window.loadDocuments = async () => {
+    forceCloseModals()
+    return await loadDocuments()
+  }
+  
+  window.searchDocuments = async (query) => {
+    forceCloseModals()
+    return await searchDocuments(query)
+  }
+  
+  window.viewDocument = async (docId) => {
+    // No cerrar modals aquí porque viewDocument va a abrir uno nuevo
+    return await viewDocument(docId)
+  }
+  
+  window.deleteDocument = async (docId) => {
+    return await deleteDocument(docId)
+  }
+  
+  // 🔧 NUEVA: Función global para forzar cierre desde cualquier lugar
+  window.forceCloseAllDocumentModals = forceCloseModals
 })
 
 onUnmounted(() => {
@@ -594,6 +721,7 @@ onUnmounted(() => {
     delete window.searchDocuments
     delete window.viewDocument
     delete window.deleteDocument
+    delete window.forceCloseAllDocumentModals
   }
 })
 </script>
@@ -605,6 +733,52 @@ onUnmounted(() => {
 
 .tab-content.active {
   display: block;
+}
+
+/* 🔧 NUEVO: Estilos para alerta de modal */
+.modal-alert {
+  margin-bottom: 15px;
+}
+
+.alert {
+  padding: 10px 15px;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.alert-warning {
+  background: #fff3cd;
+  border: 1px solid #ffecb3;
+  color: #856404;
+}
+
+.btn-close-modal {
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+
+.btn-close-modal:hover {
+  background: #c82333;
+}
+
+.btn-warning {
+  background: #ffc107;
+  color: #212529;
+  border: 1px solid #ffc107;
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: #e0a800;
+  border-color: #e0a800;
 }
 
 .warning-message {
@@ -1010,6 +1184,12 @@ onUnmounted(() => {
   
   .admin-actions {
     flex-direction: column;
+  }
+  
+  .alert {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
   }
 }
 </style>
