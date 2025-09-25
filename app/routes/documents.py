@@ -267,7 +267,7 @@ def search_documents():
 @bp.route('/<doc_id>', methods=['GET'])
 @handle_errors  
 def get_document(doc_id):
-    """🔧 CORREGIDO: Get document with proper company isolation"""
+    """Get a single document by ID - Multi-tenant"""
     try:
         company_id = _get_company_id_from_request()
         
@@ -276,102 +276,44 @@ def get_document(doc_id):
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # 🔧 CORREGIDO: Mejor manejo de doc_id
-        original_doc_id = str(doc_id).strip()
-        logger.info(f"[{company_id}] Getting document: {original_doc_id}")
+        # Asegurar prefijo de empresa
+        if not doc_id.startswith(f"{company_id}_"):
+            doc_id = f"{company_id}_{doc_id}"
         
-        # Probar diferentes formatos de doc_id
-        possible_doc_ids = [
-            original_doc_id,  # Como viene
-            f"{company_id}_{original_doc_id}",  # Con prefijo de empresa
-            original_doc_id.replace(f"{company_id}_", "")  # Sin prefijo si ya lo tiene
-        ]
-        
-        # Remover duplicados manteniendo orden
-        seen = set()
-        unique_doc_ids = []
-        for doc_id_variant in possible_doc_ids:
-            if doc_id_variant not in seen:
-                seen.add(doc_id_variant)
-                unique_doc_ids.append(doc_id_variant)
-        
-        # Obtener manager y cliente Redis
+        # Obtener documento
         doc_manager = DocumentManager(company_id=company_id)
-        redis_client = doc_manager.redis_client
-        redis_prefix = doc_manager.redis_prefix
+        doc_key = f"{doc_manager.redis_prefix}{doc_id}"
         
-        # Intentar encontrar el documento con diferentes formatos
-        doc_data = None
-        found_doc_id = None
-        
-        for doc_id_variant in unique_doc_ids:
-            doc_key = f"{redis_prefix}{doc_id_variant}"
-            logger.debug(f"[{company_id}] Trying Redis key: {doc_key}")
-            
-            if redis_client.exists(doc_key):
-                doc_data = redis_client.hgetall(doc_key)
-                found_doc_id = doc_id_variant
-                logger.info(f"[{company_id}] Document found with key: {doc_key}")
-                break
-        
-        if not doc_data:
-            logger.warning(f"[{company_id}] Document not found. Tried keys: {[f'{redis_prefix}{did}' for did in unique_doc_ids]}")
+        if not doc_manager.redis_client.exists(doc_key):
             return create_error_response("Document not found", 404)
         
-        # 🔧 CORREGIDO: Mejor procesamiento de datos Redis
-        def decode_redis_value(value, default=''):
-            """Decodifica valores de Redis manejando bytes y strings"""
-            if value is None:
-                return default
-            if isinstance(value, bytes):
-                return value.decode('utf-8')
-            return str(value)
+        doc_data = doc_manager.redis_client.hgetall(doc_key)
         
-        # Extraer datos con decodificación segura
-        content = decode_redis_value(doc_data.get('content'), '')
-        metadata_str = decode_redis_value(doc_data.get('metadata'), '{}')
-        created_at = decode_redis_value(doc_data.get('created_at'), '')
+        # Procesar datos (conversión de bytes, etc.)
+        content = doc_data.get('content', '').decode() if isinstance(doc_data.get('content'), bytes) else doc_data.get('content', '')
+        metadata_str = doc_data.get('metadata', '{}').decode() if isinstance(doc_data.get('metadata'), bytes) else doc_data.get('metadata', '{}')
         
-        # Parsear metadata JSON
         try:
             metadata = json.loads(metadata_str)
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.warning(f"[{company_id}] Invalid metadata JSON for document {found_doc_id}: {e}")
+        except json.JSONDecodeError:
             metadata = {}
         
-        # 🔧 CRÍTICO: Verificar que el documento pertenece a la empresa correcta
-        doc_company = metadata.get('company_id', '')
-        if doc_company and doc_company != company_id:
-            logger.warning(f"[{company_id}] Access denied: document {found_doc_id} belongs to {doc_company}")
-            return create_error_response("Document not found", 404)  # No revelar que existe pero pertenece a otra empresa
-        
-        # 🔧 MEJORADO: Construir respuesta robusta
         document = {
-            "id": found_doc_id,
-            "_id": found_doc_id,
-            "doc_id": found_doc_id,
-            "title": metadata.get('title') or metadata.get('name') or 'Sin título',
+            "id": doc_id,
+            "_id": doc_id,
+            "title": metadata.get('title', 'Sin título'),
             "content": content,
             "metadata": metadata,
-            "created_at": created_at,
+            "created_at": doc_data.get('created_at', '').decode() if isinstance(doc_data.get('created_at'), bytes) else doc_data.get('created_at', ''),
             "company_id": company_id,
-            "type": metadata.get('file_type') or metadata.get('type') or 'text',
-            "size": metadata.get('size', 0),
-            
-            # Campos adicionales para compatibilidad
-            "name": metadata.get('title') or metadata.get('name') or 'Sin título',
-            "filename": metadata.get('filename', ''),
-            "document_type": metadata.get('file_type') or metadata.get('type') or 'text',
-            "status": "active"
+            "type": metadata.get('file_type', 'text')
         }
-        
-        logger.info(f"[{company_id}] Document retrieved successfully: {found_doc_id} (title: {document['title']})")
         
         return create_success_response(document)
         
     except Exception as e:
-        logger.error(f"Error getting document {doc_id}: {e}", exc_info=True)
-        return create_error_response(f"Failed to get document: {str(e)}", 500)
+        logger.error(f"Error getting document {doc_id}: {e}")
+        return create_error_response("Failed to get document", 500)
 
 
 # 🆕 NUEVO: Endpoint de diagnóstico para debugging
