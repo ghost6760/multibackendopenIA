@@ -20,14 +20,18 @@ def _get_company_id_from_request() -> str:
     if not company_id:
         company_id = request.args.get('company_id')
     
-    # Método 3: JSON body
+    # Método 3: Form data (NUEVO)
+    if not company_id and request.form:
+        company_id = request.form.get('company_id')
+    
+    # Método 4: JSON body
     if not company_id and request.is_json:
         data = request.get_json()
         company_id = data.get('company_id') if data else None
     
     # Por defecto
     if not company_id:
-        company_id = 'benova'  # Empresa por defecto para retrocompatibilidad
+        company_id = 'benova'
     
     return company_id
 
@@ -43,14 +47,42 @@ def add_document():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        data = request.get_json()
+        # 🔧 CORRECCIÓN: Detectar tipo de contenido
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            # Manejar FormData (con archivos)
+            data = {
+                'title': request.form.get('title'),
+                'content': request.form.get('content', ''),
+                'company_id': request.form.get('company_id', company_id)
+            }
+            
+            # Manejar archivo si existe
+            uploaded_file = request.files.get('file')
+            if uploaded_file and uploaded_file.filename:
+                # Procesar el archivo
+                file_content = uploaded_file.read().decode('utf-8', errors='ignore')
+                # Combinar contenido del archivo con el contenido del form
+                if file_content.strip():
+                    data['content'] = file_content if not data['content'] else data['content'] + '\n\n' + file_content
+                
+                # Agregar metadatos del archivo
+                data['filename'] = uploaded_file.filename
+                data['file_type'] = uploaded_file.content_type
+                
+        elif request.is_json:
+            # Manejar JSON (sin archivos) - comportamiento original
+            data = request.get_json()
+            
+        else:
+            return create_error_response("Unsupported content type. Use application/json or multipart/form-data", 400)
+        
+        # Validar datos (esto debería funcionar con ambos formatos)
         content, metadata = validate_document_data(data)
         
-        # Servicios específicos de empresa
+        # Resto del código original continúa igual...
         doc_manager = DocumentManager(company_id=company_id)
         factory = get_multi_agent_factory()
         
-        # Obtener servicio de vectorstore específico
         orchestrator = factory.get_orchestrator(company_id)
         if not orchestrator or not orchestrator.vectorstore_service:
             return create_error_response(f"Vectorstore service not available for company: {company_id}", 503)
@@ -65,7 +97,9 @@ def add_document():
             "company_id": company_id,
             "document_id": doc_id,
             "chunk_count": num_chunks,
-            "message": f"Document added with {num_chunks} chunks for {company_id}"
+            "message": f"Document added with {num_chunks} chunks for {company_id}",
+            "filename": data.get('filename'),  # Incluir info del archivo si existe
+            "file_type": data.get('file_type')
         }, 201)
         
     except ValueError as e:
@@ -73,6 +107,7 @@ def add_document():
     except Exception as e:
         logger.exception(f"Error adding document for company {company_id if 'company_id' in locals() else 'unknown'}")
         return create_error_response("Failed to add document", 500)
+        
 
 @bp.route('', methods=['GET'])
 @handle_errors
