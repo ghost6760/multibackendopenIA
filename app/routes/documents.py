@@ -35,6 +35,7 @@ def _get_company_id_from_request() -> str:
     
     return company_id
 
+
 @bp.route('', methods=['POST'])
 @handle_errors
 def add_document():
@@ -47,39 +48,68 @@ def add_document():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # 🔧 CORRECCIÓN: Detectar tipo de contenido
+        # Detectar tipo de contenido y extraer datos
         if request.content_type and 'multipart/form-data' in request.content_type:
             # Manejar FormData (con archivos)
-            data = {
-                'title': request.form.get('title'),
-                'content': request.form.get('content', ''),
-                'company_id': request.form.get('company_id', company_id)
-            }
+            title = request.form.get('title', '').strip()
+            form_content = request.form.get('content', '').strip()
             
-            # Manejar archivo si existe
+            # Procesar archivo si existe
+            file_content = ''
+            filename = None
+            file_type = None
+            
             uploaded_file = request.files.get('file')
             if uploaded_file and uploaded_file.filename:
-                # Procesar el archivo
-                file_content = uploaded_file.read().decode('utf-8', errors='ignore')
-                # Combinar contenido del archivo con el contenido del form
-                if file_content.strip():
-                    data['content'] = file_content if not data['content'] else data['content'] + '\n\n' + file_content
-                
-                # Agregar metadatos del archivo
-                data['filename'] = uploaded_file.filename
-                data['file_type'] = uploaded_file.content_type
+                try:
+                    # Leer contenido del archivo
+                    file_content = uploaded_file.read().decode('utf-8', errors='ignore').strip()
+                    filename = uploaded_file.filename
+                    file_type = uploaded_file.content_type
+                except Exception as e:
+                    return create_error_response(f"Error reading file: {str(e)}", 400)
+            
+            # Combinar contenidos
+            final_content = []
+            if title:
+                final_content.append(f"# {title}")
+            if form_content:
+                final_content.append(form_content)
+            if file_content:
+                final_content.append(file_content)
+            
+            if not final_content:
+                return create_error_response("Either content or file is required", 400)
+            
+            # Preparar datos para validación
+            data = {
+                'content': '\n\n'.join(final_content),
+                'metadata': {
+                    'title': title,
+                    'source': 'user_upload',
+                    'company_id': company_id
+                }
+            }
+            
+            # Agregar metadatos del archivo si existe
+            if filename:
+                data['metadata']['filename'] = filename
+            if file_type:
+                data['metadata']['file_type'] = file_type
                 
         elif request.is_json:
-            # Manejar JSON (sin archivos) - comportamiento original
+            # Manejar JSON (comportamiento original)
             data = request.get_json()
-            
+            if not data:
+                return create_error_response("Invalid JSON data", 400)
+                
         else:
             return create_error_response("Unsupported content type. Use application/json or multipart/form-data", 400)
         
-        # Validar datos (esto debería funcionar con ambos formatos)
+        # Validar datos (ahora debería funcionar con ambos formatos)
         content, metadata = validate_document_data(data)
         
-        # Resto del código original continúa igual...
+        # Resto del código original...
         doc_manager = DocumentManager(company_id=company_id)
         factory = get_multi_agent_factory()
         
@@ -98,8 +128,9 @@ def add_document():
             "document_id": doc_id,
             "chunk_count": num_chunks,
             "message": f"Document added with {num_chunks} chunks for {company_id}",
-            "filename": data.get('filename'),  # Incluir info del archivo si existe
-            "file_type": data.get('file_type')
+            "title": metadata.get('title'),
+            "filename": metadata.get('filename'),
+            "file_type": metadata.get('file_type')
         }, 201)
         
     except ValueError as e:
