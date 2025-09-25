@@ -5,6 +5,7 @@ from app.config.company_config import get_company_manager
 from app.utils.validators import validate_document_data
 from app.utils.decorators import handle_errors, require_api_key
 from app.utils.helpers import create_success_response, create_error_response
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -412,7 +413,7 @@ def get_document(doc_id):
         return create_error_response("Failed to get document", 500)
 
 
-@documents_extended_bp.route('/<doc_id>/vectors', methods=['GET'])
+@bp.route('/<doc_id>/vectors', methods=['GET'])
 def get_document_vectors(doc_id):
     """Obtener vectores de un documento específico"""
     try:
@@ -458,7 +459,7 @@ def get_document_vectors(doc_id):
         return create_error_response(str(e), 500)
 
 
-@documents_extended_bp.route('/stats', methods=['GET'])
+@bp.route('/stats', methods=['GET'])
 def get_documents_stats():
     """Obtener estadísticas de documentos para una empresa"""
     try:
