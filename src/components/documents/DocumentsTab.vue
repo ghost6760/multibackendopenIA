@@ -139,7 +139,7 @@
             </div>
           </div>
           
-          <!-- 🔧 CRÍTICO: Botón para cerrar modals si hay problemas -->
+          <!-- 🔧 VUE COMPATIBLE: Botón para cerrar modals si hay problemas -->
           <div v-if="isModalOpen" class="modal-alert">
             <div class="alert alert-warning">
               <span>⚠️ Hay un modal abierto</span>
@@ -184,7 +184,7 @@
               Actualizar Lista
             </button>
             
-            <!-- 🔧 NUEVO: Botón de emergencia para cerrar modals -->
+            <!-- 🔧 VUE COMPATIBLE: Botón de emergencia para cerrar modals -->
             <button 
               v-if="isModalOpen"
               @click="forceCloseModals" 
@@ -270,6 +270,18 @@
         </div>
       </div>
     </template>
+
+    <!-- 🔧 VUE COMPATIBLE MODAL: Usando componente Vue en lugar de DOM manipulation -->
+    <DocumentModalVue
+      :show-modal="showModal"
+      :modal-config="modalConfig"
+      :modal-loading="modalLoading"
+      :modal-error="modalError"
+      @close="closeModal"
+      @delete="handleModalDelete"
+      @download="handleModalDownload"
+      @retry="handleModalRetry"
+    />
   </div>
 </template>
 
@@ -282,6 +294,7 @@ import { useNotifications } from '@/composables/useNotifications'
 // Sub-components
 import DocumentList from './DocumentList.vue'
 import SearchResults from './SearchResults.vue'
+import DocumentModalVue from './DocumentModalVue.vue'
 
 // ============================================================================
 // PROPS
@@ -310,15 +323,21 @@ const {
   documentsCount,
   hasSearchResults,
   canUpload,
-  // 🆕 NUEVO: Estado del modal
+  // 🔧 VUE COMPATIBLE: Usar estado reactivo del modal
   isModalOpen,
   modalDocument,
+  modalError,
+  modalLoading,
+  showModal,
+  modalConfig,
+  // Métodos
   uploadDocument,
   loadDocuments,
   searchDocuments,
   viewDocument,
   deleteDocument,
-  // 🆕 NUEVO: Función para cerrar modals
+  openModal,
+  closeModal,
   forceCloseAllModals,
   setupFileUploadHandlers,
   formatFileSize,
@@ -354,10 +373,10 @@ const showAdminFunctions = computed(() => {
 })
 
 // ============================================================================
-// 🔧 WATCHERS PARA AUTO-CERRAR MODALS
+// 🔧 WATCHERS PARA AUTO-CERRAR MODALS - VUE COMPATIBLE
 // ============================================================================
 
-// 🔧 CRÍTICO: Watch para cambios de pestaña activa
+// Watch para cambios de pestaña activa
 watch(() => props.isActive, (newActive, oldActive) => {
   if (oldActive && !newActive) {
     console.log('[DOCUMENTS-TAB] Tab became inactive, closing modals')
@@ -365,7 +384,7 @@ watch(() => props.isActive, (newActive, oldActive) => {
   }
 })
 
-// 🔧 CRÍTICO: Watch para cambios de empresa
+// Watch para cambios de empresa
 watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
   if (oldCompanyId && newCompanyId !== oldCompanyId) {
     console.log('[DOCUMENTS-TAB] Company changed, closing modals and clearing search')
@@ -387,7 +406,7 @@ const handleUpload = async () => {
     return
   }
   
-  // 🔧 IMPORTANTE: Cerrar cualquier modal antes del upload
+  // 🔧 VUE COMPATIBLE: Cerrar modals reactivamente
   forceCloseModals()
   
   // Actualizar los inputs del DOM para mantener compatibilidad
@@ -489,7 +508,7 @@ const handleDrop = (event) => {
 // ============================================================================
 
 /**
- * Handle search - MEJORADO con cierre de modals
+ * Handle search - VUE COMPATIBLE con cierre de modals
  */
 const handleSearch = async () => {
   if (!searchQuery.value.trim()) {
@@ -497,7 +516,7 @@ const handleSearch = async () => {
     return
   }
   
-  // 🔧 CRÍTICO: Cerrar cualquier modal antes de nueva búsqueda
+  // 🔧 VUE COMPATIBLE: Cerrar modals reactivamente
   forceCloseModals()
   
   // Update DOM input for compatibility
@@ -511,7 +530,7 @@ const handleSearch = async () => {
 }
 
 /**
- * 🔧 NUEVO: Limpiar resultados de búsqueda
+ * 🔧 VUE COMPATIBLE: Limpiar resultados de búsqueda
  */
 const clearSearchResults = () => {
   searchResults.value = []
@@ -531,15 +550,38 @@ const clearSearchResults = () => {
 }
 
 // ============================================================================
-// 🔧 MÉTODOS DE GESTIÓN DE MODALS - NUEVOS
+// 🔧 MÉTODOS DEL MODAL VUE COMPATIBLE
 // ============================================================================
 
 /**
- * 🔧 CRÍTICO: Función para forzar cierre de modals desde el componente
+ * 🔧 VUE COMPATIBLE: Función para forzar cierre de modals
  */
 const forceCloseModals = () => {
   console.log('[DOCUMENTS-TAB] forceCloseModals called from component')
   forceCloseAllModals()
+}
+
+/**
+ * 🔧 VUE COMPATIBLE: Handle modal delete
+ */
+const handleModalDelete = async (docId) => {
+  await deleteDocument(docId)
+}
+
+/**
+ * 🔧 VUE COMPATIBLE: Handle modal download
+ */
+const handleModalDownload = (documentData) => {
+  showNotification(`📥 Documento descargado: ${documentData.title}`, 'success')
+}
+
+/**
+ * 🔧 VUE COMPATIBLE: Handle modal retry
+ */
+const handleModalRetry = () => {
+  if (modalConfig.value.documentData) {
+    viewDocument(modalConfig.value.documentData.id || modalConfig.value.documentData._id)
+  }
 }
 
 // ============================================================================
@@ -624,13 +666,13 @@ const runDocumentMaintenance = () => {
 }
 
 // ============================================================================
-// LIFECYCLE HOOKS - MEJORADOS
+// LIFECYCLE HOOKS - VUE COMPATIBLE
 // ============================================================================
 
 onMounted(async () => {
-  appStore.addToLog('DocumentsTab mounted', 'info')
+  appStore.addToLog('DocumentsTab mounted (Vue Compatible)', 'info')
   
-  // 🔧 IMPORTANTE: Setup file upload handlers
+  // 🔧 VUE COMPATIBLE: Setup file upload handlers simplificado
   setupFileUploadHandlers()
   
   // Load documents if company is selected
@@ -641,7 +683,7 @@ onMounted(async () => {
   // Event listener for tab content loading
   window.addEventListener('loadTabContent', handleLoadTabContent)
   
-  // 🔧 NUEVO: Event listeners para cerrar modals en casos especiales
+  // 🔧 VUE COMPATIBLE: Event listeners para cerrar modals en casos especiales
   window.addEventListener('beforeunload', forceCloseModals)
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -652,9 +694,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up')
+  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up (Vue Compatible)')
   
-  // 🔧 CRÍTICO: Limpiar todo antes de desmontar
+  // 🔧 VUE COMPATIBLE: Limpiar todo antes de desmontar
   forceCloseModals()
   cleanup()
   
@@ -666,7 +708,7 @@ onUnmounted(() => {
 // Handle load tab content event
 const handleLoadTabContent = (event) => {
   if (event.detail.tabName === 'documents' && props.isActive) {
-    // 🔧 NUEVO: Cerrar modals al cargar pestaña
+    // 🔧 VUE COMPATIBLE: Cerrar modals al cargar pestaña
     forceCloseModals()
     loadDocuments()
   }
@@ -680,11 +722,11 @@ watch(() => appStore.currentCompanyId, (newCompanyId) => {
 })
 
 // ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - ACTUALIZADAS
+// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - VUE COMPATIBLE
 // ============================================================================
 
 onMounted(() => {
-  // 🔧 ACTUALIZADO: Exponer funciones con cierre de modals
+  // 🔧 VUE COMPATIBLE: Exponer funciones simples sin manipulación DOM
   window.uploadDocument = async () => {
     forceCloseModals()
     return await uploadDocument()
@@ -709,7 +751,7 @@ onMounted(() => {
     return await deleteDocument(docId)
   }
   
-  // 🔧 NUEVA: Función global para forzar cierre desde cualquier lugar
+  // 🔧 VUE COMPATIBLE: Función global para forzar cierre
   window.forceCloseAllDocumentModals = forceCloseModals
 })
 
@@ -735,7 +777,7 @@ onUnmounted(() => {
   display: block;
 }
 
-/* 🔧 NUEVO: Estilos para alerta de modal */
+/* 🔧 VUE COMPATIBLE: Estilos para alerta de modal */
 .modal-alert {
   margin-bottom: 15px;
 }
