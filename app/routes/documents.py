@@ -203,7 +203,7 @@ def list_documents():
 def search_documents():
     """Search documents using semantic search - Multi-tenant"""
     try:
-        company_id = _get_company_id_from_request()
+        company_id = _get_company_id_from_request()  # Corregir el typo
         
         # Validar empresa
         company_manager = get_company_manager()
@@ -220,8 +220,6 @@ def search_documents():
         
         k = min(data.get('k', 3), 20)
         
-        logger.info(f"[{company_id}] Searching documents: '{query}'")
-        
         # Obtener servicio específico de empresa
         factory = get_multi_agent_factory()
         orchestrator = factory.get_orchestrator(company_id)
@@ -236,12 +234,6 @@ def search_documents():
         api_results = []
         for doc in document_results:
             metadata = getattr(doc, 'metadata', {})
-            
-            # 🔧 CRÍTICO: Verificar que el documento pertenece a la empresa correcta
-            doc_company = metadata.get('company_id', '')
-            if doc_company != company_id:
-                logger.warning(f"[{company_id}] Filtering out search result from company {doc_company}")
-                continue
             
             api_result = {
                 'id': metadata.get('doc_id', ''),
@@ -260,8 +252,6 @@ def search_documents():
                 '_id': metadata.get('doc_id', '')  # Para compatibilidad con frontend
             }
             api_results.append(api_result)
-        
-        logger.info(f"[{company_id}] Search returned {len(api_results)} results")
         
         return create_success_response({
             "company_id": company_id,
