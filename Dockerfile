@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 
 # --- STAGE 1: Frontend build (Node) ---
-FROM node:18-bullseye AS frontend-builder
+FROM node:18.20.1-bullseye AS frontend-builder
 WORKDIR /frontend
 
 
@@ -50,7 +50,7 @@ RUN echo "📦 Verificando /frontend/dist ..." && \
 
 
 # --- STAGE 2: Backend Python + static files ---
-FROM python:3.11-slim
+FROM python:3.11.6-slim-bullseye
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
