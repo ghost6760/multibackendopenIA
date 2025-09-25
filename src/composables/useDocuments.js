@@ -1,7 +1,7 @@
-// composables/useDocuments.js - MODAL COMPLETAMENTE CORREGIDO
-// FIX: Modal que se cierra automáticamente al cambiar empresa/pestaña
+// composables/useDocuments.js - VUE.JS COMPATIBLE VERSION
+// FIX: Elimina manipulación directa del DOM para ser compatible con Vue
 
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
@@ -23,47 +23,32 @@ export const useDocuments = () => {
   const currentDocument = ref(null)
   const uploadProgress = ref(0)
   
-  // 🆕 NUEVO: Estado para el modal con mejor gestión
+  // 🔧 COMPATIBLE CON VUE: Estado del modal sin manipular DOM
   const isModalOpen = ref(false)
   const modalDocument = ref(null)
-  const activeModals = ref(new Set()) // Track all active modals
+  const modalError = ref(null)
+  const modalLoading = ref(false)
   
-  // ============================================================================
-  // 🔧 WATCHERS PARA AUTO-CERRAR MODALS
-  // ============================================================================
-  
-  // Watch para cambios de empresa - CRÍTICO para cerrar modals
-  watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
-    if (oldCompanyId && newCompanyId !== oldCompanyId) {
-      console.log('[MODAL-FIX] Company changed, closing all modals')
-      forceCloseAllModals()
-      searchResults.value = [] // Clear search results too
-    }
+  // 🔧 NUEVO: Estado para mostrar el modal en el componente
+  const showModal = ref(false)
+  const modalConfig = ref({
+    title: '',
+    content: '',
+    documentData: null
   })
   
-  // Watch para detectar cambios de pestaña activa
-  let currentActiveTab = null
-  const watchActiveTab = () => {
-    const observer = new MutationObserver(() => {
-      const activeTab = document.querySelector('.tab-content.active')
-      const activeTabId = activeTab ? activeTab.id : null
-      
-      if (currentActiveTab && activeTabId !== currentActiveTab) {
-        console.log('[MODAL-FIX] Tab changed, closing all modals')
-        forceCloseAllModals()
-      }
-      currentActiveTab = activeTabId
-    })
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class']
-    })
-    
-    return observer
-  }
+  // ============================================================================
+  // WATCHERS PARA AUTO-CERRAR - COMPATIBLE CON VUE
+  // ============================================================================
+  
+  // Watch para cambios de empresa
+  watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
+    if (oldCompanyId && newCompanyId !== oldCompanyId) {
+      console.log('[DOCUMENTS] Company changed, closing modals')
+      closeModal()
+      searchResults.value = []
+    }
+  })
   
   // ============================================================================
   // COMPUTED PROPERTIES
@@ -115,7 +100,6 @@ export const useDocuments = () => {
       let options = {}
       
       if (file) {
-        // Subir archivo
         requestData = createFormData({
           title,
           file,
@@ -124,7 +108,6 @@ export const useDocuments = () => {
         })
         options.headers = {}
       } else {
-        // Subir solo contenido de texto
         requestData = {
           title,
           content: content || '',
@@ -225,11 +208,6 @@ export const useDocuments = () => {
       
       appStore.addToLog(`[${appStore.currentCompanyId}] Loaded ${documents.value.length} documents`, 'info')
       
-      // Actualizar contador en el tab
-      window.dispatchEvent(new CustomEvent('updateTabNotificationCount', {
-        detail: { tabName: 'documents', count: documents.value.length }
-      }))
-      
       return documents.value
       
     } catch (error) {
@@ -253,8 +231,8 @@ export const useDocuments = () => {
       return []
     }
     
-    // 🔧 CRÍTICO: Cerrar modals antes de nueva búsqueda
-    forceCloseAllModals()
+    // 🔧 VUE COMPATIBLE: Cerrar modal reactivamente
+    closeModal()
     
     const searchQuery = query || document.getElementById('searchQuery')?.value?.trim()
     
@@ -299,9 +277,6 @@ export const useDocuments = () => {
         _id: result.id || result._id || result.doc_id
       }))
       
-      // Mostrar resultados - MEJORADO con cierre automático
-      displaySearchResultsSafe(searchResults.value)
-      
       const message = searchResults.value.length > 0 
         ? `✅ [${appStore.currentCompanyId}] Encontrados ${searchResults.value.length} documentos`
         : `❌ [${appStore.currentCompanyId}] No se encontraron documentos`
@@ -324,7 +299,7 @@ export const useDocuments = () => {
   }
   
   /**
-   * 🔧 CORREGIDO: Visualiza un documento específico con modal que se puede cerrar
+   * 🔧 VUE COMPATIBLE: Visualiza un documento usando estado reactivo
    */
   const viewDocument = async (docId) => {
     if (!docId) {
@@ -337,11 +312,13 @@ export const useDocuments = () => {
       return null
     }
     
-    // 🔧 CRÍTICO: Cerrar cualquier modal existente primero
-    forceCloseAllModals()
-    
     try {
       const cleanDocId = String(docId).trim()
+      
+      // 🔧 VUE COMPATIBLE: Mostrar loading en el modal
+      modalLoading.value = true
+      modalError.value = null
+      openModal() // Abrir modal primero
       
       appStore.addToLog(`[${appStore.currentCompanyId}] Viewing document: ${cleanDocId}`, 'info')
       
@@ -351,11 +328,14 @@ export const useDocuments = () => {
         }
       })
       
+      // 🔧 VUE COMPATIBLE: Actualizar estado reactivo
       currentDocument.value = response
       modalDocument.value = response
-      
-      // 🔧 NUEVA IMPLEMENTACIÓN: Modal seguro que se puede cerrar
-      showDocumentModalSafe(response)
+      modalConfig.value = {
+        title: response.title || 'Sin título',
+        content: response.content || 'Sin contenido disponible',
+        documentData: response
+      }
       
       appStore.addToLog(`[${appStore.currentCompanyId}] Document viewed: ${response.title}`, 'info')
       
@@ -363,9 +343,13 @@ export const useDocuments = () => {
       
     } catch (error) {
       console.error('Error viewing document:', error)
+      modalError.value = error.message
       notifyApiError(`/api/documents/${docId}`, error)
       appStore.addToLog(`Error viewing document ${docId}: ${error.message}`, 'error')
       return null
+      
+    } finally {
+      modalLoading.value = false
     }
   }
   
@@ -404,18 +388,13 @@ export const useDocuments = () => {
         doc.id !== docId && doc._id !== docId && doc.doc_id !== docId
       )
       
-      // 🔧 IMPORTANTE: Cerrar modal si el documento eliminado es el que se está mostrando
+      // 🔧 VUE COMPATIBLE: Cerrar modal reactivamente si es el documento actual
       if (modalDocument.value && (modalDocument.value.id === docId || modalDocument.value._id === docId)) {
-        forceCloseAllModals()
+        closeModal()
       }
       
       notifyApiSuccess('Documento eliminado')
       appStore.addToLog(`[${appStore.currentCompanyId}] Document deleted successfully: ${cleanDocId}`, 'info')
-      
-      // Actualizar contador en el tab
-      window.dispatchEvent(new CustomEvent('updateTabNotificationCount', {
-        detail: { tabName: 'documents', count: documents.value.length }
-      }))
       
       return true
       
@@ -428,364 +407,43 @@ export const useDocuments = () => {
   }
   
   // ============================================================================
-  // 🔧 MODAL SEGURO - NUEVA IMPLEMENTACIÓN ROBUSTA
+  // 🔧 MODAL VUE COMPATIBLE - SIN MANIPULACIÓN DE DOM
   // ============================================================================
   
   /**
-   * 🔧 NUEVA: Modal completamente seguro que se puede cerrar
+   * 🔧 VUE COMPATIBLE: Abrir modal usando estado reactivo
    */
-  const showDocumentModalSafe = (documentData) => {
-    // ID único para este modal
-    const modalId = 'docModal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
-    
-    // Crear modal con cierre automático mejorado
-    const modal = createSafeModal(modalId, documentData)
-    
-    // Agregar al conjunto de modals activos
-    activeModals.value.add(modalId)
+  const openModal = () => {
+    showModal.value = true
     isModalOpen.value = true
-    modalDocument.value = documentData
-    
-    // Insertar en DOM
-    document.body.appendChild(modal)
-    
-    appStore.addToLog(`[${appStore.currentCompanyId}] Safe modal opened: ${modalId}`, 'info')
+    modalError.value = null
   }
   
   /**
-   * 🔧 FUNCIÓN: Crear modal DOM seguro
+   * 🔧 VUE COMPATIBLE: Cerrar modal usando estado reactivo
    */
-  const createSafeModal = (modalId, documentData) => {
-    // Crear elemento modal
-    const modalOverlay = document.createElement('div')
-    modalOverlay.id = modalId
-    modalOverlay.className = 'modal-overlay document-modal-safe'
-    modalOverlay.style.cssText = `
-      position: fixed; 
-      top: 0; left: 0; 
-      width: 100%; height: 100%; 
-      background: rgba(0,0,0,0.6); 
-      z-index: 10000; 
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      box-sizing: border-box;
-    `
-    
-    // Contenido del modal
-    modalOverlay.innerHTML = `
-      <div class="modal-content" style="
-        background: white; 
-        border-radius: 8px; 
-        width: 100%;
-        max-width: 800px;
-        max-height: 90vh;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-      ">
-        <div class="modal-header" style="
-          display: flex; 
-          justify-content: space-between; 
-          align-items: center; 
-          padding: 20px 25px;
-          border-bottom: 1px solid #eee;
-          background: #f8f9fa;
-        ">
-          <h3 style="margin: 0; color: #333; font-size: 1.2em;">
-            📄 ${escapeHTML(documentData.title || 'Sin título')}
-          </h3>
-          <button class="modal-close-btn" style="
-            background: none; 
-            border: none; 
-            font-size: 24px; 
-            cursor: pointer; 
-            color: #666; 
-            padding: 0; 
-            line-height: 1;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            transition: all 0.2s ease;
-          " onmouseover="this.style.background='#dc3545'; this.style.color='white';" 
-             onmouseout="this.style.background='none'; this.style.color='#666';">
-            ✕
-          </button>
-        </div>
-        
-        <div class="modal-body" style="
-          flex: 1; 
-          overflow-y: auto; 
-          padding: 20px 25px;
-        ">
-          <div class="document-meta" style="
-            margin-bottom: 20px; 
-            padding: 15px; 
-            background: #f9f9f9; 
-            border-radius: 4px;
-            border-left: 4px solid #007bff;
-          ">
-            <p style="margin: 5px 0; font-size: 0.9em;"><strong>🏢 Empresa:</strong> ${escapeHTML(appStore.currentCompanyId)}</p>
-            <p style="margin: 5px 0; font-size: 0.9em;"><strong>📅 Creado:</strong> ${formatDate(documentData.created_at)}</p>
-            ${documentData.type ? `<p style="margin: 5px 0; font-size: 0.9em;"><strong>📄 Tipo:</strong> ${escapeHTML(documentData.type)}</p>` : ''}
-            ${documentData.size ? `<p style="margin: 5px 0; font-size: 0.9em;"><strong>💾 Tamaño:</strong> ${formatFileSize(documentData.size)}</p>` : ''}
-          </div>
-          
-          <div class="document-content">
-            <h4 style="color: #333; margin-bottom: 15px; font-size: 1.1em;">📋 Contenido:</h4>
-            <div style="
-              max-height: 400px; 
-              overflow-y: auto; 
-              border: 1px solid #ddd; 
-              padding: 20px; 
-              background: #fafafa; 
-              font-family: 'Courier New', monospace; 
-              white-space: pre-wrap; 
-              word-wrap: break-word;
-              font-size: 0.9em;
-              line-height: 1.5;
-              border-radius: 4px;
-            ">${escapeHTML(documentData.content || 'Sin contenido disponible')}</div>
-          </div>
-        </div>
-        
-        <div class="modal-footer" style="
-          padding: 15px 25px; 
-          border-top: 1px solid #eee; 
-          background: #f8f9fa;
-          display: flex; 
-          gap: 10px; 
-          justify-content: flex-end;
-        ">
-          <button class="modal-delete-btn" style="
-            padding: 8px 16px; 
-            background: #dc3545; 
-            color: white; 
-            border: none; 
-            border-radius: 4px; 
-            cursor: pointer;
-            font-weight: 500;
-            transition: background-color 0.2s ease;
-          " onmouseover="this.style.background='#c82333';" 
-             onmouseout="this.style.background='#dc3545';">
-            🗑️ Eliminar
-          </button>
-          <button class="modal-close-btn-secondary" style="
-            padding: 8px 16px; 
-            background: #6c757d; 
-            color: white; 
-            border: none; 
-            border-radius: 4px; 
-            cursor: pointer;
-            font-weight: 500;
-            transition: background-color 0.2s ease;
-          " onmouseover="this.style.background='#5a6268';" 
-             onmouseout="this.style.background='#6c757d';">
-            Cerrar
-          </button>
-        </div>
-      </div>
-    `
-    
-    // 🔧 CRÍTICO: Event listeners robustos
-    const closeModal = () => {
-      console.log(`[MODAL-SAFE] Closing modal: ${modalId}`)
-      closeSafeModal(modalId)
-    }
-    
-    const deleteDoc = async () => {
-      if (confirm(`¿Estás seguro de que quieres eliminar "${documentData.title}"?`)) {
-        closeModal() // Cerrar primero
-        await deleteDocument(documentData.id || documentData._id)
-      }
-    }
-    
-    // Asignar eventos
-    modalOverlay.querySelector('.modal-close-btn').addEventListener('click', closeModal)
-    modalOverlay.querySelector('.modal-close-btn-secondary').addEventListener('click', closeModal)
-    modalOverlay.querySelector('.modal-delete-btn').addEventListener('click', deleteDoc)
-    
-    // Cerrar al hacer clic en overlay
-    modalOverlay.addEventListener('click', (e) => {
-      if (e.target === modalOverlay) closeModal()
-    })
-    
-    // 🔧 CRÍTICO: Escape key global para este modal específico
-    const handleEscape = (e) => {
-      if (e.key === 'Escape' && document.getElementById(modalId)) {
-        closeModal()
-      }
-    }
-    
-    document.addEventListener('keydown', handleEscape)
-    
-    // Guardar la función de limpieza
-    modalOverlay._cleanupFunction = () => {
-      document.removeEventListener('keydown', handleEscape)
-    }
-    
-    return modalOverlay
-  }
-  
-  /**
-   * 🔧 FUNCIÓN: Cerrar modal específico de forma segura
-   */
-  const closeSafeModal = (modalId) => {
-    const modal = document.getElementById(modalId)
-    if (modal) {
-      // Ejecutar función de limpieza si existe
-      if (modal._cleanupFunction) {
-        modal._cleanupFunction()
-      }
-      
-      // Remover del DOM
-      modal.remove()
-      
-      // Remover del conjunto de modals activos
-      activeModals.value.delete(modalId)
-      
-      // Si no hay más modals, limpiar estado
-      if (activeModals.value.size === 0) {
-        isModalOpen.value = false
-        modalDocument.value = null
-        currentDocument.value = null
-      }
-      
-      appStore.addToLog(`[MODAL-SAFE] Modal closed: ${modalId}`, 'info')
-    }
-  }
-  
-  /**
-   * 🔧 FUNCIÓN CRÍTICA: Forzar cierre de TODOS los modals
-   */
-  const forceCloseAllModals = () => {
-    console.log('[MODAL-FORCE-CLOSE] Closing all modals')
-    
-    // Cerrar modals tracked
-    activeModals.value.forEach(modalId => {
-      closeSafeModal(modalId)
-    })
-    
-    // Limpiar cualquier modal huérfano en el DOM
-    const orphanModals = document.querySelectorAll('.document-modal, .document-modal-safe, [id^="docModal_"], [id^="documentModal_"]')
-    orphanModals.forEach(modal => {
-      if (modal._cleanupFunction) {
-        modal._cleanupFunction()
-      }
-      modal.remove()
-    })
-    
-    // Reset completo del estado
-    activeModals.value.clear()
+  const closeModal = () => {
+    showModal.value = false
     isModalOpen.value = false
     modalDocument.value = null
     currentDocument.value = null
+    modalError.value = null
+    modalLoading.value = false
+    modalConfig.value = {
+      title: '',
+      content: '',
+      documentData: null
+    }
     
-    appStore.addToLog('[MODAL-FORCE-CLOSE] All modals closed', 'info')
+    appStore.addToLog('Document modal closed', 'info')
   }
   
-  // ============================================================================
-  // 🔧 RESULTADOS DE BÚSQUEDA SEGUROS
-  // ============================================================================
-  
   /**
-   * 🔧 MEJORADO: Muestra los resultados de búsqueda con cierre automático
+   * 🔧 VUE COMPATIBLE: Función simple para cerrar cualquier modal
    */
-  const displaySearchResultsSafe = (results) => {
-    const container = document.getElementById('searchResults')
-    if (!container) return
-    
-    // 🔧 CRÍTICO: Limpiar cualquier modal antes de mostrar resultados
-    forceCloseAllModals()
-    
-    if (results.length === 0) {
-      container.innerHTML = `
-        <div class="no-results">
-          <p>❌ No se encontraron documentos que coincidan con la búsqueda</p>
-        </div>
-      `
-      return
-    }
-    
-    container.innerHTML = `
-      <div class="search-results-header">
-        <h4>📋 Resultados de búsqueda (${results.length}) - ${appStore.currentCompanyId}</h4>
-        <button class="clear-search-results" style="
-          background: #dc3545; 
-          color: white; 
-          border: none; 
-          padding: 6px 12px; 
-          border-radius: 4px; 
-          cursor: pointer;
-          font-size: 0.85em;
-          margin-left: auto;
-        ">✕ Limpiar</button>
-      </div>
-      <div class="results-list">
-        ${results.map(doc => `
-          <div class="result-item" data-doc-id="${doc.id || doc._id}" style="
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            padding: 15px;
-            margin-bottom: 10px;
-            transition: all 0.2s ease;
-          " onmouseover="this.style.borderColor='#007bff'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)';"
-             onmouseout="this.style.borderColor='#ddd'; this.style.boxShadow='none';">
-            <div class="result-header" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-              <h5 class="result-title" style="margin: 0; color: #333; font-size: 1.1em;">${escapeHTML(doc.title)}</h5>
-              <div class="result-actions" style="display: flex; gap: 8px;">
-                <button onclick="window.handleViewDocumentSafe('${doc.id || doc._id}')" style="
-                  padding: 6px 10px;
-                  background: #007bff;
-                  color: white;
-                  border: none;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-size: 0.8em;
-                  font-weight: 500;
-                ">👁️ Ver</button>
-                <button onclick="window.handleDeleteDocumentSafe('${doc.id || doc._id}')" style="
-                  padding: 6px 10px;
-                  background: #dc3545;
-                  color: white;
-                  border: none;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-size: 0.8em;
-                  font-weight: 500;
-                ">🗑️ Eliminar</button>
-              </div>
-            </div>
-            <div class="result-content">
-              ${doc.highlight ? `<p class="result-excerpt" style="margin: 5px 0; font-size: 0.9em; color: #666; font-style: italic;"><strong>Extracto:</strong> ${escapeHTML(doc.highlight)}</p>` : ''}
-              ${doc.content ? `<p class="result-preview" style="margin: 5px 0; font-size: 0.85em; color: #555;"><strong>Vista previa:</strong> ${escapeHTML(doc.content.substring(0, 200))}${doc.content.length > 200 ? '...' : ''}</p>` : ''}
-            </div>
-            <div class="result-meta" style="display: flex; gap: 15px; margin-top: 10px; font-size: 0.8em; color: #888;">
-              <span class="result-date">📅 ${formatDate(doc.created_at)}</span>
-              ${doc.type ? `<span class="result-type">📄 ${doc.type}</span>` : ''}
-              ${doc.relevance ? `<span class="result-relevance">⭐ ${Math.round(doc.relevance * 100)}%</span>` : ''}
-              <span class="result-company">🏢 ${doc.company_id || appStore.currentCompanyId}</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `
-    
-    // 🔧 AÑADIR: Event listener para limpiar resultados
-    const clearBtn = container.querySelector('.clear-search-results')
-    if (clearBtn) {
-      clearBtn.addEventListener('click', () => {
-        searchResults.value = []
-        container.innerHTML = '<div class="search-placeholder"><p>Los resultados de búsqueda aparecerán aquí</p></div>'
-        forceCloseAllModals() // Cerrar cualquier modal abierto
-      })
-    }
+  const forceCloseAllModals = () => {
+    console.log('[MODAL-FORCE-CLOSE] Closing all modals (Vue compatible)')
+    closeModal()
   }
   
   // ============================================================================
@@ -838,96 +496,85 @@ export const useDocuments = () => {
   }
   
   // ============================================================================
-  // SETUP DE FUNCIONES GLOBALES - CORREGIDO
+  // SETUP DE FUNCIONES GLOBALES - SIMPLIFICADO PARA VUE
   // ============================================================================
   
   const setupFileUploadHandlers = () => {
+    // 🔧 VUE COMPATIBLE: Solo drag & drop, sin manipulación DOM compleja
     const fileInput = document.getElementById('documentFile')
     const uploadArea = document.querySelector('.file-upload')
     
     if (!fileInput || !uploadArea) return
     
-    // Configurar drag and drop
+    // Configurar drag and drop BÁSICO
     const events = ['dragenter', 'dragover', 'dragleave', 'drop']
     
     events.forEach(eventName => {
-      uploadArea.addEventListener(eventName, preventDefaults, false)
+      uploadArea.addEventListener(eventName, (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }, false)
     })
     
-    function preventDefaults(e) {
-      e.preventDefault()
-      e.stopPropagation()
-    }
-    
-    uploadArea.addEventListener('dragenter', highlight)
-    uploadArea.addEventListener('dragover', highlight)
-    uploadArea.addEventListener('dragleave', unhighlight)
-    uploadArea.addEventListener('drop', handleDrop)
-    
-    function highlight() {
+    uploadArea.addEventListener('dragenter', () => {
       uploadArea.classList.add('drag-over')
-    }
+    })
     
-    function unhighlight() {
+    uploadArea.addEventListener('dragover', () => {
+      uploadArea.classList.add('drag-over')
+    })
+    
+    uploadArea.addEventListener('dragleave', () => {
       uploadArea.classList.remove('drag-over')
-    }
+    })
     
-    function handleDrop(e) {
-      unhighlight()
+    uploadArea.addEventListener('drop', (e) => {
+      uploadArea.classList.remove('drag-over')
       const files = e.dataTransfer.files
       
       if (files.length > 0) {
         fileInput.files = files
         showNotification(`📁 Archivo seleccionado: ${files[0].name}`, 'info')
       }
-    }
+    })
     
-    // 🔧 CRÍTICO: Funciones globales SEGURAS
-    window.handleViewDocumentSafe = (docId) => {
-      console.log(`[GLOBAL-SAFE] handleViewDocumentSafe called with ID: ${docId}`)
+    // 🔧 VUE COMPATIBLE: Funciones globales simples SIN manipular DOM
+    window.handleViewDocument = (docId) => {
+      console.log(`[GLOBAL] handleViewDocument called with ID: ${docId}`)
       viewDocument(docId)
     }
     
-    window.handleDeleteDocumentSafe = (docId) => {
-      console.log(`[GLOBAL-SAFE] handleDeleteDocumentSafe called with ID: ${docId}`)
+    window.handleDeleteDocument = (docId) => {
+      console.log(`[GLOBAL] handleDeleteDocument called with ID: ${docId}`)
       deleteDocument(docId)
     }
     
-    // 🔧 CRÍTICO: Función global para cerrar TODOS los modals
-    window.forceCloseAllDocumentModals = () => {
-      console.log('[GLOBAL-SAFE] forceCloseAllDocumentModals called')
-      forceCloseAllModals()
+    window.closeDocumentModal = () => {
+      console.log('[GLOBAL] closeDocumentModal called')
+      closeModal()
     }
     
-    // 🔧 NUEVO: Iniciar observer de pestañas
-    const tabObserver = watchActiveTab()
-    
-    // Limpiar observer cuando sea necesario
-    window._documentTabObserver = tabObserver
+    window.forceCloseAllDocumentModals = forceCloseAllModals
   }
   
   // ============================================================================
-  // 🔧 CLEANUP FUNCTION - Limpiar todo al desmontar
+  // CLEANUP FUNCTION SIMPLE
   // ============================================================================
   
   const cleanup = () => {
-    forceCloseAllModals()
-    
-    if (window._documentTabObserver) {
-      window._documentTabObserver.disconnect()
-    }
+    closeModal()
     
     // Limpiar funciones globales
     if (typeof window !== 'undefined') {
-      delete window.handleViewDocumentSafe
-      delete window.handleDeleteDocumentSafe
+      delete window.handleViewDocument
+      delete window.handleDeleteDocument
+      delete window.closeDocumentModal
       delete window.forceCloseAllDocumentModals
-      delete window._documentTabObserver
     }
   }
   
   // ============================================================================
-  // RETURN DEL COMPOSABLE
+  // RETURN DEL COMPOSABLE - VUE COMPATIBLE
   // ============================================================================
   
   return {
@@ -939,8 +586,14 @@ export const useDocuments = () => {
     isUploading,
     isSearching,
     uploadProgress,
+    
+    // 🔧 VUE COMPATIBLE: Estado del modal reactivo
     isModalOpen,
     modalDocument,
+    modalError,
+    modalLoading,
+    showModal,
+    modalConfig,
     
     // Computed
     hasDocuments,
@@ -955,11 +608,12 @@ export const useDocuments = () => {
     viewDocument,
     deleteDocument,
     
-    // Métodos del modal
+    // 🔧 VUE COMPATIBLE: Métodos del modal reactivos
+    openModal,
+    closeModal,
     forceCloseAllModals,
     
     // Métodos de utilidad
-    displaySearchResultsSafe,
     setupFileUploadHandlers,
     getFileType,
     formatFileSize,
