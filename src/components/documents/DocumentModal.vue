@@ -1,210 +1,128 @@
 <template>
-  <!-- Modal Overlay -->
+  <!-- 🔧 VUE COMPATIBLE: Modal usando Teleport y estado reactivo -->
   <Teleport to="body">
-    <div 
-      v-if="isVisible" 
-      class="modal-overlay"
-      @click="handleOverlayClick"
-      @keydown.esc="closeModal"
-      tabindex="0"
-      ref="modalOverlay"
-    >
-      <!-- Modal Content -->
+    <Transition name="modal">
       <div 
-        class="modal-content"
-        @click.stop
-        ref="modalContent"
+        v-if="showModal && isVisible" 
+        class="modal-overlay-vue"
+        @click="handleOverlayClick"
+        @keydown.esc="closeModal"
       >
-        <!-- Modal Header -->
-        <div class="modal-header">
-          <div class="modal-title-section">
-            <h3 class="modal-title">
-              📄 {{ documentTitle }}
+        <div 
+          class="modal-content-vue"
+          @click.stop
+          role="dialog"
+          aria-modal="true"
+          :aria-labelledby="modalId + '-title'"
+        >
+          <!-- Modal Header -->
+          <div class="modal-header-vue">
+            <h3 :id="modalId + '-title'" class="modal-title-vue">
+              📄 {{ modalConfig.title || 'Documento' }}
             </h3>
-            <div v-if="document" class="modal-meta">
-              <span v-if="document.created_at" class="meta-item">
-                📅 {{ formatDate(document.created_at) }}
-              </span>
-              <span v-if="document.type" class="meta-item">
-                📄 {{ document.type }}
-              </span>
-              <span v-if="document.size" class="meta-item">
-                💾 {{ formatFileSize(document.size) }}
-              </span>
-              <span v-if="document.company_id" class="meta-item">
-                🏢 {{ document.company_id }}
-              </span>
-            </div>
-          </div>
-          
-          <div class="modal-header-actions">
-            <button 
-              v-if="!loading && document"
-              @click="downloadDocument"
-              class="modal-action-btn download-btn"
-              title="Descargar documento"
-            >
-              📥 Descargar
-            </button>
-            <button 
-              v-if="!loading && document && showEditButton"
-              @click="editDocument"
-              class="modal-action-btn edit-btn"
-              title="Editar documento"
-            >
-              ✏️ Editar
-            </button>
             <button 
               @click="closeModal"
-              class="modal-close-btn"
-              title="Cerrar modal"
+              class="modal-close-btn-vue"
+              aria-label="Cerrar modal"
+              type="button"
             >
               ✕
             </button>
           </div>
-        </div>
-        
-        <!-- Modal Body -->
-        <div class="modal-body">
-          <!-- Loading State -->
-          <div v-if="loading" class="modal-loading">
-            <div class="loading-spinner">⏳</div>
-            <p>Cargando documento...</p>
-          </div>
           
-          <!-- Error State -->
-          <div v-else-if="error" class="modal-error">
-            <div class="error-icon">❌</div>
-            <h4>Error al cargar documento</h4>
-            <p>{{ error }}</p>
-            <button @click="retryLoad" class="retry-btn">
-              🔄 Intentar de nuevo
-            </button>
-          </div>
-          
-          <!-- Document Content -->
-          <div v-else-if="document" class="document-viewer">
-            <!-- Document Info Panel -->
-            <div v-if="showDocumentInfo" class="document-info-panel">
-              <button 
-                @click="toggleDocumentInfo"
-                class="info-toggle-btn"
-              >
-                {{ showDocumentInfo ? '▲ Ocultar info' : '▼ Mostrar info' }}
+          <!-- Modal Body -->
+          <div class="modal-body-vue">
+            <!-- Loading State -->
+            <div v-if="modalLoading" class="modal-loading-vue">
+              <div class="loading-spinner-vue">⏳</div>
+              <p>Cargando documento...</p>
+            </div>
+            
+            <!-- Error State -->
+            <div v-else-if="modalError" class="modal-error-vue">
+              <div class="error-icon-vue">❌</div>
+              <h4>Error al cargar documento</h4>
+              <p>{{ modalError }}</p>
+              <button @click="retryLoad" class="retry-btn-vue">
+                🔄 Intentar de nuevo
               </button>
+            </div>
+            
+            <!-- Document Content -->
+            <div v-else-if="modalConfig.documentData" class="document-viewer-vue">
+              <!-- Document Meta -->
+              <div class="document-meta-vue">
+                <div class="meta-grid-vue">
+                  <div class="meta-item-vue">
+                    <span class="meta-label-vue">🏢 Empresa:</span>
+                    <span class="meta-value-vue">{{ currentCompanyId }}</span>
+                  </div>
+                  <div class="meta-item-vue">
+                    <span class="meta-label-vue">📅 Creado:</span>
+                    <span class="meta-value-vue">{{ formatDate(modalConfig.documentData.created_at) }}</span>
+                  </div>
+                  <div v-if="modalConfig.documentData.type" class="meta-item-vue">
+                    <span class="meta-label-vue">📄 Tipo:</span>
+                    <span class="meta-value-vue">{{ modalConfig.documentData.type }}</span>
+                  </div>
+                  <div v-if="modalConfig.documentData.size" class="meta-item-vue">
+                    <span class="meta-label-vue">💾 Tamaño:</span>
+                    <span class="meta-value-vue">{{ formatFileSize(modalConfig.documentData.size) }}</span>
+                  </div>
+                </div>
+              </div>
               
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="info-label">ID:</span>
-                  <span class="info-value">{{ document.id || 'N/A' }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Título:</span>
-                  <span class="info-value">{{ document.title || 'Sin título' }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Tipo:</span>
-                  <span class="info-value">{{ document.type || 'Texto' }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Tamaño:</span>
-                  <span class="info-value">{{ formatFileSize(document.size) }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Creado:</span>
-                  <span class="info-value">{{ formatDate(document.created_at) }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Empresa:</span>
-                  <span class="info-value">{{ document.company_id || 'N/A' }}</span>
+              <!-- Document Content -->
+              <div class="document-content-vue">
+                <h4 class="content-title-vue">📋 Contenido:</h4>
+                <div class="content-display-vue">
+                  <pre class="content-text-vue">{{ modalConfig.content }}</pre>
                 </div>
               </div>
             </div>
             
-            <!-- Content Display -->
-            <div class="document-content-container">
-              <!-- Content Toolbar -->
-              <div class="content-toolbar">
-                <div class="toolbar-left">
-                  <button 
-                    @click="toggleDocumentInfo"
-                    class="toolbar-btn"
-                    :class="{ 'active': showDocumentInfo }"
-                  >
-                    ℹ️ Info
-                  </button>
-                  <button 
-                    @click="toggleWrapText"
-                    class="toolbar-btn"
-                    :class="{ 'active': wrapText }"
-                  >
-                    📄 Ajustar texto
-                  </button>
-                  <button 
-                    @click="copyContent"
-                    class="toolbar-btn"
-                  >
-                    📋 Copiar
-                  </button>
-                </div>
-                
-                <div class="toolbar-right">
-                  <span class="content-stats">
-                    {{ getContentStats() }}
-                  </span>
-                </div>
-              </div>
-              
-              <!-- Actual Content -->
-              <div class="document-content-display">
-                <pre 
-                  class="document-content-text"
-                  :class="{ 'wrap-text': wrapText }"
-                >{{ documentContent }}</pre>
-              </div>
+            <!-- Empty State -->
+            <div v-else class="modal-empty-vue">
+              <div class="empty-icon-vue">📄</div>
+              <p>No hay documento para mostrar</p>
             </div>
           </div>
           
-          <!-- Empty State -->
-          <div v-else class="modal-empty">
-            <div class="empty-icon">📄</div>
-            <p>No hay documento para mostrar</p>
-          </div>
-        </div>
-        
-        <!-- Modal Footer -->
-        <div v-if="!loading && document" class="modal-footer">
-          <div class="footer-left">
-            <span class="document-path">
-              🏢 {{ document.company_id || appStore.currentCompanyId }} / 
-              📄 {{ document.title || 'documento.txt' }}
-            </span>
-          </div>
-          
-          <div class="footer-right">
-            <button 
-              v-if="showDeleteButton"
-              @click="deleteDocument"
-              class="footer-btn delete-btn"
-            >
-              🗑️ Eliminar
-            </button>
-            <button 
-              @click="shareDocument"
-              class="footer-btn share-btn"
-            >
-              🔗 Compartir
-            </button>
-            <button 
-              @click="closeModal"
-              class="footer-btn close-btn"
-            >
-              Cerrar
-            </button>
+          <!-- Modal Footer -->
+          <div v-if="!modalLoading && modalConfig.documentData" class="modal-footer-vue">
+            <div class="footer-left-vue">
+              <span class="document-path-vue">
+                🏢 {{ currentCompanyId }} / 📄 {{ modalConfig.title }}
+              </span>
+            </div>
+            
+            <div class="footer-right-vue">
+              <button 
+                @click="downloadDocument"
+                class="footer-btn-vue download-btn-vue"
+                type="button"
+              >
+                📥 Descargar
+              </button>
+              <button 
+                @click="deleteDocument"
+                class="footer-btn-vue delete-btn-vue"
+                type="button"
+              >
+                🗑️ Eliminar
+              </button>
+              <button 
+                @click="closeModal"
+                class="footer-btn-vue close-btn-vue"
+                type="button"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -218,23 +136,27 @@ import { useNotifications } from '@/composables/useNotifications'
 // ============================================================================
 
 const props = defineProps({
-  documentId: {
-    type: String,
-    default: null
-  },
-  visible: {
+  showModal: {
     type: Boolean,
     default: false
   },
-  document: {
+  modalConfig: {
     type: Object,
+    default: () => ({
+      title: '',
+      content: '',
+      documentData: null
+    })
+  },
+  modalLoading: {
+    type: Boolean,
+    default: false
+  },
+  modalError: {
+    type: String,
     default: null
   },
-  showEditButton: {
-    type: Boolean,
-    default: true
-  },
-  showDeleteButton: {
+  isVisible: {
     type: Boolean,
     default: true
   }
@@ -242,10 +164,9 @@ const props = defineProps({
 
 const emit = defineEmits([
   'close',
-  'edit',
   'delete',
   'download',
-  'share'
+  'retry'
 ])
 
 // ============================================================================
@@ -259,51 +180,14 @@ const { showNotification } = useNotifications()
 // ESTADO LOCAL
 // ============================================================================
 
-const isVisible = ref(false)
-const loading = ref(false)
-const error = ref(null)
-const currentDocument = ref(null)
-const showDocumentInfo = ref(false)
-const wrapText = ref(true)
-
-// Refs para elementos del DOM
-const modalOverlay = ref(null)
-const modalContent = ref(null)
+const modalId = ref('modal-' + Date.now())
 
 // ============================================================================
 // COMPUTED PROPERTIES
 // ============================================================================
 
-const document = computed(() => {
-  return props.document || currentDocument.value
-})
-
-const documentTitle = computed(() => {
-  if (loading.value) return 'Cargando...'
-  if (error.value) return 'Error'
-  return document.value?.title || 'Documento'
-})
-
-const documentContent = computed(() => {
-  return document.value?.content || 'Sin contenido disponible'
-})
-
-// ============================================================================
-// WATCHERS
-// ============================================================================
-
-watch(() => props.visible, (newValue) => {
-  if (newValue) {
-    openModal()
-  } else {
-    closeModal()
-  }
-})
-
-watch(() => props.documentId, (newId) => {
-  if (newId && isVisible.value) {
-    loadDocument(newId)
-  }
+const currentCompanyId = computed(() => {
+  return appStore.currentCompanyId || 'No seleccionada'
 })
 
 // ============================================================================
@@ -311,106 +195,38 @@ watch(() => props.documentId, (newId) => {
 // ============================================================================
 
 /**
- * Open modal - PRESERVAR FUNCIONALIDAD EXACTA
- */
-const openModal = async () => {
-  isVisible.value = true
-  error.value = null
-  
-  // Focus modal para keyboard navigation
-  await nextTick()
-  if (modalOverlay.value) {
-    modalOverlay.value.focus()
-  }
-  
-  // Cargar documento si tenemos ID pero no documento
-  if (props.documentId && !props.document) {
-    await loadDocument(props.documentId)
-  } else if (props.document) {
-    currentDocument.value = props.document
-  }
-  
-  // Prevent body scroll
-  document.body.style.overflow = 'hidden'
-  
-  appStore.addToLog('Document modal opened', 'info')
-}
-
-/**
- * Close modal - PRESERVAR FUNCIONALIDAD EXACTA
+ * Cerrar modal
  */
 const closeModal = () => {
-  isVisible.value = false
-  
-  // Restore body scroll
-  document.body.style.overflow = ''
-  
-  // Clear data
-  currentDocument.value = null
-  error.value = null
-  showDocumentInfo.value = false
-  
   emit('close')
-  appStore.addToLog('Document modal closed', 'info')
+  appStore.addToLog('Vue modal closed', 'info')
 }
 
 /**
- * Load document - PRESERVAR API FORMAT EXACTO
- */
-const loadDocument = async (docId) => {
-  if (!docId) return
-  
-  try {
-    loading.value = true
-    error.value = null
-    
-    const response = await appStore.apiRequest(`/api/documents/${docId}`)
-    const doc = response.data || response
-    
-    currentDocument.value = doc
-    appStore.addToLog(`Document loaded in modal: ${doc.title}`, 'info')
-    
-  } catch (err) {
-    console.error('Error loading document:', err)
-    error.value = err.message
-    appStore.addToLog(`Document load error: ${err.message}`, 'error')
-    
-  } finally {
-    loading.value = false
-  }
-}
-
-/**
- * Retry loading document
- */
-const retryLoad = () => {
-  if (props.documentId) {
-    loadDocument(props.documentId)
-  }
-}
-
-/**
- * Handle overlay click (close modal)
+ * Handle overlay click
  */
 const handleOverlayClick = (event) => {
-  if (event.target === modalOverlay.value) {
+  if (event.target.classList.contains('modal-overlay-vue')) {
     closeModal()
   }
 }
 
-// ============================================================================
-// ACTION METHODS
-// ============================================================================
+/**
+ * Retry loading
+ */
+const retryLoad = () => {
+  emit('retry')
+}
 
 /**
  * Download document
  */
 const downloadDocument = () => {
-  if (!document.value) return
+  if (!props.modalConfig.documentData) return
   
   try {
-    const content = document.value.content || ''
-    const title = document.value.title || 'documento'
+    const content = props.modalConfig.content || ''
+    const title = props.modalConfig.title || 'documento'
     
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -425,7 +241,7 @@ const downloadDocument = () => {
     URL.revokeObjectURL(url)
     
     showNotification(`📥 Descargando: ${title}`, 'success')
-    emit('download', document.value)
+    emit('download', props.modalConfig.documentData)
     
   } catch (error) {
     console.error('Error downloading document:', error)
@@ -434,83 +250,21 @@ const downloadDocument = () => {
 }
 
 /**
- * Edit document
- */
-const editDocument = () => {
-  emit('edit', document.value)
-  showNotification('✏️ Abriendo editor...', 'info')
-}
-
-/**
  * Delete document
  */
 const deleteDocument = () => {
-  const confirmed = confirm(`¿Estás seguro de que quieres eliminar "${document.value.title}"?`)
+  if (!props.modalConfig.documentData) return
+  
+  const confirmed = confirm(`¿Estás seguro de que quieres eliminar "${props.modalConfig.title}"?`)
   
   if (confirmed) {
-    emit('delete', document.value.id || document.value._id)
+    emit('delete', props.modalConfig.documentData.id || props.modalConfig.documentData._id)
     closeModal()
   }
 }
 
-/**
- * Share document
- */
-const shareDocument = () => {
-  if (!document.value) return
-  
-  try {
-    const shareText = `Documento: ${document.value.title}\n\nContenido:\n${documentContent.value}`
-    
-    if (navigator.share) {
-      navigator.share({
-        title: document.value.title,
-        text: shareText
-      })
-    } else {
-      // Fallback: copy to clipboard
-      navigator.clipboard.writeText(shareText).then(() => {
-        showNotification('🔗 Contenido copiado al portapapeles', 'success')
-      })
-    }
-    
-    emit('share', document.value)
-    
-  } catch (error) {
-    console.error('Error sharing document:', error)
-    showNotification('❌ Error al compartir documento', 'error')
-  }
-}
-
-/**
- * Copy content to clipboard
- */
-const copyContent = async () => {
-  try {
-    await navigator.clipboard.writeText(documentContent.value)
-    showNotification('📋 Contenido copiado al portapapeles', 'success')
-  } catch (error) {
-    console.error('Error copying content:', error)
-    showNotification('❌ Error al copiar contenido', 'error')
-  }
-}
-
-/**
- * Toggle document info panel
- */
-const toggleDocumentInfo = () => {
-  showDocumentInfo.value = !showDocumentInfo.value
-}
-
-/**
- * Toggle text wrapping
- */
-const toggleWrapText = () => {
-  wrapText.value = !wrapText.value
-}
-
 // ============================================================================
-// UTILITY METHODS
+// MÉTODOS DE UTILIDAD
 // ============================================================================
 
 /**
@@ -528,27 +282,14 @@ const formatFileSize = (bytes) => {
  * Format date
  */
 const formatDate = (dateString) => {
-  if (!dateString) return 'Fecha desconocida'
+  if (!dateString) return 'Desconocida'
   
   try {
-    return new Date(dateString).toLocaleString('es-ES')
+    const date = new Date(dateString)
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
   } catch {
     return 'Fecha inválida'
   }
-}
-
-/**
- * Get content statistics
- */
-const getContentStats = () => {
-  if (!documentContent.value) return ''
-  
-  const content = documentContent.value
-  const lines = content.split('\n').length
-  const words = content.split(/\s+/).filter(word => word.length > 0).length
-  const chars = content.length
-  
-  return `${lines} líneas, ${words} palabras, ${chars} caracteres`
 }
 
 // ============================================================================
@@ -556,61 +297,41 @@ const getContentStats = () => {
 // ============================================================================
 
 onMounted(() => {
-  // Expose global closeModal function for compatibility
-  window.closeModal = closeModal
-  
-  // Handle escape key globally
-  document.addEventListener('keydown', handleGlobalKeydown)
+  // Focus management for accessibility
+  if (props.showModal) {
+    nextTick(() => {
+      const modal = document.querySelector('.modal-content-vue')
+      if (modal) {
+        modal.focus()
+      }
+    })
+  }
 })
 
+// ============================================================================
+// WATCHERS
+// ============================================================================
+
+// Watch para changes en showModal para accessibility
+watch(() => props.showModal, (newValue) => {
+  if (newValue) {
+    // Prevent body scroll when modal is open
+    document.body.style.overflow = 'hidden'
+  } else {
+    // Restore body scroll when modal is closed
+    document.body.style.overflow = ''
+  }
+})
+
+// Cleanup when component unmounts
 onUnmounted(() => {
-  // Restore body scroll
   document.body.style.overflow = ''
-  
-  // Clean up global listeners
-  document.removeEventListener('keydown', handleGlobalKeydown)
-  
-  // Remove global function
-  if (window.closeModal === closeModal) {
-    delete window.closeModal
-  }
 })
-
-/**
- * Handle global keyboard shortcuts
- */
-const handleGlobalKeydown = (event) => {
-  if (!isVisible.value) return
-  
-  switch (event.key) {
-    case 'Escape':
-      closeModal()
-      break
-    case 'd':
-      if (event.ctrlKey || event.metaKey) {
-        event.preventDefault()
-        downloadDocument()
-      }
-      break
-    case 'c':
-      if (event.ctrlKey || event.metaKey) {
-        event.preventDefault()
-        copyContent()
-      }
-      break
-    case 'i':
-      if (event.ctrlKey || event.metaKey) {
-        event.preventDefault()
-        toggleDocumentInfo()
-      }
-      break
-  }
-}
 </script>
 
 <style scoped>
-/* Modal Overlay */
-.modal-overlay {
+/* 🔧 VUE MODAL STYLES - NO CONFLICTS WITH EXISTING */
+.modal-overlay-vue {
   position: fixed;
   top: 0;
   left: 0;
@@ -621,112 +342,46 @@ const handleGlobalKeydown = (event) => {
   justify-content: center;
   align-items: center;
   z-index: 10000;
-  backdrop-filter: blur(3px);
   padding: 20px;
+  box-sizing: border-box;
 }
 
-/* Modal Content */
-.modal-content {
+.modal-content-vue {
   background: white;
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  max-width: 90vw;
-  width: 1000px;
+  max-width: 800px;
+  width: 100%;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  position: relative;
-  animation: modalSlideIn 0.3s ease-out;
+  overflow: hidden;
+  outline: none;
 }
 
-@keyframes modalSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-30px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Modal Header */
-.modal-header {
+.modal-header-vue {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   padding: 20px 25px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid #eee;
+  background: #f8f9fa;
   border-radius: 12px 12px 0 0;
-  gap: 15px;
 }
 
-.modal-title-section {
-  flex: 1;
-  min-width: 0;
-}
-
-.modal-title {
-  margin: 0 0 8px 0;
-  color: var(--text-primary);
+.modal-title-vue {
+  margin: 0;
+  color: #333;
   font-size: 1.3em;
   font-weight: 600;
   word-wrap: break-word;
 }
 
-.modal-meta {
-  display: flex;
-  gap: 15px;
-  font-size: 0.85em;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-}
-
-.meta-item {
-  white-space: nowrap;
-}
-
-.modal-header-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.modal-action-btn {
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.85em;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.modal-action-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.download-btn:hover {
-  border-color: var(--success-color);
-  color: var(--success-color);
-}
-
-.edit-btn:hover {
-  border-color: var(--warning-color);
-  color: var(--warning-color);
-}
-
-.modal-close-btn {
+.modal-close-btn-vue {
   background: none;
   border: none;
-  font-size: 20px;
-  color: var(--text-muted);
+  font-size: 24px;
+  color: #666;
   cursor: pointer;
   padding: 5px;
   border-radius: 4px;
@@ -738,225 +393,161 @@ const handleGlobalKeydown = (event) => {
   transition: all 0.2s ease;
 }
 
-.modal-close-btn:hover {
-  background: var(--danger-color);
+.modal-close-btn-vue:hover {
+  background: #dc3545;
   color: white;
 }
 
-/* Modal Body */
-.modal-body {
+.modal-body-vue {
   flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  padding: 20px 25px;
 }
 
-.modal-loading,
-.modal-error,
-.modal-empty {
+.modal-loading-vue,
+.modal-error-vue,
+.modal-empty-vue {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
+  padding: 40px 20px;
   text-align: center;
-  color: var(--text-secondary);
+  color: #666;
 }
 
-.loading-spinner {
+.loading-spinner-vue {
   font-size: 2em;
   margin-bottom: 15px;
-  animation: spin 1s linear infinite;
+  animation: spin-vue 1s linear infinite;
 }
 
-.error-icon,
-.empty-icon {
+.error-icon-vue,
+.empty-icon-vue {
   font-size: 3em;
   margin-bottom: 15px;
   opacity: 0.5;
 }
 
-.retry-btn {
+.retry-btn-vue {
   margin-top: 15px;
   padding: 8px 16px;
-  background: var(--primary-color);
+  background: #007bff;
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-weight: 500;
+  transition: background-color 0.2s ease;
 }
 
-.retry-btn:hover {
-  background: var(--primary-color-dark);
+.retry-btn-vue:hover {
+  background: #0056b3;
 }
 
-/* Document Viewer */
-.document-viewer {
-  flex: 1;
+.document-viewer-vue {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  gap: 20px;
 }
 
-.document-info-panel {
-  padding: 15px 20px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
+.document-meta-vue {
+  padding: 15px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  border-left: 4px solid #007bff;
 }
 
-.info-toggle-btn {
-  width: 100%;
-  padding: 8px;
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  cursor: pointer;
-  margin-bottom: 15px;
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
-}
-
-.info-toggle-btn:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.info-grid {
+.meta-grid-vue {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 10px;
 }
 
-.info-item {
+.meta-item-vue {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 0.9em;
 }
 
-.info-label {
-  color: var(--text-secondary);
+.meta-label-vue {
+  color: #666;
   font-weight: 500;
 }
 
-.info-value {
-  color: var(--text-primary);
+.meta-value-vue {
+  color: #333;
   font-weight: 600;
   text-align: right;
+  word-break: break-word;
 }
 
-/* Content Container */
-.document-content-container {
+.document-content-vue {
   flex: 1;
-  display: flex;
-  flex-direction: column;
+}
+
+.content-title-vue {
+  color: #333;
+  margin-bottom: 15px;
+  font-size: 1.1em;
+}
+
+.content-display-vue {
+  border: 1px solid #ddd;
+  border-radius: 6px;
   overflow: hidden;
 }
 
-.content-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 20px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  gap: 15px;
-}
-
-.toolbar-left,
-.toolbar-right {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.toolbar-btn {
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.85em;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.toolbar-btn:hover,
-.toolbar-btn.active {
-  background: var(--primary-color);
-  border-color: var(--primary-color);
-  color: white;
-}
-
-.content-stats {
-  font-size: 0.8em;
-  color: var(--text-muted);
-}
-
-/* Document Content Display */
-.document-content-display {
-  flex: 1;
-  overflow: auto;
-  padding: 0;
-}
-
-.document-content-text {
+.content-text-vue {
   margin: 0;
   padding: 20px;
+  background: #fafafa;
   font-family: 'Courier New', monospace;
-  font-size: 0.9em;
-  line-height: 1.6;
-  color: var(--text-primary);
-  background: var(--bg-primary);
-  white-space: pre;
-  overflow-x: auto;
-  min-height: 100%;
-}
-
-.document-content-text.wrap-text {
   white-space: pre-wrap;
   word-wrap: break-word;
-  overflow-x: hidden;
+  font-size: 0.9em;
+  line-height: 1.5;
+  color: #333;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
-/* Modal Footer */
-.modal-footer {
+.modal-footer-vue {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 15px 25px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  border-top: 1px solid #eee;
+  background: #f8f9fa;
   border-radius: 0 0 12px 12px;
   gap: 15px;
 }
 
-.footer-left {
+.footer-left-vue {
   flex: 1;
   min-width: 0;
 }
 
-.document-path {
+.document-path-vue {
   font-size: 0.85em;
-  color: var(--text-muted);
+  color: #666;
   font-family: monospace;
   word-wrap: break-word;
 }
 
-.footer-right {
+.footer-right-vue {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
 }
 
-.footer-btn {
+.footer-btn-vue {
   padding: 8px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid #ddd;
   border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
+  background: white;
+  color: #666;
   cursor: pointer;
   font-size: 0.85em;
   font-weight: 500;
@@ -964,114 +555,106 @@ const handleGlobalKeydown = (event) => {
   white-space: nowrap;
 }
 
-.footer-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+.footer-btn-vue:hover {
+  background: #f8f9fa;
+  color: #333;
 }
 
-.delete-btn:hover {
-  border-color: var(--danger-color);
-  color: var(--danger-color);
+.download-btn-vue:hover {
+  border-color: #28a745;
+  color: #28a745;
 }
 
-.share-btn:hover {
-  border-color: var(--info-color);
-  color: var(--info-color);
+.delete-btn-vue:hover {
+  border-color: #dc3545;
+  color: #dc3545;
 }
 
-.close-btn:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
+.close-btn-vue:hover {
+  border-color: #007bff;
+  color: #007bff;
 }
 
-@keyframes spin {
+/* Vue Transition */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-content-vue,
+.modal-leave-active .modal-content-vue {
+  transition: transform 0.3s ease;
+}
+
+.modal-enter-from .modal-content-vue,
+.modal-leave-to .modal-content-vue {
+  transform: scale(0.95) translateY(-30px);
+}
+
+@keyframes spin-vue {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-  .modal-content {
+  .modal-content-vue {
     width: 95vw;
-    max-width: none;
     margin: 10px;
   }
   
-  .modal-header {
+  .modal-header-vue {
+    padding: 15px;
+  }
+  
+  .modal-body-vue {
+    padding: 15px;
+  }
+  
+  .modal-footer-vue {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
+    padding: 15px;
   }
   
-  .modal-header-actions {
+  .footer-right-vue {
     justify-content: center;
   }
   
-  .modal-meta {
-    justify-content: center;
-  }
-  
-  .content-toolbar {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
-  .toolbar-left,
-  .toolbar-right {
-    justify-content: center;
-  }
-  
-  .modal-footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-  
-  .footer-right {
-    justify-content: center;
-  }
-  
-  .info-grid {
+  .meta-grid-vue {
     grid-template-columns: 1fr;
   }
   
-  .info-item {
+  .meta-item-vue {
     flex-direction: column;
     align-items: flex-start;
     gap: 4px;
   }
   
-  .info-value {
+  .meta-value-vue {
     text-align: left;
   }
 }
 
 @media (max-width: 480px) {
-  .modal-header,
-  .modal-footer {
-    padding: 15px;
+  .modal-content-vue {
+    margin: 5px;
   }
   
-  .document-content-text {
+  .content-text-vue {
     padding: 15px;
     font-size: 0.8em;
   }
   
-  .modal-action-btn,
-  .footer-btn {
+  .footer-btn-vue {
     flex: 1;
     text-align: center;
-  }
-}
-
-/* Reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  .modal-content {
-    animation: none;
-  }
-  
-  .loading-spinner {
-    animation: none;
   }
 }
 </style>
