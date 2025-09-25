@@ -3,9 +3,8 @@
 # -----------------------------------------------------------------------------
 
 # --- STAGE 1: Frontend build (Node) ---
-FROM node:18.20.1-bullseye AS frontend-builder
+FROM node:18-bullseye AS frontend-builder
 WORKDIR /frontend
-
 
 # Herramientas útiles
 RUN apt-get update && \
@@ -50,7 +49,7 @@ RUN echo "📦 Verificando /frontend/dist ..." && \
 
 
 # --- STAGE 2: Backend Python + static files ---
-FROM python:3.11.6-slim-bullseye
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
