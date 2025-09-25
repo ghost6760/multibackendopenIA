@@ -105,7 +105,7 @@
           <button 
             class="btn btn-primary" 
             @click="handleUpload"
-            :disabled="!canUploadDocument"
+            :disabled="!canUploadDocument || isUploading"
             :class="{ 'uploading': isUploading }"
           >
             <span v-if="isUploading">⏳ Subiendo...</span>
@@ -144,8 +144,10 @@
             <SearchResults
               v-if="hasSearchResults"
               :results="searchResults"
+              :search-query="searchQuery"
               @view-document="viewDocument"
               @delete-document="deleteDocument"
+              @clear-results="clearSearchResults"
             />
             <div v-else-if="searchPerformed && !hasSearchResults" class="no-results">
               <p>❌ No se encontraron documentos que coincidan con la búsqueda</p>
@@ -248,6 +250,15 @@
         </div>
       </div>
     </template>
+
+    <!-- Modal para visualización de documentos -->
+    <DocumentModal
+      v-if="currentDocument"
+      :document="currentDocument"
+      :visible="!!currentDocument"
+      @close="currentDocument = null"
+      @delete="deleteDocument"
+    />
   </div>
 </template>
 
@@ -260,6 +271,7 @@ import { useNotifications } from '@/composables/useNotifications'
 // Sub-components
 import DocumentList from './DocumentList.vue'
 import SearchResults from './SearchResults.vue'
+import DocumentModal from './DocumentModal.vue'
 
 // ============================================================================
 // PROPS
@@ -280,6 +292,7 @@ const appStore = useAppStore()
 const {
   documents,
   searchResults,
+  currentDocument,
   isLoading,
   isUploading,
   isSearching,
@@ -326,11 +339,11 @@ const showAdminFunctions = computed(() => {
 })
 
 // ============================================================================
-// MÉTODOS DE UPLOAD
+// MÉTODOS DE UPLOAD - SIMPLIFICADOS
 // ============================================================================
 
 /**
- * Maneja la subida de documento
+ * Maneja la subida de documento - SIMPLIFICADO
  */
 const handleUpload = async () => {
   if (!canUploadDocument.value) {
@@ -338,7 +351,7 @@ const handleUpload = async () => {
     return
   }
   
-  // Actualizar los inputs del DOM para mantener compatibilidad
+  // IMPORTANTE: Poblar los elementos DOM que espera useDocuments
   const titleInput = document.getElementById('documentTitle')
   const contentInput = document.getElementById('documentContent')
   const fileInput = document.getElementById('documentFile')
@@ -352,31 +365,60 @@ const handleUpload = async () => {
     fileInput.files = dataTransfer.files
   }
   
+  // Llamar al composable que maneja la lógica exacta de script.js
   const success = await uploadDocument()
   
   if (success) {
-    // Limpiar formulario
+    // Limpiar formulario Vue
     documentTitle.value = ''
     documentContent.value = ''
     selectedFile.value = null
     
-    // Recargar lista de documentos
-    await loadDocuments()
+    // También limpiar el input file
+    if (fileInputRef.value) {
+      fileInputRef.value.value = ''
+    }
   }
 }
 
 /**
- * Trigger file selection
+ * Maneja la búsqueda de documentos - SIMPLIFICADO
  */
+const handleSearch = async () => {
+  if (!searchQuery.value.trim()) {
+    showNotification('❌ Ingresa un término de búsqueda', 'error')
+    return
+  }
+  
+  // IMPORTANTE: Poblar el elemento DOM que espera useDocuments
+  const searchInput = document.getElementById('searchQuery')
+  if (searchInput) {
+    searchInput.value = searchQuery.value
+  }
+  
+  searchPerformed.value = true
+  await searchDocuments(searchQuery.value)
+}
+
+/**
+ * Limpiar resultados de búsqueda
+ */
+const clearSearchResults = () => {
+  searchResults.value = []
+  searchQuery.value = ''
+  searchPerformed.value = false
+}
+
+// ============================================================================
+// MÉTODOS DE ARCHIVOS
+// ============================================================================
+
 const triggerFileSelect = () => {
   if (!isUploading.value && fileInputRef.value) {
     fileInputRef.value.click()
   }
 }
 
-/**
- * Handle file selection from input
- */
 const handleFileSelect = (event) => {
   const files = event.target.files
   if (files.length > 0) {
@@ -385,9 +427,6 @@ const handleFileSelect = (event) => {
   }
 }
 
-/**
- * Clear selected file
- */
 const clearSelectedFile = () => {
   selectedFile.value = null
   if (fileInputRef.value) {
@@ -408,7 +447,6 @@ const handleDragOver = () => {
 }
 
 const handleDragLeave = (event) => {
-  // Only remove highlight if we're leaving the drop zone completely
   if (!event.currentTarget.contains(event.relatedTarget)) {
     isDragOver.value = false
   }
@@ -433,35 +471,9 @@ const handleDrop = (event) => {
 }
 
 // ============================================================================
-// MÉTODOS DE BÚSQUEDA
-// ============================================================================
-
-/**
- * Handle search
- */
-const handleSearch = async () => {
-  if (!searchQuery.value.trim()) {
-    showNotification('❌ Ingresa un término de búsqueda', 'error')
-    return
-  }
-  
-  // Update DOM input for compatibility
-  const searchInput = document.getElementById('searchQuery')
-  if (searchInput) {
-    searchInput.value = searchQuery.value
-  }
-  
-  searchPerformed.value = true
-  await searchDocuments(searchQuery.value)
-}
-
-// ============================================================================
 // MÉTODOS DE UTILIDAD
 // ============================================================================
 
-/**
- * Get file icon based on type
- */
 const getFileIcon = (type) => {
   const iconMap = {
     'application/pdf': '📕',
@@ -476,9 +488,6 @@ const getFileIcon = (type) => {
   return iconMap[type] || '📄'
 }
 
-/**
- * Focus upload area
- */
 const focusUploadArea = () => {
   nextTick(() => {
     const titleInput = document.getElementById('documentTitle')
@@ -488,9 +497,6 @@ const focusUploadArea = () => {
   })
 }
 
-/**
- * Highlight company selector
- */
 const highlightCompanySelector = () => {
   window.dispatchEvent(new CustomEvent('highlightCompanySelector'))
 }
@@ -553,10 +559,26 @@ onMounted(async () => {
   
   // Event listener for tab content loading
   window.addEventListener('loadTabContent', handleLoadTabContent)
+  
+  // Exponer funciones globales para compatibilidad con script.js
+  window.uploadDocument = uploadDocument
+  window.loadDocuments = loadDocuments
+  window.searchDocuments = searchDocuments
+  window.viewDocument = viewDocument
+  window.deleteDocument = deleteDocument
 })
 
 onUnmounted(() => {
   window.removeEventListener('loadTabContent', handleLoadTabContent)
+  
+  // Limpiar funciones globales
+  if (typeof window !== 'undefined') {
+    delete window.uploadDocument
+    delete window.loadDocuments
+    delete window.searchDocuments
+    delete window.viewDocument
+    delete window.deleteDocument
+  }
 })
 
 // Handle load tab content event
@@ -570,30 +592,6 @@ const handleLoadTabContent = (event) => {
 watch(() => appStore.currentCompanyId, (newCompanyId) => {
   if (newCompanyId && props.isActive) {
     loadDocuments()
-  }
-})
-
-// ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
-// ============================================================================
-
-onMounted(() => {
-  // Exponer funciones específicas de documentos
-  window.uploadDocument = uploadDocument
-  window.loadDocuments = loadDocuments
-  window.searchDocuments = searchDocuments
-  window.viewDocument = viewDocument
-  window.deleteDocument = deleteDocument
-})
-
-onUnmounted(() => {
-  // Limpiar funciones globales
-  if (typeof window !== 'undefined') {
-    delete window.uploadDocument
-    delete window.loadDocuments
-    delete window.searchDocuments
-    delete window.viewDocument
-    delete window.deleteDocument
   }
 })
 </script>
