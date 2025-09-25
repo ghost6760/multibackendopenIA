@@ -164,12 +164,13 @@ def list_documents():
         logger.error(f"Error listing documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to list documents", 500)
 
+
 @bp.route('/search', methods=['POST'])
 @handle_errors
 def search_documents():
     """Search documents using semantic search - Multi-tenant"""
     try:
-        company_id = _get_company_id_from_request()
+        company_id = _get_company_id_from_request()  # Corregir el typo
         
         # Validar empresa
         company_manager = get_company_manager()
@@ -193,19 +194,43 @@ def search_documents():
         if not orchestrator or not orchestrator.vectorstore_service:
             return create_error_response(f"Search service not available for company: {company_id}", 503)
         
-        # Buscar con filtro de empresa
-        results = orchestrator.vectorstore_service.search_by_company(query, company_id, k)
+        # Buscar con filtro de empresa (devuelve objetos Document)
+        document_results = orchestrator.vectorstore_service.search_by_company(query, company_id, k)
+        
+        # NUEVA LÓGICA: Convertir objetos Document a diccionarios JSON serializables
+        api_results = []
+        for doc in document_results:
+            metadata = getattr(doc, 'metadata', {})
+            
+            api_result = {
+                'id': metadata.get('doc_id', ''),
+                'title': metadata.get('title', 'Sin título'),
+                'content': getattr(doc, 'page_content', ''),
+                'excerpt': getattr(doc, 'page_content', '')[:200] + ('...' if len(getattr(doc, 'page_content', '')) > 200 else ''),
+                'metadata': metadata,
+                'relevance': 1.0,  # Placeholder - podrías calcular relevancia real más tarde
+                'score': 1.0,
+                'treatment': metadata.get('treatment', 'general'),
+                'type': metadata.get('type', 'otro'),
+                'chunk_index': metadata.get('chunk_index', 0),
+                'created_at': metadata.get('processed_at', ''),
+                'company_id': metadata.get('company_id', company_id),
+                'doc_id': metadata.get('doc_id', ''),
+                '_id': metadata.get('doc_id', '')  # Para compatibilidad con frontend
+            }
+            api_results.append(api_result)
         
         return create_success_response({
             "company_id": company_id,
             "query": query,
-            "results_count": len(results),
-            "results": results
+            "results_count": len(api_results),
+            "results": api_results  # Ahora son diccionarios JSON serializables
         })
         
     except Exception as e:
         logger.error(f"Error searching documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to search documents", 500)
+
 
 @bp.route('/bulk', methods=['POST'])
 @handle_errors
