@@ -358,3 +358,55 @@ def document_diagnostics():
     except Exception as e:
         logger.error(f"Error in diagnostics for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to run diagnostics", 500)
+
+
+@bp.route('/<doc_id>', methods=['GET'])
+@handle_errors  
+def get_document(doc_id):
+    """Get a single document by ID - Multi-tenant"""
+    try:
+        company_id = _get_company_id_from_request()
+        
+        # Validar empresa
+        company_manager = get_company_manager()
+        if not company_manager.validate_company_id(company_id):
+            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        
+        # Asegurar prefijo de empresa
+        if not doc_id.startswith(f"{company_id}_"):
+            doc_id = f"{company_id}_{doc_id}"
+        
+        # Obtener documento
+        doc_manager = DocumentManager(company_id=company_id)
+        doc_key = f"{doc_manager.redis_prefix}{doc_id}"
+        
+        if not doc_manager.redis_client.exists(doc_key):
+            return create_error_response("Document not found", 404)
+        
+        doc_data = doc_manager.redis_client.hgetall(doc_key)
+        
+        # Procesar datos (conversión de bytes, etc.)
+        content = doc_data.get('content', '').decode() if isinstance(doc_data.get('content'), bytes) else doc_data.get('content', '')
+        metadata_str = doc_data.get('metadata', '{}').decode() if isinstance(doc_data.get('metadata'), bytes) else doc_data.get('metadata', '{}')
+        
+        try:
+            metadata = json.loads(metadata_str)
+        except json.JSONDecodeError:
+            metadata = {}
+        
+        document = {
+            "id": doc_id,
+            "_id": doc_id,
+            "title": metadata.get('title', 'Sin título'),
+            "content": content,
+            "metadata": metadata,
+            "created_at": doc_data.get('created_at', '').decode() if isinstance(doc_data.get('created_at'), bytes) else doc_data.get('created_at', ''),
+            "company_id": company_id,
+            "type": metadata.get('file_type', 'text')
+        }
+        
+        return create_success_response(document)
+        
+    except Exception as e:
+        logger.error(f"Error getting document {doc_id}: {e}")
+        return create_error_response("Failed to get document", 500)
