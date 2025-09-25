@@ -530,7 +530,7 @@ def delete_document(doc_id):
         return create_success_response(result)
         
     except Exception as e:
-        logger.error(f"Error deleting document {doc_id} for company {company_id if 'company_id' in locals' else 'unknown'}: {e}")
+        logger.error(f"Error deleting document {doc_id} for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to delete document", 500)
 
 @bp.route('/cleanup', methods=['POST'])
