@@ -1,5 +1,5 @@
 # app/routes/documents.py - CORREGIDO COMPLETAMENTE
-# Fixes: 1) Aislamiento de empresas, 2) Endpoint GET arreglado
+# Fixes: 1) Content-Type handling, 2) Búsqueda semántica, 3) Error handling
 
 from flask import Blueprint, request, jsonify
 from app.services.multi_agent_factory import get_multi_agent_factory
@@ -24,7 +24,7 @@ def _get_company_id_from_request() -> str:
     if not company_id:
         company_id = request.args.get('company_id')
     
-    # Método 3: Form data (NUEVO)
+    # Método 3: Form data
     if not company_id and request.form:
         company_id = request.form.get('company_id')
     
@@ -38,6 +38,46 @@ def _get_company_id_from_request() -> str:
         company_id = 'benova'
     
     return company_id
+
+def _get_json_data_flexible():
+    """
+    🔧 NUEVO: Extrae JSON data de manera más flexible
+    Maneja diferentes Content-Types y formatos de request
+    """
+    try:
+        # Método 1: JSON directo (Content-Type: application/json)
+        if request.is_json:
+            return request.get_json()
+        
+        # Método 2: Content-Type text/plain con JSON en el body
+        if request.content_type and 'text/' in request.content_type:
+            try:
+                text_data = request.get_data(as_text=True)
+                if text_data.strip():
+                    return json.loads(text_data)
+            except json.JSONDecodeError:
+                pass
+        
+        # Método 3: Form data con JSON string
+        if request.form:
+            json_str = request.form.get('json_data') or request.form.get('data')
+            if json_str:
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    pass
+        
+        # Método 4: Query parameters como fallback
+        if request.args:
+            query = request.args.get('query')
+            if query:
+                return {'query': query}
+        
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error extracting JSON data: {e}")
+        return None
 
 
 @bp.route('', methods=['POST'])
@@ -101,22 +141,19 @@ def add_document():
             if file_type:
                 data['metadata']['file_type'] = file_type
                 
-        elif request.is_json:
-            # Manejar JSON (comportamiento original)
-            data = request.get_json()
-            if not data:
-                return create_error_response("Invalid JSON data", 400)
-                
         else:
-            return create_error_response("Unsupported content type. Use application/json or multipart/form-data", 400)
+            # 🔧 CORREGIDO: Usar método flexible para JSON
+            data = _get_json_data_flexible()
+            if not data:
+                return create_error_response("Invalid or missing JSON data", 400)
         
-        # Validar datos (ahora debería funcionar con ambos formatos)
+        # Validar datos
         content, metadata = validate_document_data(data)
         
         # 🔧 CRÍTICO: Asegurar company_id en metadata
         metadata['company_id'] = company_id
         
-        # Resto del código original...
+        # Obtener servicios
         doc_manager = DocumentManager(company_id=company_id)
         factory = get_multi_agent_factory()
         
@@ -166,10 +203,10 @@ def list_documents():
         
         doc_manager = DocumentManager(company_id=company_id)
         
-        # 🔧 CRÍTICO: Usar método que filtra por empresa
+        # Usar método que filtra por empresa
         result = doc_manager.list_documents(page, page_size)
         
-        # 🆕 NUEVO: Verificar que todos los documentos pertenecen a la empresa correcta
+        # Verificar que todos los documentos pertenecen a la empresa correcta
         if 'documents' in result:
             # Filtrar solo documentos de esta empresa
             filtered_docs = []
@@ -201,68 +238,141 @@ def list_documents():
 @bp.route('/search', methods=['POST'])
 @handle_errors
 def search_documents():
-    """Search documents using semantic search - Multi-tenant"""
+    """🔧 CORREGIDO: Search documents with flexible Content-Type handling"""
     try:
-        company_id = _get_company_id_from_request()  # Corregir el typo
+        company_id = _get_company_id_from_request()
         
         # Validar empresa
         company_manager = get_company_manager()
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        data = request.get_json()
-        if not data or 'query' not in data:
-            return create_error_response("Query is required", 400)
+        # 🔧 CRÍTICO: Usar método flexible para extraer JSON
+        data = _get_json_data_flexible()
         
-        query = data['query'].strip()
+        if not data:
+            logger.error(f"[{company_id}] No valid data received. Content-Type: {request.content_type}")
+            return create_error_response(
+                "No valid search data provided. Send JSON with 'query' field.", 
+                400,
+                {
+                    "content_type_received": request.content_type,
+                    "methods_tried": ["application/json", "text/plain", "form_data", "query_params"],
+                    "example": {"query": "tu término de búsqueda"}
+                }
+            )
+        
+        if 'query' not in data:
+            return create_error_response("Query field is required", 400)
+        
+        query = str(data['query']).strip()
         if not query:
             return create_error_response("Query cannot be empty", 400)
         
-        k = min(data.get('k', 3), 20)
+        k = min(data.get('k', 5), 20)  # Aumentar default de 3 a 5
+        
+        logger.info(f"[{company_id}] Searching documents: '{query}' (limit: {k})")
         
         # Obtener servicio específico de empresa
         factory = get_multi_agent_factory()
         orchestrator = factory.get_orchestrator(company_id)
         
-        if not orchestrator or not orchestrator.vectorstore_service:
+        if not orchestrator:
+            return create_error_response(f"Multi-agent system not available for company: {company_id}", 503)
+        
+        if not orchestrator.vectorstore_service:
             return create_error_response(f"Search service not available for company: {company_id}", 503)
         
-        # Buscar con filtro de empresa (devuelve objetos Document)
-        document_results = orchestrator.vectorstore_service.search_by_company(query, company_id, k)
-        
-        # NUEVA LÓGICA: Convertir objetos Document a diccionarios JSON serializables
-        api_results = []
-        for doc in document_results:
-            metadata = getattr(doc, 'metadata', {})
+        # 🔧 MEJORADO: Búsqueda con manejo de errores más robusto
+        try:
+            document_results = orchestrator.vectorstore_service.search_by_company(query, company_id, k)
+            logger.info(f"[{company_id}] Found {len(document_results)} document results")
             
-            api_result = {
-                'id': metadata.get('doc_id', ''),
-                'title': metadata.get('title', 'Sin título'),
-                'content': getattr(doc, 'page_content', ''),
-                'excerpt': getattr(doc, 'page_content', '')[:200] + ('...' if len(getattr(doc, 'page_content', '')) > 200 else ''),
-                'metadata': metadata,
-                'relevance': 1.0,  # Placeholder - podrías calcular relevancia real más tarde
-                'score': 1.0,
-                'treatment': metadata.get('treatment', 'general'),
-                'type': metadata.get('type', 'otro'),
-                'chunk_index': metadata.get('chunk_index', 0),
-                'created_at': metadata.get('processed_at', ''),
-                'company_id': metadata.get('company_id', company_id),
-                'doc_id': metadata.get('doc_id', ''),
-                '_id': metadata.get('doc_id', '')  # Para compatibilidad con frontend
-            }
-            api_results.append(api_result)
+        except Exception as search_error:
+            logger.error(f"[{company_id}] Vectorstore search failed: {search_error}")
+            
+            # Intentar búsqueda de fallback si está disponible
+            try:
+                # Búsqueda simple en Redis como fallback
+                doc_manager = DocumentManager(company_id=company_id)
+                fallback_results = doc_manager.simple_text_search(query, limit=k)
+                logger.warning(f"[{company_id}] Using fallback search, found {len(fallback_results)} results")
+                document_results = fallback_results
+                
+            except Exception as fallback_error:
+                logger.error(f"[{company_id}] Fallback search also failed: {fallback_error}")
+                return create_error_response(
+                    f"Search failed: {str(search_error)}", 
+                    503,
+                    {
+                        "primary_error": str(search_error),
+                        "fallback_error": str(fallback_error),
+                        "company_id": company_id,
+                        "query": query
+                    }
+                )
+        
+        # Convertir resultados a formato API
+        api_results = []
+        for i, doc in enumerate(document_results):
+            try:
+                # Manejar diferentes tipos de objetos resultado
+                if hasattr(doc, 'page_content'):
+                    # Objeto Document de LangChain
+                    content = getattr(doc, 'page_content', '')
+                    metadata = getattr(doc, 'metadata', {})
+                elif isinstance(doc, dict):
+                    # Dict resultado de fallback
+                    content = doc.get('content', '')
+                    metadata = doc.get('metadata', {})
+                else:
+                    logger.warning(f"[{company_id}] Unknown document type: {type(doc)}")
+                    content = str(doc)
+                    metadata = {}
+                
+                # Crear resultado API estandarizado
+                api_result = {
+                    'id': metadata.get('doc_id', f'doc_{i}'),
+                    'title': metadata.get('title') or metadata.get('name') or 'Sin título',
+                    'content': content,
+                    'excerpt': content[:200] + ('...' if len(content) > 200 else ''),
+                    'metadata': metadata,
+                    'relevance': metadata.get('score', 1.0),
+                    'score': metadata.get('score', 1.0),
+                    'type': metadata.get('file_type') or metadata.get('type') or 'text',
+                    'chunk_index': metadata.get('chunk_index', 0),
+                    'created_at': metadata.get('processed_at') or metadata.get('created_at', ''),
+                    'company_id': metadata.get('company_id', company_id),
+                    'doc_id': metadata.get('doc_id', f'doc_{i}'),
+                    '_id': metadata.get('doc_id', f'doc_{i}')  # Para compatibilidad con frontend
+                }
+                api_results.append(api_result)
+                
+            except Exception as result_error:
+                logger.warning(f"[{company_id}] Error processing search result {i}: {result_error}")
+                continue
+        
+        logger.info(f"[{company_id}] Search completed: {len(api_results)} results processed")
         
         return create_success_response({
             "company_id": company_id,
             "query": query,
             "results_count": len(api_results),
-            "results": api_results  # Ahora son diccionarios JSON serializables
+            "results": api_results,
+            "search_method": "vectorstore" if 'search_error' not in locals() else "fallback",
+            "limit": k
         })
         
     except Exception as e:
-        logger.error(f"Error searching documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
-        return create_error_response("Failed to search documents", 500)
+        logger.error(f"Error searching documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}", exc_info=True)
+        return create_error_response(
+            f"Search failed: {str(e)}", 
+            500,
+            {
+                "company_id": company_id if 'company_id' in locals() else 'unknown',
+                "error_type": type(e).__name__
+            }
+        )
 
 
 @bp.route('/<doc_id>', methods=['GET'])
@@ -277,7 +387,7 @@ def get_document(doc_id):
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # 🔧 CORREGIDO: Mejor manejo de doc_id
+        # Mejor manejo de doc_id
         original_doc_id = str(doc_id).strip()
         logger.info(f"[{company_id}] Getting document: {original_doc_id}")
         
@@ -319,7 +429,7 @@ def get_document(doc_id):
             logger.warning(f"[{company_id}] Document not found. Tried keys: {[f'{redis_prefix}{did}' for did in unique_doc_ids]}")
             return create_error_response("Document not found", 404)
         
-        # 🔧 CORREGIDO: Mejor procesamiento de datos Redis
+        # Mejor procesamiento de datos Redis
         def decode_redis_value(value, default=''):
             """Decodifica valores de Redis manejando bytes y strings"""
             if value is None:
@@ -340,13 +450,13 @@ def get_document(doc_id):
             logger.warning(f"[{company_id}] Invalid metadata JSON for document {found_doc_id}: {e}")
             metadata = {}
         
-        # 🔧 CRÍTICO: Verificar que el documento pertenece a la empresa correcta
+        # Verificar que el documento pertenece a la empresa correcta
         doc_company = metadata.get('company_id', '')
         if doc_company and doc_company != company_id:
             logger.warning(f"[{company_id}] Access denied: document {found_doc_id} belongs to {doc_company}")
             return create_error_response("Document not found", 404)  # No revelar que existe pero pertenece a otra empresa
         
-        # 🔧 MEJORADO: Construir respuesta robusta
+        # Construir respuesta robusta
         document = {
             "id": found_doc_id,
             "_id": found_doc_id,
@@ -426,7 +536,7 @@ def debug_document(doc_id):
                 if redis_client.exists(doc_key):
                     debug_info["keys_found"].append(doc_key)
                     
-                    # 🆕 NUEVO: Verificar company_id en metadata
+                    # Verificar company_id en metadata
                     doc_data = redis_client.hgetall(doc_key)
                     metadata_str = doc_data.get('metadata', '{}')
                     if isinstance(metadata_str, bytes):
@@ -455,7 +565,7 @@ def debug_document(doc_id):
         return create_error_response(f"Debug failed: {str(e)}", 500)
 
 
-# Resto de endpoints sin cambios...
+# Resto de endpoints mantienen la misma estructura...
 @bp.route('/bulk', methods=['POST'])
 @handle_errors
 def bulk_add_documents():
@@ -468,7 +578,8 @@ def bulk_add_documents():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        data = request.get_json()
+        # Usar método flexible para JSON
+        data = _get_json_data_flexible()
         if not data or 'documents' not in data:
             return create_error_response("Documents array is required", 400)
         
@@ -536,7 +647,7 @@ def cleanup_orphaned_vectors():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        data = request.get_json() if request.is_json else {}
+        data = _get_json_data_flexible() or {}
         dry_run = data.get('dry_run', True)
         
         # Servicios específicos de empresa
@@ -583,7 +694,7 @@ def document_diagnostics():
         logger.error(f"Error in diagnostics for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to run diagnostics", 500)
 
-
+# Resto de endpoints sin cambios...
 @bp.route('/<doc_id>/vectors', methods=['GET'])
 def get_document_vectors(doc_id):
     """Obtener vectores de un documento específico"""
@@ -598,8 +709,7 @@ def get_document_vectors(doc_id):
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # Obtener vectores (simulado por ahora)
-        # En implementación real, consultaría el vectorstore
+        # Simulación de vectores
         vectors_data = {
             "document_id": doc_id,
             "company_id": company_id,
@@ -629,7 +739,6 @@ def get_document_vectors(doc_id):
         logger.error(f"Error getting vectors for document {doc_id}: {e}")
         return create_error_response(str(e), 500)
 
-
 @bp.route('/stats', methods=['GET'])
 def get_documents_stats():
     """Obtener estadísticas de documentos para una empresa"""
@@ -644,7 +753,7 @@ def get_documents_stats():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # Obtener estadísticas (simulado por ahora)
+        # Estadísticas simuladas
         stats = {
             "company_id": company_id,
             "total_documents": 15,
