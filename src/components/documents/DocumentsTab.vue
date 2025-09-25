@@ -294,7 +294,7 @@ import { useNotifications } from '@/composables/useNotifications'
 // Sub-components
 import DocumentList from './DocumentList.vue'
 import SearchResults from './SearchResults.vue'
-import DocumentModalVue from './DocumentModalVue.vue'
+import DocumentModalVue from './DocumentModal.vue'
 
 // ============================================================================
 // PROPS
