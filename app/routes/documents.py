@@ -20,21 +20,16 @@ def _get_company_id_from_request() -> str:
     if not company_id:
         company_id = request.args.get('company_id')
     
-    # Método 3: Form data (NUEVO)
-    if not company_id and request.form:
-        company_id = request.form.get('company_id')
-    
-    # Método 4: JSON body
+    # Método 3: JSON body
     if not company_id and request.is_json:
         data = request.get_json()
         company_id = data.get('company_id') if data else None
     
     # Por defecto
     if not company_id:
-        company_id = 'benova'
+        company_id = 'benova'  # Empresa por defecto para retrocompatibilidad
     
     return company_id
-
 
 @bp.route('', methods=['POST'])
 @handle_errors
@@ -48,71 +43,14 @@ def add_document():
         if not company_manager.validate_company_id(company_id):
             return create_error_response(f"Invalid company_id: {company_id}", 400)
         
-        # Detectar tipo de contenido y extraer datos
-        if request.content_type and 'multipart/form-data' in request.content_type:
-            # Manejar FormData (con archivos)
-            title = request.form.get('title', '').strip()
-            form_content = request.form.get('content', '').strip()
-            
-            # Procesar archivo si existe
-            file_content = ''
-            filename = None
-            file_type = None
-            
-            uploaded_file = request.files.get('file')
-            if uploaded_file and uploaded_file.filename:
-                try:
-                    # Leer contenido del archivo
-                    file_content = uploaded_file.read().decode('utf-8', errors='ignore').strip()
-                    filename = uploaded_file.filename
-                    file_type = uploaded_file.content_type
-                except Exception as e:
-                    return create_error_response(f"Error reading file: {str(e)}", 400)
-            
-            # Combinar contenidos
-            final_content = []
-            if title:
-                final_content.append(f"# {title}")
-            if form_content:
-                final_content.append(form_content)
-            if file_content:
-                final_content.append(file_content)
-            
-            if not final_content:
-                return create_error_response("Either content or file is required", 400)
-            
-            # Preparar datos para validación
-            data = {
-                'content': '\n\n'.join(final_content),
-                'metadata': {
-                    'title': title,
-                    'source': 'user_upload',
-                    'company_id': company_id
-                }
-            }
-            
-            # Agregar metadatos del archivo si existe
-            if filename:
-                data['metadata']['filename'] = filename
-            if file_type:
-                data['metadata']['file_type'] = file_type
-                
-        elif request.is_json:
-            # Manejar JSON (comportamiento original)
-            data = request.get_json()
-            if not data:
-                return create_error_response("Invalid JSON data", 400)
-                
-        else:
-            return create_error_response("Unsupported content type. Use application/json or multipart/form-data", 400)
-        
-        # Validar datos (ahora debería funcionar con ambos formatos)
+        data = request.get_json()
         content, metadata = validate_document_data(data)
         
-        # Resto del código original...
+        # Servicios específicos de empresa
         doc_manager = DocumentManager(company_id=company_id)
         factory = get_multi_agent_factory()
         
+        # Obtener servicio de vectorstore específico
         orchestrator = factory.get_orchestrator(company_id)
         if not orchestrator or not orchestrator.vectorstore_service:
             return create_error_response(f"Vectorstore service not available for company: {company_id}", 503)
@@ -127,10 +65,7 @@ def add_document():
             "company_id": company_id,
             "document_id": doc_id,
             "chunk_count": num_chunks,
-            "message": f"Document added with {num_chunks} chunks for {company_id}",
-            "title": metadata.get('title'),
-            "filename": metadata.get('filename'),
-            "file_type": metadata.get('file_type')
+            "message": f"Document added with {num_chunks} chunks for {company_id}"
         }, 201)
         
     except ValueError as e:
@@ -138,7 +73,6 @@ def add_document():
     except Exception as e:
         logger.exception(f"Error adding document for company {company_id if 'company_id' in locals() else 'unknown'}")
         return create_error_response("Failed to add document", 500)
-        
 
 @bp.route('', methods=['GET'])
 @handle_errors
@@ -164,13 +98,12 @@ def list_documents():
         logger.error(f"Error listing documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to list documents", 500)
 
-
 @bp.route('/search', methods=['POST'])
 @handle_errors
 def search_documents():
     """Search documents using semantic search - Multi-tenant"""
     try:
-        company_id = _get_company_id_from_request()  # Corregir el typo
+        company_id = _get_company_id_from_request()
         
         # Validar empresa
         company_manager = get_company_manager()
@@ -194,43 +127,19 @@ def search_documents():
         if not orchestrator or not orchestrator.vectorstore_service:
             return create_error_response(f"Search service not available for company: {company_id}", 503)
         
-        # Buscar con filtro de empresa (devuelve objetos Document)
-        document_results = orchestrator.vectorstore_service.search_by_company(query, company_id, k)
-        
-        # NUEVA LÓGICA: Convertir objetos Document a diccionarios JSON serializables
-        api_results = []
-        for doc in document_results:
-            metadata = getattr(doc, 'metadata', {})
-            
-            api_result = {
-                'id': metadata.get('doc_id', ''),
-                'title': metadata.get('title', 'Sin título'),
-                'content': getattr(doc, 'page_content', ''),
-                'excerpt': getattr(doc, 'page_content', '')[:200] + ('...' if len(getattr(doc, 'page_content', '')) > 200 else ''),
-                'metadata': metadata,
-                'relevance': 1.0,  # Placeholder - podrías calcular relevancia real más tarde
-                'score': 1.0,
-                'treatment': metadata.get('treatment', 'general'),
-                'type': metadata.get('type', 'otro'),
-                'chunk_index': metadata.get('chunk_index', 0),
-                'created_at': metadata.get('processed_at', ''),
-                'company_id': metadata.get('company_id', company_id),
-                'doc_id': metadata.get('doc_id', ''),
-                '_id': metadata.get('doc_id', '')  # Para compatibilidad con frontend
-            }
-            api_results.append(api_result)
+        # Buscar con filtro de empresa
+        results = orchestrator.vectorstore_service.search_by_company(query, company_id, k)
         
         return create_success_response({
             "company_id": company_id,
             "query": query,
-            "results_count": len(api_results),
-            "results": api_results  # Ahora son diccionarios JSON serializables
+            "results_count": len(results),
+            "results": results
         })
         
     except Exception as e:
         logger.error(f"Error searching documents for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to search documents", 500)
-
 
 @bp.route('/bulk', methods=['POST'])
 @handle_errors
@@ -358,55 +267,3 @@ def document_diagnostics():
     except Exception as e:
         logger.error(f"Error in diagnostics for company {company_id if 'company_id' in locals() else 'unknown'}: {e}")
         return create_error_response("Failed to run diagnostics", 500)
-
-
-@bp.route('/<doc_id>', methods=['GET'])
-@handle_errors  
-def get_document(doc_id):
-    """Get a single document by ID - Multi-tenant"""
-    try:
-        company_id = _get_company_id_from_request()
-        
-        # Validar empresa
-        company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
-        
-        # Asegurar prefijo de empresa
-        if not doc_id.startswith(f"{company_id}_"):
-            doc_id = f"{company_id}_{doc_id}"
-        
-        # Obtener documento
-        doc_manager = DocumentManager(company_id=company_id)
-        doc_key = f"{doc_manager.redis_prefix}{doc_id}"
-        
-        if not doc_manager.redis_client.exists(doc_key):
-            return create_error_response("Document not found", 404)
-        
-        doc_data = doc_manager.redis_client.hgetall(doc_key)
-        
-        # Procesar datos (conversión de bytes, etc.)
-        content = doc_data.get('content', '').decode() if isinstance(doc_data.get('content'), bytes) else doc_data.get('content', '')
-        metadata_str = doc_data.get('metadata', '{}').decode() if isinstance(doc_data.get('metadata'), bytes) else doc_data.get('metadata', '{}')
-        
-        try:
-            metadata = json.loads(metadata_str)
-        except json.JSONDecodeError:
-            metadata = {}
-        
-        document = {
-            "id": doc_id,
-            "_id": doc_id,
-            "title": metadata.get('title', 'Sin título'),
-            "content": content,
-            "metadata": metadata,
-            "created_at": doc_data.get('created_at', '').decode() if isinstance(doc_data.get('created_at'), bytes) else doc_data.get('created_at', ''),
-            "company_id": company_id,
-            "type": metadata.get('file_type', 'text')
-        }
-        
-        return create_success_response(document)
-        
-    except Exception as e:
-        logger.error(f"Error getting document {doc_id}: {e}")
-        return create_error_response("Failed to get document", 500)
