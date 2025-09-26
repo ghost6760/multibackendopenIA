@@ -88,7 +88,7 @@
         :disabled="readonly || isProcessing || !internalContent.trim()"
       >
         <span v-if="isProcessing">⏳ Generando...</span>
-        <span v-else">👁️ Vista Previa</span>
+        <span v-else>👁️ Vista Previa</span>
       </button>
     </div>
   </div>
