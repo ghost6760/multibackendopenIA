@@ -1,3 +1,4 @@
+# PromptsTab.vue
 <template>
   <div class="prompts-tab" v-if="isActive">
     <!-- Header del Tab -->
@@ -8,101 +9,88 @@
       </p>
     </div>
 
-    <!-- Initialization Loading -->
-    <div v-if="!componentsReady" class="initializing-section">
-      <div class="loading-spinner"></div>
-      <p>Inicializando sistema de prompts...</p>
-      <small v-if="initializationError" style="color: red;">
-        Error: {{ initializationError }}
-      </small>
-    </div>
+    <!-- Estado del Sistema - PASO 1: ACTIVADO -->
+    <PromptsStatus 
+      @status-loaded="handleStatusLoaded"
+      @migration-complete="handleMigrationComplete"
+    />
 
-    <!-- Main Content - Solo cuando todo está listo -->
-    <template v-else>
-      <!-- Estado del Sistema -->
-      <PromptsStatus 
-        @status-loaded="handleStatusLoaded"
-        @migration-complete="handleMigrationComplete"
-      />
-
-      <!-- Main Prompts Section -->
-      <div class="prompts-main-section">
-        
-        <!-- Company Info Bar -->
-        <div class="company-bar">
-          <div class="company-info">
-            <span class="company-label">📢 Empresa Activa:</span>
-            <span class="company-name">{{ currentCompanyName || currentCompanyId || 'No seleccionada' }}</span>
-          </div>
-          <div class="actions-bar">
-            <button @click="safeLoadPrompts" class="btn-refresh" :disabled="isLoadingPrompts">
-              <span v-if="isLoadingPrompts">⏳ Cargando...</span>
-              <span v-else>🔄 Recargar Todos</span>
-            </button>
-            <button @click="safeRepairAllPrompts" class="btn-repair-all" :disabled="isProcessing">
-              🔧 Reparar Todos
-            </button>
-            <button @click="safeExportPrompts" class="btn-export">
-              💾 Exportar
-            </button>
-          </div>
+    <!-- Main Prompts Section -->
+    <div class="prompts-main-section">
+      
+      <!-- Company Info Bar -->
+      <div class="company-bar">
+        <div class="company-info">
+          <span class="company-label">📢 Empresa Activa:</span>
+          <span class="company-name">{{ currentCompanyName || currentCompanyId || 'No seleccionada' }}</span>
         </div>
-
-        <!-- Error State -->
-        <div v-if="error" class="error-section">
-          <p>⚠️ {{ error }}</p>
+        <div class="actions-bar">
+          <button @click="loadPrompts" class="btn-refresh" :disabled="isLoadingPrompts">
+            <span v-if="isLoadingPrompts">⏳ Cargando...</span>
+            <span v-else>🔄 Recargar Todos</span>
+          </button>
+          <button @click="repairAllPrompts" class="btn-repair-all" :disabled="isProcessing">
+            🔧 Reparar Todos
+          </button>
+          <button @click="exportPrompts" class="btn-export">
+            💾 Exportar
+          </button>
         </div>
-
-        <!-- Prompts Grid -->
-        <div v-if="hasPrompts" class="prompts-grid">
-          <PromptEditor
-            v-for="agent in agentsList"
-            :key="agent.id"
-            :prompt-data="agent"
-            :readonly="isProcessing"
-            @update="handlePromptUpdate"
-            @reset="handlePromptReset"
-            @preview="handlePromptPreview"
-          />
-        </div>
-
-        <!-- No Prompts State -->
-        <div v-else-if="!isLoadingPrompts" class="no-prompts-section">
-          <h3>📭 No hay prompts disponibles</h3>
-          <p>Selecciona una empresa y haz clic en "Recargar Todos" para ver los prompts.</p>
-        </div>
-
-        <!-- Loading State -->
-        <div v-if="isLoadingPrompts" class="loading-section">
-          <div class="loading-spinner"></div>
-          <p>Cargando prompts del sistema...</p>
-        </div>
-
       </div>
 
-      <!-- Prompt Preview Modal -->
-      <PromptPreview
-        :visible="showPreview"
-        :agent-name="previewAgent"
-        :prompt-content="previewContent"
-        :test-message="previewTestMessage"
-        :preview-response="previewResponse"
-        :loading="previewLoading"
-        :company-id="currentCompanyId"
-        @close="closePreview"
-      />
-    </template>
+      <!-- Error State -->
+      <div v-if="error" class="error-section">
+        <p>⚠️ {{ error }}</p>
+      </div>
+
+      <!-- Prompts Grid - PASO 3: USAR PROMPT EDITOR MODULAR -->
+      <div v-if="hasPrompts" class="prompts-grid">
+        <PromptEditor
+          v-for="agent in agentsList"
+          :key="agent.id"
+          :prompt-data="agent"
+          :readonly="isProcessing"
+          @update="handlePromptUpdate"
+          @reset="handlePromptReset"
+          @preview="handlePromptPreview"
+        />
+      </div>
+
+      <!-- No Prompts State -->
+      <div v-else-if="!isLoadingPrompts" class="no-prompts-section">
+        <h3>📭 No hay prompts disponibles</h3>
+        <p>Selecciona una empresa y haz clic en "Recargar Todos" para ver los prompts.</p>
+      </div>
+
+    </div>
+
+    <!-- Loading State -->
+    <div v-if="isLoadingPrompts" class="loading-section">
+      <div class="loading-spinner"></div>
+      <p>Cargando prompts del sistema...</p>
+    </div>
+
+    <!-- PASO 4: PROMPT PREVIEW MODULAR -->
+    <PromptPreview
+      :visible="showPreview"
+      :agent-name="previewAgent"
+      :prompt-content="previewContent"
+      :test-message="previewTestMessage"
+      :preview-response="previewResponse"
+      :loading="previewLoading"
+      :company-id="currentCompanyId"
+      @close="closePreview"
+    />
 
   </div>
 </template>
 
 <script setup>
 // ===============================================================================
-// IMPORTS SEGUROS - Sin acceso prematuro
+// IMPORTS MODULARES COMPLETOS + CORRECCIONES
 // ===============================================================================
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
-
-// Componentes - importación estática segura
+import { watch, onMounted, onUnmounted, getCurrentInstance } from 'vue'
+import { usePrompts } from '@/composables/usePrompts'
 import PromptsStatus from './PromptsStatus.vue'
 import PromptEditor from './PromptEditor.vue'
 import PromptPreview from './PromptPreview.vue'
@@ -118,273 +106,141 @@ const props = defineProps({
 })
 
 // ===============================================================================
-// ESTADO DE INICIALIZACIÓN
+// COMPOSABLE - OBTENER TODAS LAS FUNCIONES INCLUYENDO DEBUG
 // ===============================================================================
-const componentsReady = ref(false)
-const initializationError = ref(null)
-
-// Estado local reactivo (no depende del composable)
-const isLoadingPrompts = ref(false)
-const isProcessing = ref(false)
-const error = ref(null)
-const showPreview = ref(false)
-const previewAgent = ref('')
-const previewContent = ref('')
-const previewTestMessage = ref('')
-const previewResponse = ref(null)
-const previewLoading = ref(false)
-const hasPrompts = ref(false)
-const currentCompanyId = ref('benova')
-const currentCompanyName = ref('benova')
-const agentsList = ref([])
-
-// Referencia al composable (se inicializa después)
-let promptsComposable = null
-
-// ===============================================================================
-// INICIALIZACIÓN SEGURA DEL COMPOSABLE
-// ===============================================================================
-
-const initializeComposable = async () => {
-  try {
-    console.log('[PromptsTab] Starting composable initialization...')
-    
-    // Esperar a que Vue esté completamente inicializado
-    await nextTick()
-    
-    // ✅ IMPORTACIÓN DINÁMICA SEGURA
-    const { usePrompts } = await import('@/composables/usePrompts')
-    promptsComposable = usePrompts()
-    
-    // ✅ Verificar que el composable tenga sus métodos
-    if (!promptsComposable.initializeComposables) {
-      throw new Error('Composable methods not available')
-    }
-
-    // ✅ Inicializar los composables internos
-    const ready = promptsComposable.initializeComposables()
-    if (!ready) {
-      // Reintento después de un breve delay
-      await new Promise(resolve => setTimeout(resolve, 200))
-      const retryReady = promptsComposable.initializeComposables()
-      if (!retryReady) {
-        throw new Error('Composables not ready after retry')
-      }
-    }
-
-    // ✅ Sincronizar estado reactivo
-    syncComposableState()
-    
-    componentsReady.value = true
-    console.log('[PromptsTab] ✅ Composable initialized successfully')
-    
-    // ✅ Cargar prompts si el tab está activo
-    if (props.isActive) {
-      await safeLoadPrompts()
-    }
-    
-    return true
-
-  } catch (error) {
-    console.error('[PromptsTab] Composable initialization error:', error)
-    initializationError.value = error.message
-    componentsReady.value = false
-    return false
-  }
-}
-
-// ===============================================================================
-// SINCRONIZACIÓN DE ESTADO
-// ===============================================================================
-
-const syncComposableState = () => {
-  if (!promptsComposable || !componentsReady.value) return
-
-  try {
-    // ✅ Sincronizar estado reactivo bidireccional
-    isLoadingPrompts.value = promptsComposable.isLoadingPrompts.value
-    isProcessing.value = promptsComposable.isProcessing.value
-    error.value = promptsComposable.error.value
-    showPreview.value = promptsComposable.showPreview.value
-    previewAgent.value = promptsComposable.previewAgent.value
-    previewContent.value = promptsComposable.previewContent.value
-    previewTestMessage.value = promptsComposable.previewTestMessage.value
-    previewResponse.value = promptsComposable.previewResponse.value
-    previewLoading.value = promptsComposable.previewLoading.value
-    hasPrompts.value = promptsComposable.hasPrompts.value
-    currentCompanyId.value = promptsComposable.currentCompanyId.value
-    currentCompanyName.value = promptsComposable.currentCompanyName.value
-    agentsList.value = promptsComposable.agentsList.value
-
-    console.log('[PromptsTab] State synchronized with composable')
-  } catch (error) {
-    console.warn('[PromptsTab] Error syncing state:', error)
-  }
-}
-
-// ===============================================================================
-// FUNCIONES SEGURAS - Solo llaman al composable si está listo
-// ===============================================================================
-
-const safeLoadPrompts = async () => {
-  if (!componentsReady.value || !promptsComposable) {
-    console.warn('[PromptsTab] Cannot load prompts: not ready')
-    return
-  }
+const {
+  // Estado reactivo del composable
+  agents,
+  isLoadingPrompts,
+  isProcessing,
+  error,
+  showPreview,
+  previewAgent,
+  previewContent,
+  previewTestMessage,
+  previewResponse,
+  previewLoading,
   
-  try {
-    await promptsComposable.loadPrompts()
-    syncComposableState()
-  } catch (error) {
-    console.error('[PromptsTab] Error loading prompts:', error)
-  }
-}
-
-const safeRepairAllPrompts = async () => {
-  if (!componentsReady.value || !promptsComposable) {
-    console.warn('[PromptsTab] Cannot repair prompts: not ready')
-    return
-  }
+  // Computed properties del composable
+  hasPrompts,
+  currentCompanyId,
+  currentCompanyName,
+  agentsList,
   
-  try {
-    await promptsComposable.repairAllPrompts()
-    syncComposableState()
-  } catch (error) {
-    console.error('[PromptsTab] Error repairing prompts:', error)
-  }
-}
-
-const safeExportPrompts = () => {
-  if (!componentsReady.value || !promptsComposable) {
-    console.warn('[PromptsTab] Cannot export prompts: not ready')
-    return
-  }
+  // Funciones principales (nombres exactos que funcionan con backend)
+  loadPrompts,
+  updatePrompt,
+  resetPrompt,
+  previewPrompt,
+  closePreview,
+  repairAllPrompts,
+  exportPrompts,
+  formatDate,
   
-  try {
-    promptsComposable.exportPrompts()
-  } catch (error) {
-    console.error('[PromptsTab] Error exporting prompts:', error)
-  }
-}
+  // ✅ CORRECCIÓN: Agregar funciones debug del composable
+  debugPrompts,
+  testEndpoints
+} = usePrompts()
 
 // ===============================================================================
-// EVENT HANDLERS - Con guards de seguridad
+// HANDLERS CORREGIDOS - RECIBEN SOLO agentName
 // ===============================================================================
 
-const handlePromptUpdate = (updateData) => {
-  if (!componentsReady.value || !promptsComposable) return
-  
-  try {
-    if (typeof updateData === 'string') {
-      promptsComposable.updatePrompt(updateData)
-    } else {
-      promptsComposable.updatePrompt(updateData.agentName, updateData.content)
-    }
-    syncComposableState()
-  } catch (error) {
-    console.error('[PromptsTab] Error updating prompt:', error)
-  }
+/**
+ * Handler para evento update de PromptEditor
+ * ✅ CORREGIDO: Recibe solo agentName, no objeto completo
+ */
+const handlePromptUpdate = (agentName) => {
+  // Pasar directamente el nombre del agente (igual que el monolito)
+  updatePrompt(agentName)
 }
 
+/**
+ * Handler para evento reset de PromptEditor  
+ * ✅ CORREGIDO: Recibe solo agentName
+ */
 const handlePromptReset = (agentName) => {
-  if (!componentsReady.value || !promptsComposable) return
-  
-  try {
-    promptsComposable.resetPrompt(agentName)
-    syncComposableState()
-  } catch (error) {
-    console.error('[PromptsTab] Error resetting prompt:', error)
-  }
+  // Pasar directamente el nombre del agente (igual que el monolito)
+  resetPrompt(agentName)
 }
 
+/**
+ * Handler para evento preview de PromptEditor
+ * ✅ CORREGIDO: Recibe solo agentName
+ */
 const handlePromptPreview = (agentName) => {
-  if (!componentsReady.value || !promptsComposable) return
-  
-  try {
-    promptsComposable.previewPrompt(agentName)
-    syncComposableState()
-  } catch (error) {
-    console.error('[PromptsTab] Error previewing prompt:', error)
-  }
-}
-
-const closePreview = () => {
-  if (!componentsReady.value || !promptsComposable) return
-  
-  try {
-    promptsComposable.closePreview()
-    syncComposableState()
-  } catch (error) {
-    console.error('[PromptsTab] Error closing preview:', error)
-  }
+  // Pasar directamente el nombre del agente (igual que el monolito)
+  previewPrompt(agentName)
 }
 
 // ===============================================================================
-// EVENT HANDLERS PARA PROMPTS STATUS
+// HANDLERS PARA EVENTOS DE PROMPTSSTATUS.VUE
 // ===============================================================================
 const handleStatusLoaded = (status) => {
-  console.log('[PromptsTab] Status loaded:', status)
+  console.log('Status loaded:', status)
   if (status?.postgresql_available && status?.tables_exist) {
-    safeLoadPrompts()
+    loadPrompts()
   }
 }
 
 const handleMigrationComplete = () => {
-  safeLoadPrompts()
+  loadPrompts()
 }
 
 // ===============================================================================
-// WATCHERS SEGUROS
+// WATCHERS - CARGAR PROMPTS CUANDO SE ACTIVA EL TAB
 // ===============================================================================
-
-// Watch para activación del tab
-watch(() => props.isActive, async (newVal) => {
+watch(() => props.isActive, (newVal) => {
   if (newVal) {
-    console.log('[PromptsTab] Tab activated')
-    
-    if (!componentsReady.value) {
-      console.log('[PromptsTab] Components not ready, initializing...')
-      await initializeComposable()
-    } else {
-      console.log('[PromptsTab] Components ready, loading prompts...')
-      await safeLoadPrompts()
-    }
+    console.log('PromptsTab is now active, loading prompts...')
+    loadPrompts()
   }
 })
 
 // ===============================================================================
-// LIFECYCLE HOOKS
+// LIFECYCLE HOOKS CON CORRECCIONES COMPLETAS
 // ===============================================================================
 
-onMounted(async () => {
-  console.log('[PromptsTab] Component mounted, isActive:', props.isActive)
+onMounted(() => {
+  console.log('PromptsTab mounted, isActive:', props.isActive)
   
-  // ✅ Inicializar de forma diferida para evitar problemas de timing
-  setTimeout(async () => {
-    await initializeComposable()
-  }, 100)
+  // Cargar prompts si está activo
+  if (props.isActive) {
+    console.log('Tab is active on mount, loading prompts...')
+    loadPrompts()
+  }
   
-  // ✅ FUNCIONES GLOBALES MÍNIMAS para compatibilidad
+  // ✅ CORRECCIÓN: EXPONER FUNCIONES GLOBALES EXACTAS DEL MONOLITO
   if (typeof window !== 'undefined') {
-    window.loadCurrentPrompts = () => safeLoadPrompts()
-    window.repairAllPrompts = () => safeRepairAllPrompts()
-    window.exportPrompts = () => safeExportPrompts()
+    // Funciones principales (igual que el monolito)
+    window.loadCurrentPrompts = () => loadPrompts()
+    window.updatePrompt = (agentName) => updatePrompt(agentName)
+    window.resetPrompt = (agentName) => resetPrompt(agentName)
+    window.previewPrompt = (agentName) => previewPrompt(agentName)
+    window.repairAllPrompts = () => repairAllPrompts()
+    window.exportPrompts = () => exportPrompts()
+    
+    // ✅ CORRECCIÓN: Funciones debug faltantes (igual que el monolito)
+    window.debugPrompts = () => debugPrompts()
+    window.testPromptEndpoints = () => testEndpoints()
+    
+    // ✅ CORRECCIÓN: Instancia para debug (igual que el monolito)
+    window.PromptsTabInstance = getCurrentInstance()
   }
 })
 
 onUnmounted(() => {
-  console.log('[PromptsTab] Component unmounting, cleaning up...')
-  
-  // Cleanup composable
-  if (promptsComposable?.cleanup) {
-    promptsComposable.cleanup()
-  }
-  
-  // Cleanup global functions
+  // ✅ CORRECCIÓN: Limpiar TODAS las funciones globales
   if (typeof window !== 'undefined') {
     delete window.loadCurrentPrompts
+    delete window.updatePrompt
+    delete window.resetPrompt
+    delete window.previewPrompt
     delete window.repairAllPrompts
     delete window.exportPrompts
+    delete window.debugPrompts
+    delete window.testPromptEndpoints
+    delete window.PromptsTabInstance
   }
 })
 </script>
@@ -411,24 +267,6 @@ onUnmounted(() => {
   color: #6c757d;
   font-size: 1.1em;
   margin: 0;
-}
-
-.initializing-section {
-  text-align: center;
-  padding: 60px 20px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  border: 1px solid #dee2e6;
-}
-
-.initializing-section .loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #007bff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 20px;
 }
 
 .prompts-main-section {
@@ -512,10 +350,138 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
+/* Prompts Grid */
 .prompts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
   gap: 20px;
+}
+
+.agent-card {
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: transform 0.2s;
+}
+
+.agent-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.agent-header {
+  background: #f8f9fa;
+  padding: 15px;
+  border-bottom: 1px solid #dee2e6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.agent-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+  color: #495057;
+}
+
+.status-badge {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.status-badge.custom {
+  background: rgba(40, 167, 69, 0.1);
+  color: #28a745;
+}
+
+.status-badge.default {
+  background: rgba(108, 117, 125, 0.1);
+  color: #6c757d;
+}
+
+.agent-body {
+  padding: 15px;
+}
+
+.prompt-textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+}
+
+.prompt-info {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 0.85em;
+  color: #6c757d;
+}
+
+.agent-actions {
+  padding: 15px;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+  display: flex;
+  gap: 10px;
+}
+
+.agent-actions button {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9em;
+  transition: all 0.2s;
+}
+
+.btn-update {
+  background: #007bff;
+  color: white;
+}
+
+.btn-update:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.btn-reset {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-reset:hover:not(:disabled) {
+  background: #545b62;
+}
+
+.btn-preview {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-preview:hover:not(:disabled) {
+  background: #117a8b;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .no-prompts-section {
