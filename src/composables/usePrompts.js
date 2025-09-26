@@ -1,708 +1,689 @@
+<template>
+  <div class="prompt-editor-container">
+    <!-- Editor Header -->
+    <div class="prompt-editor-header">
+      <div class="prompt-info">
+        <h4 class="prompt-title">{{ promptData.icon }} {{ promptData.displayName }}</h4>
+        <div class="prompt-meta">
+          <span class="prompt-status" :class="statusClass">{{ statusText }}</span>
+          <span v-if="promptData.lastModified" class="prompt-date">
+            Modificado: {{ formatDateTime(promptData.lastModified) }}
+          </span>
+        </div>
+      </div>
+      
+      <!-- Quick Actions -->
+      <div class="prompt-quick-actions">
+        <button 
+          v-if="promptData.isCustom" 
+          @click="resetToDefault"
+          class="btn-reset-small"
+          :disabled="readonly || isProcessing"
+          title="Restaurar al valor por defecto"
+        >
+          🔄
+        </button>
+        <button 
+          @click="showPreview"
+          class="btn-preview-small"
+          :disabled="readonly || isProcessing || !internalContent.trim()"
+          title="Vista previa"
+        >
+          👁️
+        </button>
+      </div>
+    </div>
+
+    <!-- Editor Textarea -->
+    <div class="prompt-editor-body">
+      <textarea
+        :id="`prompt-${promptData.id}`"
+        v-model="internalContent"
+        class="prompt-editor"
+        :placeholder="promptData.placeholder || 'Escribe aquí tu prompt personalizado...'"
+        :disabled="readonly || isProcessing"
+        @input="onContentChange"
+        @keydown="onKeyDown"
+        rows="12"
+      ></textarea>
+      
+      <!-- Character count and validation -->
+      <div class="prompt-editor-footer">
+        <div class="prompt-stats">
+          <span class="char-count">{{ internalContent.length }} caracteres</span>
+          <span v-if="hasUnsavedChanges" class="unsaved-indicator">• Cambios sin guardar</span>
+        </div>
+        
+        <div class="validation-messages" v-if="validationErrors.length > 0">
+          <div v-for="error in validationErrors" :key="error" class="validation-error">
+            ⚠️ {{ error }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="prompt-actions">
+      <button 
+        @click="updatePrompt"
+        class="btn-primary"
+        :disabled="readonly || isProcessing || !hasUnsavedChanges || validationErrors.length > 0"
+      >
+        <span v-if="isProcessing">⏳ Actualizando...</span>
+        <span v-else>💾 Actualizar</span>
+      </button>
+      
+      <button 
+        @click="resetToDefault"
+        class="btn-secondary"
+        :disabled="readonly || isProcessing || !promptData.isCustom"
+      >
+        <span v-if="isProcessing">⏳ Restaurando...</span>
+        <span v-else>🔄 Restaurar</span>
+      </button>
+      
+      <button 
+        @click="showPreview"
+        class="btn-info"
+        :disabled="readonly || isProcessing || !internalContent.trim()"
+      >
+        <span v-if="isProcessing">⏳ Generando...</span>
+        <span v-else>👁️ Vista Previa</span>
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
+
+// ============================================================================
+// PROPS Y EMITS
+// ============================================================================
+
+const props = defineProps({
+  promptData: {
+    type: Object,
+    required: true,
+    validator(value) {
+      return value && 
+             typeof value.id === 'string' && 
+             typeof value.displayName === 'string' &&
+             typeof value.content === 'string'
+    }
+  },
+  readonly: {
+    type: Boolean,
+    default: false
+  }
+})
+
+const emit = defineEmits(['update', 'reset', 'preview', 'change'])
+
+// ============================================================================
+// ESTADO REACTIVO INICIAL SEGURO
+// ============================================================================
+
+const internalContent = ref('')
+const originalContent = ref('')
+const isProcessing = ref(false)
+const validationErrors = ref([])
+const isInitialized = ref(false) // ✅ NUEVO: Flag de inicialización
+
+// ============================================================================
+// COMPUTED PROPERTIES
+// ============================================================================
+
+const hasUnsavedChanges = computed(() => {
+  return isInitialized.value && internalContent.value !== originalContent.value
+})
+
+const statusClass = computed(() => {
+  if (props.promptData?.isCustom) {
+    return 'custom'
+  }
+  return 'default'
+})
+
+const statusText = computed(() => {
+  const data = props.promptData
+  
+  if (data?.isCustom) {
+    let text = '✅ Personalizado'
+    if (data.lastModified) {
+      text += ` (${new Date(data.lastModified).toLocaleDateString()})`
+    }
+    return text
+  }
+  
+  return '🔵 Por defecto'
+})
+
+// ============================================================================
+// ✅ FUNCIONES DE INICIALIZACIÓN SEGURAS
+// ============================================================================
+
 /**
- * usePrompts.js - Composable para Gestión de Prompts
- * ✅ CORREGIDO: Headers consistentes + inicialización diferida segura
- * ✅ PRESERVADO: Toda la funcionalidad original
+ * ✅ NUEVO: Inicialización segura del contenido
  */
-
-import { ref, computed, watch } from 'vue'
-
-export const usePrompts = () => {
-  // ============================================================================
-  // INICIALIZACIÓN DIFERIDA - SOLUCIONA "Cannot access 'U' before initialization"
-  // ============================================================================
-
-  let appStore = null
-  let apiRequest = null
-  let showNotification = null
-
-  /**
-   * ✅ NUEVA FUNCIÓN: Inicialización segura de composables
-   * Solo accede a stores cuando sea necesario
-   */
-  const initializeComposables = () => {
-    if (appStore && apiRequest && showNotification) {
-      return true // Ya inicializados
-    }
-
-    try {
-      if (!appStore) {
-        const { useAppStore } = require('@/stores/app')
-        appStore = useAppStore()
-      }
-
-      if (!apiRequest) {
-        const { useApiRequest } = require('@/composables/useApiRequest')
-        apiRequest = useApiRequest().apiRequest
-      }
-
-      if (!showNotification) {
-        const { useNotifications } = require('@/composables/useNotifications')
-        showNotification = useNotifications().showNotification
-      }
-
-      return true
-    } catch (error) {
-      console.warn('[usePrompts] Composables not ready:', error.message)
-      return false
-    }
-  }
-
-  // ============================================================================
-  // ESTADO REACTIVO - MIGRADO DE PROMPTSTAB.VUE (SIN CAMBIOS)
-  // ============================================================================
-
-  const agents = ref({
-    emergency_agent: null,
-    router_agent: null,
-    sales_agent: null,
-    schedule_agent: null,
-    support_agent: null
-  })
-
-  const isLoadingPrompts = ref(false)
-  const isProcessing = ref(false)
-  const error = ref(null)
-
-  // Preview state
-  const showPreview = ref(false)
-  const previewAgent = ref('')
-  const previewContent = ref('')
-  const previewTestMessage = ref('')
-  const previewResponse = ref(null)
-  const previewLoading = ref(false)
-
-  // ============================================================================
-  // COMPUTED PROPERTIES - CON GUARDS DE SEGURIDAD
-  // ============================================================================
-
-  const hasPrompts = computed(() => {
-    return Object.keys(agents.value).some(key => agents.value[key] !== null)
-  })
-
-  // ✅ CORREGIDO: Computed seguro que no accede prematuramente al store
-  const currentCompanyId = computed(() => {
-    // Prioridad: window > localStorage > store (si está disponible) > fallback
-    if (typeof window !== 'undefined' && window.currentCompanyId) {
-      return window.currentCompanyId
-    }
+const initializeContent = async () => {
+  try {
+    // Esperar a que Vue esté completamente montado
+    await nextTick()
     
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem('currentCompanyId')
-      if (stored) return stored
+    if (props.promptData && typeof props.promptData.content === 'string') {
+      internalContent.value = props.promptData.content || ''
+      originalContent.value = internalContent.value
+      
+      // ✅ SEGURO: Validar después de asignar contenido
+      setTimeout(() => {
+        validateContent()
+        isInitialized.value = true
+      }, 50)
+      
+      console.log(`[PromptEditor] Initialized content for ${props.promptData.displayName}`)
     }
-    
-    // Solo acceder al store si está inicializado
-    if (appStore && appStore.currentCompanyId) {
-      return appStore.currentCompanyId
-    }
-    
-    return 'dental_clinic' // Fallback original
-  })
-
-  const currentCompanyName = computed(() => {
-    return window.currentCompanyName || currentCompanyId.value
-  })
-
-  const agentsList = computed(() => {
-    const agentConfigs = [
-      { name: 'emergency_agent', displayName: 'Emergency Agent', icon: '🚨' },
-      { name: 'router_agent', displayName: 'Router Agent', icon: '🚦' },
-      { name: 'sales_agent', displayName: 'Sales Agent', icon: '💼' },
-      { name: 'schedule_agent', displayName: 'Schedule Agent', icon: '📅' },
-      { name: 'support_agent', displayName: 'Support Agent', icon: '🎧' }
-    ]
-
-    const result = agentConfigs
-      .filter(config => agents.value[config.name])
-      .map(config => ({
-        id: config.name,
-        name: config.name,
-        displayName: config.displayName,
-        icon: config.icon,
-        content: agents.value[config.name]?.current_prompt || '',
-        isCustom: agents.value[config.name]?.is_custom || false,
-        lastModified: agents.value[config.name]?.last_modified || null,
-        version: agents.value[config.name]?.version || null,
-        placeholder: `Prompt para ${config.displayName}...`
-      }))
-
-    console.log('agentsList computed:', result.length, 'agents')
-    result.forEach(agent => {
-      console.log(`- ${agent.displayName}: ${agent.content ? 'Has content' : 'Empty'}`)
-    })
-
-    return result
-  })
-
-  // ============================================================================
-  // FUNCIONES PRINCIPALES - ✅ CORREGIDAS CON GUARDS DE INICIALIZACIÓN
-  // ============================================================================
-
-  /**
-   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
-   */
-  const loadPrompts = async () => {
-    // ✅ Guard: Verificar que composables estén listos
-    if (!initializeComposables()) {
-      console.warn('[usePrompts] Composables not ready, retrying...')
-      await new Promise(resolve => setTimeout(resolve, 100))
-      
-      if (!initializeComposables()) {
-        error.value = 'Sistema no inicializado correctamente'
-        return []
-      }
-    }
-
-    if (!currentCompanyId.value) {
-      error.value = 'Por favor selecciona una empresa primero'
-      return []
-    }
-
-    try {
-      isLoadingPrompts.value = true
-      error.value = null
-      
-      console.log(`Loading prompts for company: ${currentCompanyId.value}`)
-      
-      // ✅ FIX: Usar apiRequest en lugar de fetch directo
-      const data = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      
-      console.log('Prompts response:', data)
-      
-      if (data && data.agents) {
-        agents.value = {
-          emergency_agent: data.agents.emergency_agent || null,
-          router_agent: data.agents.router_agent || null,
-          sales_agent: data.agents.sales_agent || null,
-          schedule_agent: data.agents.schedule_agent || null,
-          support_agent: data.agents.support_agent || null
-        }
-        
-        console.log('✅ Assigned agents:', agents.value)
-        console.log('✅ Has prompts?', hasPrompts.value)
-        console.log('✅ Agents list length:', agentsList.value.length)
-        
-      } else {
-        error.value = 'No se recibieron prompts del servidor'
-      }
-      
-      return agents.value
-      
-    } catch (err) {
-      error.value = `Error cargando prompts: ${err.message}`
-      console.error('Error loading prompts:', err)
-      return []
-    } finally {
-      isLoadingPrompts.value = false
-    }
-  }
-
-  /**
-   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
-   */
-  const updatePrompt = async (agentName, customContent = null) => {
-    if (!initializeComposables()) {
-      console.warn('[usePrompts] Cannot update: composables not ready')
-      return false
-    }
-
-    if (!currentCompanyId.value) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
-    }
-  
-    // ✅ FIX: Usar contenido pasado como parámetro o leer del estado
-    let promptContent = customContent
-    
-    if (!promptContent) {
-      promptContent = agents.value[agentName]?.current_prompt
-    }
-  
-    if (!promptContent || !promptContent.trim()) {
-      showNotification('El prompt no puede estar vacío', 'error')
-      return false
-    }
-  
-    try {
-      isProcessing.value = true
-      
-      console.log(`Updating prompt for ${agentName}`)
-      console.log('Content to send:', promptContent.substring(0, 100) + '...')
-      
-      const data = await apiRequest(`/api/admin/prompts/${agentName}`, {
-        method: 'PUT',
-        body: {
-          company_id: currentCompanyId.value,
-          prompt_template: promptContent
-        }
-      })
-      
-      console.log('Update response:', data)
-      
-      // ✅ FIX: Actualizar estado local INMEDIATAMENTE con el contenido enviado
-      if (agents.value[agentName]) {
-        agents.value[agentName].current_prompt = promptContent // Usar el contenido enviado
-        agents.value[agentName].is_custom = true
-        agents.value[agentName].last_modified = new Date().toISOString()
-        if (data.version) {
-          agents.value[agentName].version = data.version
-        }
-      }
-      
-      let successMessage = `Prompt de ${agentName} actualizado exitosamente`
-      if (data.version) {
-        successMessage += ` (v${data.version})`
-      }
-      showNotification(successMessage, 'success')
-      
-      // ✅ FIX: NO recargar inmediatamente (puede sobrescribir el cambio)
-      // await loadPrompts() // Comentar esta línea
-      
-      return true
-      
-    } catch (err) {
-      showNotification(`Error actualizando prompt: ${err.message}`, 'error')
-      console.error('Error updating prompt:', err)
-      return false
-    } finally {
-      isProcessing.value = false
-    }
-  }
-
-  /**
-   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
-   */
-  const resetPrompt = async (agentName) => {
-    if (!initializeComposables()) {
-      console.warn('[usePrompts] Cannot reset: composables not ready')
-      return false
-    }
-
-    if (!currentCompanyId.value) {
-      showNotification('Por favor selecciona una empresa primero', 'warning')
-      return false
-    }
-
-    if (!confirm(`¿Estás seguro de restaurar el prompt de ${agentName} a su valor por defecto?`)) {
-      return false
-    }
-
-    try {
-      isProcessing.value = true
-      
-      console.log(`Resetting prompt for ${agentName}`)
-      
-      // ✅ FIX: Usar apiRequest en lugar de fetch directo
-      const data = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
-        method: 'DELETE'
-      })
-      
-      console.log('Reset response data:', data)
-      
-      // Actualizar estado local con prompt por defecto
-      if (data.default_prompt && agents.value[agentName]) {
-        agents.value[agentName].current_prompt = data.default_prompt
-        agents.value[agentName].is_custom = false
-        agents.value[agentName].last_modified = null
-      }
-      
-      showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
-      
-      // Recargar prompts
-      await loadPrompts()
-      return true
-      
-    } catch (err) {
-      showNotification(`Error reseteando prompt: ${err.message}`, 'error')
-      console.error('Error resetting prompt:', err)
-      return false
-    } finally {
-      isProcessing.value = false
-    }
-  }
-
-  /**
-   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
-   */
-  const previewPrompt = async (agentName) => {
-    if (!initializeComposables()) {
-      console.warn('[usePrompts] Cannot preview: composables not ready')
-      return false
-    }
-
-    const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
-    
-    if (!testMessage) return false
-    
-    const promptContent = agents.value[agentName]?.current_prompt
-    if (!promptContent) {
-      showNotification('No hay contenido de prompt para generar vista previa', 'error')
-      return false
-    }
-    
-    // Preparar datos del preview
-    previewAgent.value = agentName
-    previewContent.value = promptContent
-    previewTestMessage.value = testMessage
-    previewResponse.value = null
-    previewLoading.value = true
-    showPreview.value = true
-    
-    try {
-      console.log(`Generating preview for ${agentName}`)
-      
-      // ✅ FIX: Usar apiRequest en lugar de fetch directo
-      const data = await apiRequest('/api/admin/prompts/preview', {
-        method: 'POST',
-        body: {
-          agent_name: agentName,
-          company_id: currentCompanyId.value,
-          prompt_template: promptContent,
-          message: testMessage
-        }
-      })
-      
-      console.log('Preview response:', data)
-      
-      previewResponse.value = {
-        success: true,
-        preview: data.preview || data.response || '',
-        agent_used: data.agent_used || agentName,
-        prompt_source: data.prompt_source || 'custom',
-        debug_info: data.debug_info || {},
-        model_info: data.model_info || {},
-        metrics: data.metrics || {},
-        timestamp: new Date().toISOString()
-      }
-      
-      return true
-      
-    } catch (err) {
-      console.log('Preview endpoint error:', err)
-      previewResponse.value = {
-        success: false,
-        error: 'Endpoint de preview no disponible',
-        fallback: true,
-        prompt_content: promptContent,
-        timestamp: new Date().toISOString()
-      }
-      return false
-    } finally {
-      previewLoading.value = false
-    }
-  }
-
-  /**
-   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
-   */
-  const repairAllPrompts = async () => {
-    if (!initializeComposables()) {
-      console.warn('[usePrompts] Cannot repair: composables not ready')
-      return false
-    }
-
-    if (!confirm('¿Restaurar TODOS los prompts a sus valores por defecto del repositorio?\n\nEsto eliminará todas las personalizaciones.')) {
-      return false
-    }
-  
-    try {
-      isProcessing.value = true
-      
-      console.log('Restoring all prompts to repository defaults...')
-      
-      const agentNames = Object.keys(agents.value).filter(key => agents.value[key] !== null)
-      let successCount = 0
-      let errorCount = 0
-      
-      // ✅ CORRECCIÓN: Hacer DELETE para cada agente (igual que resetPrompt)
-      for (const agentName of agentNames) {
-        try {
-          console.log(`Restoring ${agentName} to default...`)
-          
-          // Mismo endpoint y método que resetPrompt()
-          const data = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
-            method: 'DELETE'
-          })
-          
-          console.log(`✅ ${agentName} restored successfully`)
-          
-          // Actualizar estado local con prompt por defecto
-          if (data.default_prompt && agents.value[agentName]) {
-            agents.value[agentName].current_prompt = data.default_prompt
-            agents.value[agentName].is_custom = false
-            agents.value[agentName].last_modified = null
-          }
-          
-          successCount++
-          
-        } catch (error) {
-          console.error(`❌ Error restoring ${agentName}:`, error)
-          errorCount++
-        }
-      }
-      
-      // Mostrar resultado final
-      if (errorCount === 0) {
-        showNotification(`✅ Todos los prompts restaurados exitosamente (${successCount}/${agentNames.length})`, 'success')
-      } else {
-        showNotification(`⚠️ Restauración completada: ${successCount} exitosos, ${errorCount} errores`, 'warning')
-      }
-      
-      // Recargar todos los prompts para sincronizar
-      await loadPrompts()
-      return true
-      
-    } catch (err) {
-      showNotification(`Error restaurando prompts: ${err.message}`, 'error')
-      console.error('Error in repair all prompts:', err)
-      return false
-    } finally {
-      isProcessing.value = false
-    }
-  }
-
-  // ============================================================================
-  // FUNCIONES SIN CAMBIOS CRÍTICOS - PRESERVADAS
-  // ============================================================================
-
-  const closePreview = () => {
-    showPreview.value = false
-    previewAgent.value = ''
-    previewContent.value = ''
-    previewTestMessage.value = ''
-    previewResponse.value = null
-    previewLoading.value = false
-  }
-
-  const exportPrompts = () => {
-    if (!initializeComposables()) {
-      console.warn('[usePrompts] Cannot export: composables not ready')
-      return
-    }
-
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
-      
-      const exportData = {
-        company_id: currentCompanyId.value,
-        company_name: currentCompanyName.value,
-        exported_at: new Date().toISOString(),
-        agents: {}
-      }
-      
-      Object.entries(agents.value).forEach(([key, agent]) => {
-        if (agent) {
-          exportData.agents[key] = {
-            current_prompt: agent.current_prompt,
-            is_custom: agent.is_custom,
-            last_modified: agent.last_modified,
-            version: agent.version || null
-          }
-        }
-      })
-      
-      const dataStr = JSON.stringify(exportData, null, 2)
-      const dataBlob = new Blob([dataStr], { type: 'application/json' })
-      
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(dataBlob)
-      link.download = `prompts_${currentCompanyId.value}_${timestamp}.json`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(link.href)
-      
-      showNotification('Prompts exportados exitosamente', 'success')
-    } catch (err) {
-      showNotification('Error exportando prompts: ' + err.message, 'error')
-      console.error('Error exporting prompts:', err)
-    }
-  }
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A'
-    try {
-      return new Date(dateString).toLocaleDateString()
-    } catch {
-      return 'Fecha inválida'
-    }
-  }
-
-  // ============================================================================
-  // WATCHERS SEGUROS - CON GUARDS
-  // ============================================================================
-
-  let watcherCleanup = null
-
-  const setupWatchers = () => {
-    if (watcherCleanup) return // Ya configurado
-    
-    try {
-      if (initializeComposables()) {
-        watcherCleanup = watch(() => appStore?.currentCompanyId, async (newCompanyId) => {
-          if (newCompanyId) {
-            await loadPrompts()
-          }
-        })
-      }
-    } catch (error) {
-      console.warn('[usePrompts] Error setting up watchers:', error)
-    }
-  }
-
-  // Configurar watchers con delay
-  setTimeout(setupWatchers, 100)
-
-  /**
-   * ✅ CORREGIDO: debugPrompts usa apiRequest + guards
-   */
-  const debugPrompts = async () => {
-    if (!initializeComposables()) return null
-
-    console.log('=== DEBUG PROMPTS ===')
-    console.log('1. Current Company ID:', currentCompanyId.value)
-    console.log('2. Current Agents State:', JSON.stringify(agents.value, null, 2))
-    console.log('3. Has Prompts?:', hasPrompts.value)
-    console.log('4. AgentsList Length:', agentsList.value.length)
-    console.log('5. AgentsList Content:', agentsList.value)
-    console.log('6. Is Loading?:', isLoadingPrompts.value)
-    console.log('7. Error?:', error.value)
-    
-    try {
-      // ✅ FIX: Usar apiRequest para consistencia
-      const data = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      console.log('8. RAW API Response:', data)
-      
-      if (data.agents) {
-        console.log('9. Agent Keys in Response:', Object.keys(data.agents))
-        console.log('10. Agent Values:')
-        Object.entries(data.agents).forEach(([key, value]) => {
-          console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
-                     value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
-        })
-      }
-      
-      return data
-    } catch (err) {
-      console.error('Debug Error:', err)
-      return null
-    }
-  }
-  
-  /**
-   * ✅ CORREGIDO: testEndpoints usa apiRequest + guards
-   */
-  const testEndpoints = async () => {
-    if (!initializeComposables()) return null
-
-    console.log('=== TESTING ENDPOINTS ===')
-    const testAgent = 'emergency_agent'
-    
-    // Test GET
-    console.log('\n1. Testing GET /api/admin/prompts')
-    try {
-      const getData = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      console.log('GET Response:', getData)
-    } catch (err) {
-      console.error('GET Error:', err)
-    }
-    
-    // Test UPDATE (estructura)
-    console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
-    console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
-    console.log('Body:', {
-      company_id: currentCompanyId.value,
-      prompt_template: 'test'
-    })
-    
-    // Test DELETE (estructura)
-    console.log('\n3. Testing DELETE endpoint')
-    console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${currentCompanyId.value}`)
-    
-    // Test PREVIEW
-    console.log('\n4. Testing PREVIEW endpoint')
-    try {
-      const previewData = await apiRequest('/api/admin/prompts/preview', {
-        method: 'POST',
-        body: {
-          agent_name: testAgent,
-          company_id: currentCompanyId.value,
-          prompt_template: 'test prompt',
-          message: 'test message'
-        }
-      })
-      console.log('Preview Response:', previewData)
-    } catch (err) {
-      if (err.message.includes('404')) {
-        console.log('Preview endpoint not found (404)')
-      } else {
-        console.error('Preview Error:', err)
-      }
-    }
-    
-    console.log('\n5. Testing REPAIR endpoint')
-    console.log('Endpoint: /api/admin/prompts/repair')
-    console.log('Would send:', {
-      company_id: currentCompanyId.value,
-      agents: Object.keys(agents.value)
-    })
-  }
-
-  // ============================================================================
-  // CLEANUP
-  // ============================================================================
-
-  const cleanup = () => {
-    if (watcherCleanup) {
-      watcherCleanup()
-      watcherCleanup = null
-    }
-    
-    // Reset composables
-    appStore = null
-    apiRequest = null
-    showNotification = null
-  }
-
-  // ============================================================================
-  // RETORNO COMPLETO - PRESERVADO ÍNTEGRAMENTE
-  // ============================================================================
-
-  return {
-    // Estado reactivo
-    agents,
-    isLoadingPrompts,
-    isProcessing,
-    error,
-    
-    // Preview state
-    showPreview,
-    previewAgent,
-    previewContent,
-    previewTestMessage,
-    previewResponse,
-    previewLoading,
-    
-    // Computed properties
-    hasPrompts,
-    currentCompanyId,
-    currentCompanyName,
-    agentsList,
-    
-    // Funciones principales (nombres exactos de PromptsTab.vue)
-    loadPrompts,
-    updatePrompt,
-    resetPrompt,
-    previewPrompt,
-    closePreview,
-    repairAllPrompts,
-    exportPrompts,
-    formatDate,
-    debugPrompts,
-    testEndpoints,
-
-    // ✅ NUEVA: Función de utilidad para verificación
-    initializeComposables,
-    cleanup
+  } catch (error) {
+    console.warn(`[PromptEditor] Initialization error:`, error)
+    // ✅ Fallback seguro
+    internalContent.value = ''
+    originalContent.value = ''
+    isInitialized.value = true
   }
 }
+
+// ============================================================================
+// ✅ WATCHERS CORREGIDOS - SIN IMMEDIATE PARA EVITAR ERRORES
+// ============================================================================
+
+/**
+ * ✅ CORREGIDO: Watcher SIN immediate para evitar errores de inicialización
+ */
+watch(() => props.promptData, async (newData, oldData) => {
+  if (!newData) return
+  
+  // ✅ Solo actualizar si realmente cambió
+  if (oldData && newData.content === oldData.content) return
+  
+  try {
+    internalContent.value = newData.content || ''
+    originalContent.value = internalContent.value
+    
+    // ✅ Validar de forma segura
+    await nextTick()
+    validateContent()
+    
+    console.log(`[PromptEditor] Content updated for ${newData.displayName}`)
+  } catch (error) {
+    console.warn(`[PromptEditor] Error updating content:`, error)
+  }
+}, { 
+  // ✅ CRÍTICO: NO usar immediate para evitar errores de inicialización
+  immediate: false, 
+  deep: true 
+})
+
+/**
+ * ✅ CORREGIDO: Watcher del contenido interno sin acceso a composables
+ */
+watch(internalContent, () => {
+  try {
+    validateContent()
+    
+    // ✅ Solo emitir si está inicializado
+    if (isInitialized.value) {
+      emit('change', {
+        content: internalContent.value,
+        hasChanges: hasUnsavedChanges.value,
+        isValid: validationErrors.value.length === 0,
+        promptData: props.promptData
+      })
+    }
+  } catch (error) {
+    console.warn('[PromptEditor] Error in content watcher:', error)
+  }
+})
+
+// ============================================================================
+// FUNCIONES PRINCIPALES - SIN CAMBIOS CRÍTICOS
+// ============================================================================
+
+const updatePrompt = () => {
+  const content = internalContent.value.trim()
+  
+  if (!content) {
+    console.warn('El prompt no puede estar vacío')
+    return
+  }
+  
+  if (validationErrors.value.length > 0) {
+    console.warn('El prompt tiene errores de validación')
+    return
+  }
+  
+  try {
+    isProcessing.value = true
+    
+    emit('update', {
+      agentName: props.promptData.id || props.promptData.name,
+      content: content
+    })
+    
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+const resetToDefault = async () => {
+  if (!props.promptData.isCustom) {
+    console.warn('Este prompt ya está en su valor por defecto')
+    return
+  }
+  
+  const agentName = props.promptData.displayName
+  
+  if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
+    return
+  }
+  
+  try {
+    isProcessing.value = true
+    emit('reset', props.promptData.id || props.promptData.name)
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+const showPreview = async () => {
+  const content = internalContent.value.trim()
+  if (!content) {
+    console.warn('El prompt no puede estar vacío')
+    return
+  }
+  
+  try {
+    isProcessing.value = true
+    emit('preview', props.promptData.id || props.promptData.name)
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+// ============================================================================
+// FUNCIONES DE VALIDACIÓN - SIN CAMBIOS
+// ============================================================================
+
+const validateContent = () => {
+  try {
+    const errors = []
+    const content = internalContent.value
+    
+    // Validación 1: Longitud máxima
+    if (content.length > 10000) {
+      errors.push('El prompt es demasiado largo (máximo 10,000 caracteres)')
+    }
+    
+    // Validación 2: Solo una instancia de {user_message}
+    if (content.includes('{user_message}') && content.split('{user_message}').length > 2) {
+      errors.push('Solo se permite una instancia de {user_message}')
+    }
+    
+    validationErrors.value = errors
+  } catch (error) {
+    console.warn('[PromptEditor] Validation error:', error)
+    validationErrors.value = []
+  }
+}
+
+const onContentChange = () => {
+  try {
+    validateContent()
+  } catch (error) {
+    console.warn('[PromptEditor] Content change error:', error)
+  }
+}
+
+const onKeyDown = (event) => {
+  try {
+    // Ctrl+S para guardar
+    if (event.ctrlKey && event.key === 's') {
+      event.preventDefault()
+      if (hasUnsavedChanges.value && validationErrors.value.length === 0) {
+        updatePrompt()
+      }
+    }
+    
+    // Ctrl+Enter para vista previa
+    if (event.ctrlKey && event.key === 'Enter') {
+      event.preventDefault()
+      if (internalContent.value.trim()) {
+        showPreview()
+      }
+    }
+    
+    // Escape para deshacer cambios
+    if (event.key === 'Escape' && hasUnsavedChanges.value) {
+      if (confirm('¿Deshacer cambios no guardados?')) {
+        internalContent.value = originalContent.value
+      }
+    }
+  } catch (error) {
+    console.warn('[PromptEditor] Keyboard error:', error)
+  }
+}
+
+const formatDateTime = (dateString) => {
+  if (!dateString) return 'N/A'
+  try {
+    return new Date(dateString).toLocaleString()
+  } catch (error) {
+    return 'Fecha inválida'
+  }
+}
+
+// ============================================================================
+// ✅ LIFECYCLE HOOKS CORREGIDOS
+// ============================================================================
+
+onMounted(async () => {
+  try {
+    console.log(`[PromptEditor] Mounting for ${props.promptData?.displayName || 'unknown'}`)
+    
+    // ✅ CRÍTICO: Inicialización diferida y segura
+    setTimeout(async () => {
+      await initializeContent()
+    }, 100)
+    
+    // ✅ Funciones globales solo si están disponibles
+    const agentName = props.promptData?.id || props.promptData?.name
+    if (agentName && typeof window !== 'undefined') {
+      try {
+        window[`updatePrompt_${agentName}`] = updatePrompt
+        window[`resetPrompt_${agentName}`] = resetToDefault
+        window[`previewPrompt_${agentName}`] = showPreview
+      } catch (error) {
+        console.warn('[PromptEditor] Error setting global functions:', error)
+      }
+    }
+    
+  } catch (error) {
+    console.error('[PromptEditor] Mount error:', error)
+    // ✅ Fallback: Asegurar que esté inicializado
+    isInitialized.value = true
+  }
+})
+
+// ============================================================================
+// ✅ NUEVA FUNCIÓN: Verificación de salud del componente
+// ============================================================================
+
+const healthCheck = () => {
+  return {
+    isInitialized: isInitialized.value,
+    hasContent: Boolean(internalContent.value),
+    hasChanges: hasUnsavedChanges.value,
+    isValid: validationErrors.value.length === 0,
+    agentName: props.promptData?.displayName || 'Unknown'
+  }
+}
+
+// ✅ Exponer para debug
+if (typeof window !== 'undefined') {
+  window.promptEditorHealthCheck = healthCheck
+}
+</script>
+
+<style scoped>
+/* ===== ESTILOS PRESERVADOS (sin cambios) ===== */
+
+.prompt-editor-container {
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.prompt-editor-container:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.prompt-editor-header {
+  background: #f8f9fa;
+  padding: 15px;
+  border-bottom: 1px solid #dee2e6;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.prompt-info {
+  flex: 1;
+}
+
+.prompt-title {
+  margin: 0 0 5px 0;
+  color: #495057;
+  font-size: 1.1em;
+  font-weight: bold;
+}
+
+.prompt-meta {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  font-size: 0.9em;
+}
+
+.prompt-status {
+  font-weight: bold;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.prompt-status.custom {
+  color: #28a745;
+  background: rgba(40, 167, 69, 0.1);
+}
+
+.prompt-status.default {
+  color: #6c757d;
+  background: rgba(108, 117, 125, 0.1);
+}
+
+.prompt-date {
+  color: #6c757d;
+}
+
+.prompt-quick-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.btn-reset-small,
+.btn-preview-small {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.btn-reset-small {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-reset-small:hover:not(:disabled) {
+  background: #545b62;
+}
+
+.btn-preview-small {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-preview-small:hover:not(:disabled) {
+  background: #117a8b;
+}
+
+.prompt-editor-body {
+  padding: 15px;
+}
+
+.prompt-editor {
+  width: 100%;
+  min-height: 200px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  padding: 12px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  background: white;
+  transition: border-color 0.2s ease;
+}
+
+.prompt-editor:focus {
+  border-color: #007bff;
+  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+  outline: none;
+}
+
+.prompt-editor:disabled {
+  background: #f8f9fa;
+  cursor: not-allowed;
+}
+
+.prompt-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e9ecef;
+}
+
+.prompt-stats {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  font-size: 0.85em;
+  color: #6c757d;
+}
+
+.char-count {
+  font-weight: 500;
+}
+
+.unsaved-indicator {
+  color: #ffc107;
+  font-weight: bold;
+}
+
+.validation-messages {
+  flex: 1;
+  text-align: right;
+}
+
+.validation-error {
+  color: #dc3545;
+  font-size: 0.85em;
+  margin-bottom: 3px;
+}
+
+.prompt-actions {
+  padding: 15px;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prompt-actions button {
+  flex: 1;
+  min-width: 120px;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.9em;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: #0056b3;
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #545b62;
+  transform: translateY(-1px);
+}
+
+.btn-info {
+  background-color: #17a2b8;
+  color: white;
+}
+
+.btn-info:hover:not(:disabled) {
+  background-color: #117a8b;
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .prompt-editor-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .prompt-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  
+  .prompt-actions {
+    flex-direction: column;
+  }
+  
+  .prompt-actions button {
+    min-width: auto;
+  }
+  
+  .prompt-editor-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .validation-messages {
+    text-align: left;
+  }
+}
+</style>
