@@ -17,7 +17,6 @@ import json
 import logging
 import psycopg2
 import psycopg2.extras
-from psycopg2 import sql 
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
@@ -83,17 +82,11 @@ class EnterpriseCompanyConfig:
         if not self.sales_agent_name:
             self.sales_agent_name = f"Asistente de {self.company_name}"
     
-    def to_legacy_config(self) -> 'CompanyConfig':
-        """
-        Convertir EnterpriseCompanyConfig → CompanyConfig para compatibilidad
-        Mantiene exactamente la misma estructura que el sistema legacy
-        """
-        from app.config.company_config import CompanyConfig
-        
+    def to_legacy_config(self) -> CompanyConfig:
+        """Convertir a formato legacy para compatibilidad"""
         return CompanyConfig(
             company_id=self.company_id,
             company_name=self.company_name,
-            business_type=self.business_type,
             redis_prefix=self.redis_prefix,
             vectorstore_index=self.vectorstore_index,
             schedule_service_url=self.schedule_service_url,
@@ -222,7 +215,7 @@ class EnterpriseCompanyConfigService:
         except Exception as e:
             logger.error(f"Error creating company {config.company_id}: {e}")
             return False
-    ###
+    
     def update_company(self, company_id: str, updates: Dict[str, Any], modified_by: str = "admin") -> bool:
         """Actualizar configuración de empresa"""
         if not self.db_connection_string:
@@ -238,20 +231,21 @@ class EnterpriseCompanyConfigService:
                         logger.error(f"Company {company_id} not found or inactive")
                         return False
                     
-                    # Preparar datos de actualización (SIN version)
+                    # Preparar datos de actualización
                     updates['modified_by'] = modified_by
                     updates['modified_at'] = datetime.now(timezone.utc)
+                    updates['version'] = psycopg2.sql.SQL("version + 1")
                     
                     # Construir query de actualización
                     set_clauses = []
                     values = {}
                     
                     for key, value in updates.items():
-                        set_clauses.append(f"{key} = %({key})s")
-                        values[key] = value
-                    
-                    # 🔧 AGREGAR version increment directamente al SQL
-                    set_clauses.append("version = version + 1")
+                        if key == 'version':
+                            set_clauses.append("version = version + 1")
+                        else:
+                            set_clauses.append(f"{key} = %({key})s")
+                            values[key] = value
                     
                     update_query = f"""
                         UPDATE companies 
