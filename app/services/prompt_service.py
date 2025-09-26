@@ -59,65 +59,143 @@ class PromptService:
         except Exception as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             return None
+
+
+
     
-    def get_company_prompts(self, company_id: str) -> Dict[str, Dict]:
+    def _get_prompts_from_json_fallback(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
+        """Fallback a custom_prompts.json para compatibilidad temporal"""
+        try:
+            custom_prompts_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                'custom_prompts.json'
+            )
+            
+            if not os.path.exists(custom_prompts_file):
+                return None
+            
+            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
+                custom_prompts = json.load(f)
+            
+            company_prompts = custom_prompts.get(company_id, {})
+            agents_data = {}
+            
+            for agent_name in agents:
+                agent_data = company_prompts.get(agent_name, {})
+                
+                if isinstance(agent_data, dict):
+                    # Priorizar template personalizado, luego default_template
+                    template = agent_data.get('template')
+                    if not template or template == "null":
+                        template = agent_data.get('default_template') or self._hardcoded_prompts.get(agent_name)
+                    
+                    agents_data[agent_name] = {
+                        "current_prompt": template,
+                        "is_custom": agent_data.get('is_custom', False),
+                        "last_modified": agent_data.get('modified_at'),
+                        "version": 1,
+                        "source": "json_file",
+                        "fallback_level": "json_compatibility"
+                    }
+                else:
+                    agents_data[agent_name] = {
+                        "current_prompt": self._hardcoded_prompts.get(agent_name, f"Default prompt for {agent_name}"),
+                        "is_custom": False,
+                        "last_modified": None,
+                        "version": 0,
+                        "source": "hardcoded",
+                        "fallback_level": "json_hardcoded"
+                    }
+            
+            return agents_data
+            
+        except Exception as e:
+            logger.error(f"Error reading JSON prompts: {e}")
+            return None
+
+
+    def get_company_prompts(self, company_id: str, agents: List[str] = None) -> Optional[Dict[str, Dict]]:
         """
-        Obtener prompts con fallback inteligente
-        
-        JERARQUÍA DE FALLBACK:
-        1. PostgreSQL custom_prompts (Primera prioridad)
-        2. PostgreSQL default_prompts (Si no existe personalizado)
-        3. Prompts hardcodeados (Si hay falla de DB)
-        4. JSON fallback (Compatibilidad temporal)
+        Obtener prompts de una empresa con arquitectura separada
         
         Returns:
-            Dict con prompts de todos los agentes
+            Dict con datos de prompts para cada agente
         """
-        agents_data = {}
-        self.last_fallback_level = None
+        if agents is None:
+            agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
         
-        # Lista de agentes esperados
-        expected_agents = ['router_agent', 'sales_agent', 'support_agent', 
-                          'emergency_agent', 'schedule_agent', 'availability_agent']
+        conn = self.get_db_connection()
+        if not conn:
+            # Fallback a JSON si no hay PostgreSQL
+            return self._get_prompts_from_json_fallback(company_id, agents)
         
-        # NIVEL 1: Intentar PostgreSQL
         try:
-            pg_prompts = self._get_prompts_from_postgresql(company_id, expected_agents)
-            if pg_prompts:
-                self.last_fallback_level = "postgresql"
-                self._last_fallback_info = {"level": "postgresql", "source": "database"}
-                return pg_prompts
+            agents_data = {}
+            
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                for agent_name in agents:
+                    # Buscar custom prompt (personalizado)
+                    cursor.execute("""
+                        SELECT template, is_active, version, modified_at, modified_by, notes
+                        FROM custom_prompts 
+                        WHERE company_id = %s AND agent_name = %s AND is_active = true
+                    """, (company_id, agent_name))
+                    
+                    custom_result = cursor.fetchone()
+                    
+                    if custom_result:
+                        # Tiene prompt personalizado
+                        agents_data[agent_name] = {
+                            "current_prompt": custom_result['template'],
+                            "is_custom": True,
+                            "last_modified": custom_result['modified_at'],
+                            "modified_by": custom_result['modified_by'],
+                            "version": custom_result['version'],
+                            "source": "postgresql_custom",
+                            "notes": custom_result['notes']
+                        }
+                    else:
+                        # Buscar default prompt (por defecto)
+                        cursor.execute("""
+                            SELECT template, description, category, updated_at
+                            FROM default_prompts 
+                            WHERE company_id = %s AND agent_name = %s
+                        """, (company_id, agent_name))
+                        
+                        default_result = cursor.fetchone()
+                        
+                        if default_result:
+                            # Tiene prompt por defecto
+                            agents_data[agent_name] = {
+                                "current_prompt": default_result['template'],
+                                "is_custom": False,
+                                "last_modified": default_result['updated_at'],
+                                "version": 1,
+                                "source": "postgresql_default",
+                                "description": default_result['description'],
+                                "category": default_result['category']
+                            }
+                        else:
+                            # No tiene ni custom ni default - usar hardcoded
+                            hardcoded_prompt = self._hardcoded_prompts.get(agent_name)
+                            if hardcoded_prompt:
+                                agents_data[agent_name] = {
+                                    "current_prompt": hardcoded_prompt,
+                                    "is_custom": False,
+                                    "last_modified": None,
+                                    "version": 0,
+                                    "source": "hardcoded_fallback"
+                                }
+            
+            logger.debug(f"Retrieved prompts for {company_id}: {len(agents_data)} agents")
+            return agents_data
+            
         except Exception as e:
-            logger.warning(f"PostgreSQL fallback failed: {e}")
-        
-        # NIVEL 2: Fallback a JSON (compatibilidad temporal)
-        try:
-            json_prompts = self._get_prompts_from_json(company_id, expected_agents)
-            if json_prompts:
-                self.last_fallback_level = "json_fallback"
-                self._last_fallback_info = {"level": "json_fallback", "source": "file"}
-                return json_prompts
-        except Exception as e:
-            logger.warning(f"JSON fallback failed: {e}")
-        
-        # NIVEL 3: Fallback a prompts hardcodeados
-        logger.warning(f"Using hardcoded prompts fallback for {company_id}")
-        self.last_fallback_level = "hardcoded"
-        self._last_fallback_info = {"level": "hardcoded", "source": "emergency_fallback"}
-        
-        for agent_name in expected_agents:
-            agents_data[agent_name] = {
-                "current_prompt": self._hardcoded_prompts.get(
-                    agent_name, 
-                    f"Sistema en recuperación. Prompt por defecto para {agent_name}."
-                ),
-                "is_custom": False,
-                "last_modified": None,
-                "fallback_level": "hardcoded",
-                "source": "emergency_fallback"
-            }
-        
-        return agents_data
+            logger.error(f"Error getting company prompts for {company_id}: {e}")
+            # Fallback a JSON en caso de error
+            return self._get_prompts_from_json_fallback(company_id, agents)
+        finally:
+            conn.close()
     
     def _get_prompts_from_postgresql(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
         """Obtener prompts desde PostgreSQL usando función con fallback"""
@@ -623,36 +701,27 @@ class PromptService:
                 conn.close()
         
         return migration_stats
-
+    
     def get_default_prompt_by_company_agent(self, company_id: str, agent_name: str) -> Optional[str]:
-        """Obtener prompt por defecto específico para empresa + agente"""
+        """Obtener prompt por defecto específico para empresa + agente (ARQUITECTURA SEPARADA)"""
         conn = self.get_db_connection()
         if not conn:
             return None
         
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Buscar primero con clave específica empresa_agente
-                company_agent_key = f"{company_id}_{agent_name}"
+                # ✅ CORREGIDO: Buscar por company_id + agent_name separados
                 cursor.execute(
-                    "SELECT template FROM default_prompts WHERE agent_name = %s",
-                    (company_agent_key,)
+                    "SELECT template FROM default_prompts WHERE company_id = %s AND agent_name = %s",
+                    (company_id, agent_name)
                 )
                 
                 result = cursor.fetchone()
                 if result:
+                    logger.debug(f"Found default prompt for {company_id}/{agent_name}")
                     return result['template']
                 
-                # Fallback a agente genérico
-                cursor.execute(
-                    "SELECT template FROM default_prompts WHERE agent_name = %s",
-                    (agent_name,)
-                )
-                
-                result = cursor.fetchone()
-                if result:
-                    return result['template']
-                
+                logger.debug(f"No default prompt found for {company_id}/{agent_name}")
                 return None
                 
         except Exception as e:
