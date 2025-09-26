@@ -13,105 +13,11 @@
     <template v-else>
       <!-- Document management grid -->
       <div class="grid grid-2">
-        <!-- Upload Document Card -->
-        <div class="card">
-          <h3>📄 Subir Documento</h3>
-          
-          <!-- Title input -->
-          <div class="form-group">
-            <label for="documentTitle">Título del Documento</label>
-            <input 
-              type="text" 
-              id="documentTitle" 
-              v-model="documentTitle"
-              placeholder="Ej: Protocolo de tratamientos"
-              :disabled="isUploading"
-              @keyup.enter="handleUpload"
-            >
-          </div>
-          
-          <!-- Content textarea -->
-          <div class="form-group">
-            <label for="documentContent">Contenido</label>
-            <textarea 
-              id="documentContent"
-              v-model="documentContent"
-              placeholder="Contenido del documento..."
-              rows="4"
-              :disabled="isUploading"
-            ></textarea>
-          </div>
-          
-          <!-- File upload area -->
-          <div class="form-group">
-            <label for="documentFile">O subir archivo</label>
-            <div 
-              class="file-upload"
-              :class="{ 
-                'drag-over': isDragOver,
-                'uploading': isUploading
-              }"
-              @click="triggerFileSelect"
-              @dragenter.prevent="handleDragEnter"
-              @dragover.prevent="handleDragOver"  
-              @dragleave.prevent="handleDragLeave"
-              @drop.prevent="handleDrop"
-            >
-              <input 
-                type="file" 
-                id="documentFile" 
-                ref="fileInputRef"
-                style="display: none;" 
-                accept=".txt,.md,.pdf,.docx,.json,.csv"
-                @change="handleFileSelect"
-                :disabled="isUploading"
-              >
-              
-              <!-- Upload content -->
-              <div v-if="!selectedFile && !isUploading" class="upload-content">
-                📁 Hacer clic o arrastrar archivo aquí
-                <small>Formatos: PDF, Word, TXT, MD, JSON, CSV</small>
-              </div>
-              
-              <!-- Selected file info -->
-              <div v-else-if="selectedFile && !isUploading" class="selected-file">
-                <div class="file-info">
-                  <span class="file-icon">{{ getFileIcon(selectedFile.type) }}</span>
-                  <div class="file-details">
-                    <div class="file-name">{{ selectedFile.name }}</div>
-                    <div class="file-size">{{ formatFileSize(selectedFile.size) }}</div>
-                  </div>
-                </div>
-                <button @click.stop="clearSelectedFile" class="clear-file-btn">✕</button>
-              </div>
-              
-              <!-- Upload progress -->
-              <div v-else-if="isUploading" class="upload-progress">
-                <div class="progress-info">
-                  <span>📤 Subiendo archivo...</span>
-                  <span>{{ Math.round(uploadProgress) }}%</span>
-                </div>
-                <div class="progress-bar">
-                  <div 
-                    class="progress-fill" 
-                    :style="{ width: `${uploadProgress}%` }"
-                  ></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Upload button -->
-          <button 
-            class="btn btn-primary" 
-            @click="handleUpload"
-            :disabled="!canUploadDocument"
-            :class="{ 'uploading': isUploading }"
-          >
-            <span v-if="isUploading">⏳ Subiendo...</span>
-            <span v-else>📤 Subir Documento</span>
-          </button>
-        </div>
+        <!-- ✅ USAR COMPONENTE ESPECIALIZADO - No duplicar código -->
+        <DocumentUpload 
+          @uploaded="handleDocumentUploaded"
+          @refresh="loadDocuments"
+        />
 
         <!-- Search Documents Card -->
         <div class="card">
@@ -139,7 +45,7 @@
             </div>
           </div>
           
-          <!-- 🔧 VUE COMPATIBLE: Botón para cerrar modals si hay problemas -->
+          <!-- Modal alert simplificado -->
           <div v-if="isModalOpen" class="modal-alert">
             <div class="alert alert-warning">
               <span>⚠️ Hay un modal abierto</span>
@@ -149,8 +55,8 @@
             </div>
           </div>
           
-          <!-- Search results -->
-          <div id="searchResults" class="search-results-container">
+          <!-- ✅ USAR COMPONENTE ESPECIALIZADO - SearchResults -->
+          <div class="search-results-container">
             <SearchResults
               v-if="hasSearchResults"
               :results="searchResults"
@@ -180,11 +86,10 @@
               class="btn btn-secondary"
             >
               <span v-if="isLoading">⏳</span>
-              <span v-else>🔄</span>
+              <span v-else">🔄</span>
               Actualizar Lista
             </button>
             
-            <!-- 🔧 VUE COMPATIBLE: Botón de emergencia para cerrar modals -->
             <button 
               v-if="isModalOpen"
               @click="forceCloseModals" 
@@ -206,7 +111,7 @@
           </div>
         </div>
         
-        <!-- Documents list -->
+        <!-- ✅ USAR COMPONENTE ESPECIALIZADO - DocumentList -->
         <div class="data-list" id="documentsList">
           <DocumentList
             v-if="hasDocuments"
@@ -271,7 +176,7 @@
       </div>
     </template>
 
-    <!-- 🔧 VUE COMPATIBLE MODAL: Usando componente Vue en lugar de DOM manipulation -->
+    <!-- ✅ USAR COMPONENTE ESPECIALIZADO - DocumentModal -->
     <DocumentModalVue
       :show-modal="showModal"
       :modal-config="modalConfig"
@@ -291,10 +196,11 @@ import { useAppStore } from '@/stores/app'
 import { useDocuments } from '@/composables/useDocuments'
 import { useNotifications } from '@/composables/useNotifications'
 
-// Sub-components
+// ✅ COMPONENTES ESPECIALIZADOS - Sin duplicación
 import DocumentList from './DocumentList.vue'
 import SearchResults from './SearchResults.vue'
 import DocumentModalVue from './DocumentModal.vue'
+import DocumentUpload from './DocumentUpload.vue' // ✅ USAR COMPONENTE EXISTENTE
 
 // ============================================================================
 // PROPS
@@ -316,67 +222,47 @@ const {
   documents,
   searchResults,
   isLoading,
-  isUploading,
   isSearching,
-  uploadProgress,
   hasDocuments,
   documentsCount,
   hasSearchResults,
-  canUpload,
-  // 🔧 VUE COMPATIBLE: Usar estado reactivo del modal
+  // Modal state
   isModalOpen,
   modalDocument,
   modalError,
   modalLoading,
   showModal,
   modalConfig,
-  // Métodos
-  uploadDocument,
+  // Methods
   loadDocuments,
   searchDocuments,
   viewDocument,
   deleteDocument,
-  openModal,
   closeModal,
-  forceCloseAllModals,
-  setupFileUploadHandlers,
-  formatFileSize,
-  cleanup
+  forceCloseAllModals
 } = useDocuments()
 
 const { showNotification } = useNotifications()
 
 // ============================================================================
-// ESTADO LOCAL
+// ESTADO LOCAL SIMPLIFICADO - Solo lo que no está en componentes
 // ============================================================================
 
-const documentTitle = ref('')
-const documentContent = ref('')
 const searchQuery = ref('')
-const selectedFile = ref(null)
-const isDragOver = ref(false)
 const searchPerformed = ref(false)
-const fileInputRef = ref(null)
 
 // ============================================================================
 // COMPUTED PROPERTIES
 // ============================================================================
-
-const canUploadDocument = computed(() => {
-  return canUpload.value && 
-         documentTitle.value.trim() && 
-         (documentContent.value.trim() || selectedFile.value)
-})
 
 const showAdminFunctions = computed(() => {
   return appStore.adminApiKey || import.meta.env.DEV
 })
 
 // ============================================================================
-// 🔧 WATCHERS PARA AUTO-CERRAR MODALS - VUE COMPATIBLE
+// WATCHERS PARA AUTO-CERRAR MODALS
 // ============================================================================
 
-// Watch para cambios de pestaña activa
 watch(() => props.isActive, (newActive, oldActive) => {
   if (oldActive && !newActive) {
     console.log('[DOCUMENTS-TAB] Tab became inactive, closing modals')
@@ -384,7 +270,6 @@ watch(() => props.isActive, (newActive, oldActive) => {
   }
 })
 
-// Watch para cambios de empresa
 watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
   if (oldCompanyId && newCompanyId !== oldCompanyId) {
     console.log('[DOCUMENTS-TAB] Company changed, closing modals and clearing search')
@@ -394,121 +279,11 @@ watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
 })
 
 // ============================================================================
-// MÉTODOS DE UPLOAD
+// MÉTODOS DE BÚSQUEDA - SIMPLIFICADOS
 // ============================================================================
 
 /**
- * Maneja la subida de documento
- */
-const handleUpload = async () => {
-  if (!canUploadDocument.value) {
-    showNotification('❌ Complete todos los campos requeridos', 'error')
-    return
-  }
-  
-  // 🔧 VUE COMPATIBLE: Cerrar modals reactivamente
-  forceCloseModals()
-  
-  // Actualizar los inputs del DOM para mantener compatibilidad
-  const titleInput = document.getElementById('documentTitle')
-  const contentInput = document.getElementById('documentContent')
-  const fileInput = document.getElementById('documentFile')
-  
-  if (titleInput) titleInput.value = documentTitle.value
-  if (contentInput) contentInput.value = documentContent.value
-  if (fileInput && selectedFile.value) {
-    // Crear un nuevo FileList con el archivo seleccionado
-    const dataTransfer = new DataTransfer()
-    dataTransfer.items.add(selectedFile.value)
-    fileInput.files = dataTransfer.files
-  }
-  
-  const success = await uploadDocument()
-  
-  if (success) {
-    // Limpiar formulario
-    documentTitle.value = ''
-    documentContent.value = ''
-    selectedFile.value = null
-    
-    // Recargar lista de documentos
-    await loadDocuments()
-  }
-}
-
-/**
- * Trigger file selection
- */
-const triggerFileSelect = () => {
-  if (!isUploading.value && fileInputRef.value) {
-    fileInputRef.value.click()
-  }
-}
-
-/**
- * Handle file selection from input
- */
-const handleFileSelect = (event) => {
-  const files = event.target.files
-  if (files.length > 0) {
-    selectedFile.value = files[0]
-    showNotification(`📁 Archivo seleccionado: ${files[0].name}`, 'info', 2000)
-  }
-}
-
-/**
- * Clear selected file
- */
-const clearSelectedFile = () => {
-  selectedFile.value = null
-  if (fileInputRef.value) {
-    fileInputRef.value.value = ''
-  }
-}
-
-// ============================================================================
-// MÉTODOS DE DRAG & DROP
-// ============================================================================
-
-const handleDragEnter = () => {
-  isDragOver.value = true
-}
-
-const handleDragOver = () => {
-  isDragOver.value = true
-}
-
-const handleDragLeave = (event) => {
-  // Only remove highlight if we're leaving the drop zone completely
-  if (!event.currentTarget.contains(event.relatedTarget)) {
-    isDragOver.value = false
-  }
-}
-
-const handleDrop = (event) => {
-  isDragOver.value = false
-  const files = event.dataTransfer.files
-  
-  if (files.length > 0) {
-    selectedFile.value = files[0]
-    
-    // Update the file input as well
-    const dataTransfer = new DataTransfer()
-    dataTransfer.items.add(files[0])
-    if (fileInputRef.value) {
-      fileInputRef.value.files = dataTransfer.files
-    }
-    
-    showNotification(`📁 Archivo seleccionado: ${files[0].name}`, 'info', 2000)
-  }
-}
-
-// ============================================================================
-// MÉTODOS DE BÚSQUEDA
-// ============================================================================
-
-/**
- * Handle search - VUE COMPATIBLE con cierre de modals
+ * ✅ SIMPLIFICADO - Solo orquestación, lógica en composable
  */
 const handleSearch = async () => {
   if (!searchQuery.value.trim()) {
@@ -516,68 +291,39 @@ const handleSearch = async () => {
     return
   }
   
-  // 🔧 VUE COMPATIBLE: Cerrar modals reactivamente
   forceCloseModals()
-  
-  // Update DOM input for compatibility
-  const searchInput = document.getElementById('searchQuery')
-  if (searchInput) {
-    searchInput.value = searchQuery.value
-  }
-  
   searchPerformed.value = true
   await searchDocuments(searchQuery.value)
 }
 
 /**
- * 🔧 VUE COMPATIBLE: Limpiar resultados de búsqueda
+ * ✅ SIMPLIFICADO - Limpiar resultados
  */
 const clearSearchResults = () => {
   searchResults.value = []
   searchPerformed.value = false
   searchQuery.value = ''
-  
-  // Limpiar también el input DOM
-  const searchInput = document.getElementById('searchQuery')
-  if (searchInput) {
-    searchInput.value = ''
-  }
-  
-  // Cerrar cualquier modal abierto
   forceCloseModals()
-  
   showNotification('🔍 Resultados de búsqueda limpiados', 'info')
 }
 
 // ============================================================================
-// 🔧 MÉTODOS DEL MODAL VUE COMPATIBLE
+// MÉTODOS DEL MODAL - SIMPLIFICADOS
 // ============================================================================
 
-/**
- * 🔧 VUE COMPATIBLE: Función para forzar cierre de modals
- */
 const forceCloseModals = () => {
   console.log('[DOCUMENTS-TAB] forceCloseModals called from component')
   forceCloseAllModals()
 }
 
-/**
- * 🔧 VUE COMPATIBLE: Handle modal delete
- */
 const handleModalDelete = async (docId) => {
   await deleteDocument(docId)
 }
 
-/**
- * 🔧 VUE COMPATIBLE: Handle modal download
- */
 const handleModalDownload = (documentData) => {
   showNotification(`📥 Documento descargado: ${documentData.title}`, 'success')
 }
 
-/**
- * 🔧 VUE COMPATIBLE: Handle modal retry
- */
 const handleModalRetry = () => {
   if (modalConfig.value.documentData) {
     viewDocument(modalConfig.value.documentData.id || modalConfig.value.documentData._id)
@@ -585,47 +331,40 @@ const handleModalRetry = () => {
 }
 
 // ============================================================================
-// MÉTODOS DE UTILIDAD
+// EVENTOS DE COMPONENTES
 // ============================================================================
 
 /**
- * Get file icon based on type
+ * ✅ NUEVO - Manejar evento de DocumentUpload
  */
-const getFileIcon = (type) => {
-  const iconMap = {
-    'application/pdf': '📕',
-    'application/msword': '📘',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📘',
-    'text/plain': '📄',
-    'text/markdown': '📝',
-    'application/json': '🔧',
-    'text/csv': '📊'
-  }
+const handleDocumentUploaded = async (uploadedDocument) => {
+  console.log('[DOCUMENTS-TAB] Document uploaded:', uploadedDocument)
+  showNotification('✅ Documento subido exitosamente', 'success')
   
-  return iconMap[type] || '📄'
+  // Recargar lista de documentos
+  await loadDocuments()
 }
 
-/**
- * Focus upload area
- */
+// ============================================================================
+// MÉTODOS DE UTILIDAD - SIMPLIFICADOS
+// ============================================================================
+
 const focusUploadArea = () => {
+  // ✅ DELEGAR al componente DocumentUpload
   nextTick(() => {
-    const titleInput = document.getElementById('documentTitle')
-    if (titleInput) {
-      titleInput.focus()
+    const uploadComponent = document.querySelector('.document-upload input[type="text"]')
+    if (uploadComponent) {
+      uploadComponent.focus()
     }
   })
 }
 
-/**
- * Highlight company selector
- */
 const highlightCompanySelector = () => {
   window.dispatchEvent(new CustomEvent('highlightCompanySelector'))
 }
 
 // ============================================================================
-// MÉTODOS ADMINISTRATIVOS
+// MÉTODOS ADMINISTRATIVOS - SIN CAMBIOS
 // ============================================================================
 
 const exportDocuments = async () => {
@@ -666,25 +405,20 @@ const runDocumentMaintenance = () => {
 }
 
 // ============================================================================
-// LIFECYCLE HOOKS - VUE COMPATIBLE
+// LIFECYCLE HOOKS - SIMPLIFICADOS
 // ============================================================================
 
 onMounted(async () => {
-  appStore.addToLog('DocumentsTab mounted (Vue Compatible)', 'info')
-  
-  // 🔧 VUE COMPATIBLE: Setup file upload handlers simplificado
-  setupFileUploadHandlers()
+  appStore.addToLog('DocumentsTab mounted (Refactored - Modular)', 'info')
   
   // Load documents if company is selected
   if (appStore.hasCompanySelected) {
     await loadDocuments()
   }
   
-  // Event listener for tab content loading
   window.addEventListener('loadTabContent', handleLoadTabContent)
-  
-  // 🔧 VUE COMPATIBLE: Event listeners para cerrar modals en casos especiales
   window.addEventListener('beforeunload', forceCloseModals)
+  
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       console.log('[DOCUMENTS-TAB] Page hidden, closing modals')
@@ -694,13 +428,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up (Vue Compatible)')
+  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up (Refactored)')
   
-  // 🔧 VUE COMPATIBLE: Limpiar todo antes de desmontar
   forceCloseModals()
-  cleanup()
   
-  // Remove event listeners
   window.removeEventListener('loadTabContent', handleLoadTabContent)
   window.removeEventListener('beforeunload', forceCloseModals)
 })
@@ -708,7 +439,6 @@ onUnmounted(() => {
 // Handle load tab content event
 const handleLoadTabContent = (event) => {
   if (event.detail.tabName === 'documents' && props.isActive) {
-    // 🔧 VUE COMPATIBLE: Cerrar modals al cargar pestaña
     forceCloseModals()
     loadDocuments()
   }
@@ -722,43 +452,21 @@ watch(() => appStore.currentCompanyId, (newCompanyId) => {
 })
 
 // ============================================================================
-// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - VUE COMPATIBLE
+// ✅ COMPATIBILIDAD GLOBAL SIMPLIFICADA
 // ============================================================================
 
 onMounted(() => {
-  // 🔧 VUE COMPATIBLE: Exponer funciones simples sin manipulación DOM
-  window.uploadDocument = async () => {
-    forceCloseModals()
-    return await uploadDocument()
-  }
-  
-  window.loadDocuments = async () => {
-    forceCloseModals()
-    return await loadDocuments()
-  }
-  
-  window.searchDocuments = async (query) => {
-    forceCloseModals()
-    return await searchDocuments(query)
-  }
-  
-  window.viewDocument = async (docId) => {
-    // No cerrar modals aquí porque viewDocument va a abrir uno nuevo
-    return await viewDocument(docId)
-  }
-  
-  window.deleteDocument = async (docId) => {
-    return await deleteDocument(docId)
-  }
-  
-  // 🔧 VUE COMPATIBLE: Función global para forzar cierre
+  // ✅ Funciones globales simples para mantener compatibilidad
+  window.loadDocuments = loadDocuments
+  window.searchDocuments = searchDocuments  
+  window.viewDocument = viewDocument
+  window.deleteDocument = deleteDocument
   window.forceCloseAllDocumentModals = forceCloseModals
 })
 
 onUnmounted(() => {
-  // Limpiar funciones globales
+  // Cleanup global functions
   if (typeof window !== 'undefined') {
-    delete window.uploadDocument
     delete window.loadDocuments
     delete window.searchDocuments
     delete window.viewDocument
@@ -777,7 +485,7 @@ onUnmounted(() => {
   display: block;
 }
 
-/* 🔧 VUE COMPATIBLE: Estilos para alerta de modal */
+/* Modal alert styles */
 .modal-alert {
   margin-bottom: 15px;
 }
@@ -897,8 +605,7 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-.form-group input,
-.form-group textarea {
+.form-group input {
   width: 100%;
   padding: 10px;
   border: 1px solid var(--border-color);
@@ -909,135 +616,15 @@ onUnmounted(() => {
   transition: border-color 0.2s ease;
 }
 
-.form-group input:focus,
-.form-group textarea:focus {
+.form-group input:focus {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
-.form-group input:disabled,
-.form-group textarea:disabled {
+.form-group input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.file-upload {
-  border: 2px dashed var(--border-color);
-  border-radius: 8px;
-  padding: 20px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  background: var(--bg-tertiary);
-  min-height: 100px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.file-upload:hover:not(.uploading) {
-  border-color: var(--primary-color);
-  background: rgba(102, 126, 234, 0.05);
-}
-
-.file-upload.drag-over {
-  border-color: var(--primary-color);
-  background: rgba(102, 126, 234, 0.1);
-  transform: scale(1.02);
-}
-
-.file-upload.uploading {
-  cursor: not-allowed;
-  opacity: 0.8;
-}
-
-.upload-content {
-  color: var(--text-secondary);
-}
-
-.upload-content small {
-  display: block;
-  margin-top: 5px;
-  font-size: 0.8em;
-  color: var(--text-muted);
-}
-
-.selected-file {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 10px;
-  background: var(--bg-secondary);
-  border-radius: 6px;
-}
-
-.file-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.file-icon {
-  font-size: 1.5em;
-}
-
-.file-details {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.file-name {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.file-size {
-  font-size: 0.8em;
-  color: var(--text-secondary);
-}
-
-.clear-file-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.clear-file-btn:hover {
-  background: var(--danger-color);
-  color: white;
-}
-
-.upload-progress {
-  width: 100%;
-}
-
-.progress-info {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  font-size: 0.9em;
-  color: var(--text-primary);
-}
-
-.progress-bar {
-  width: 100%;
-  height: 8px;
-  background: var(--bg-primary);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary-color), var(--success-color));
-  transition: width 0.3s ease;
 }
 
 .search-input-group {
@@ -1188,11 +775,6 @@ onUnmounted(() => {
 
 .btn:disabled {
   opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn.uploading {
-  background: var(--warning-color);
   cursor: not-allowed;
 }
 
