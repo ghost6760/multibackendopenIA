@@ -1,13 +1,14 @@
+# PromptEditor.vue
 <template>
   <div class="prompt-editor-container">
     <!-- Editor Header -->
     <div class="prompt-editor-header">
       <div class="prompt-info">
-        <h4 class="prompt-title">{{ safePromptData.icon }} {{ safePromptData.displayName }}</h4>
+        <h4 class="prompt-title">{{ promptData.icon }} {{ promptData.displayName }}</h4>
         <div class="prompt-meta">
           <span class="prompt-status" :class="statusClass">{{ statusText }}</span>
-          <span v-if="safePromptData.lastModified" class="prompt-date">
-            Modificado: {{ formatDateTime(safePromptData.lastModified) }}
+          <span v-if="promptData.lastModified" class="prompt-date">
+            Modificado: {{ formatDateTime(promptData.lastModified) }}
           </span>
         </div>
       </div>
@@ -15,7 +16,7 @@
       <!-- Quick Actions -->
       <div class="prompt-quick-actions">
         <button 
-          v-if="safePromptData.isCustom" 
+          v-if="promptData.isCustom" 
           @click="resetToDefault"
           class="btn-reset-small"
           :disabled="readonly || isProcessing"
@@ -37,10 +38,10 @@
     <!-- Editor Textarea -->
     <div class="prompt-editor-body">
       <textarea
-        :id="`prompt-${safePromptData.id}`"
+        :id="`prompt-${promptData.id}`"
         v-model="internalContent"
         class="prompt-editor"
-        :placeholder="safePromptData.placeholder || 'Escribe aquí tu prompt personalizado...'"
+        :placeholder="promptData.placeholder || 'Escribe aquí tu prompt personalizado...'"
         :disabled="readonly || isProcessing"
         @input="onContentChange"
         @keydown="onKeyDown"
@@ -76,7 +77,7 @@
       <button 
         @click="resetToDefault"
         class="btn-secondary"
-        :disabled="readonly || isProcessing || !safePromptData.isCustom"
+        :disabled="readonly || isProcessing || !promptData.isCustom"
       >
         <span v-if="isProcessing">⏳ Restaurando...</span>
         <span v-else>🔄 Restaurar</span>
@@ -95,29 +96,22 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, toRefs, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 
 // ============================================================================
-// PROPS Y EMITS - ✅ MEJORADO CON DEFAULT SEGURO
+// PROPS Y EMITS - COMPATIBLE CON PROMPTSTAB.VUE
 // ============================================================================
 
 const props = defineProps({
   promptData: {
     type: Object,
     required: true,
-    default: () => ({
-      id: '',
-      displayName: 'Cargando...',
-      content: '',
-      icon: '🤖',
-      placeholder: 'Cargando prompt...'
-    }), // ✅ Default seguro
     validator(value) {
-      // Validar estructura requerida pero más permisivo
+      // Validar estructura requerida
       return value && 
-             typeof value === 'object' &&
-             (value.id || value.name) &&
-             (value.displayName || value.display_name)
+             typeof value.id === 'string' && 
+             typeof value.displayName === 'string' &&
+             typeof value.content === 'string'
     }
   },
   readonly: {
@@ -129,12 +123,6 @@ const props = defineProps({
 const emit = defineEmits(['update', 'reset', 'preview', 'change'])
 
 // ============================================================================
-// ✅ USAR toRefs PARA EVITAR ACCESO ANTES DE INICIALIZACIÓN
-// ============================================================================
-
-const { promptData } = toRefs(props)
-
-// ============================================================================
 // ESTADO REACTIVO
 // ============================================================================
 
@@ -144,51 +132,24 @@ const isProcessing = ref(false)
 const validationErrors = ref([])
 
 // ============================================================================
-// ✅ COMPUTED CON VERIFICACIONES SEGURAS
+// COMPUTED PROPERTIES
 // ============================================================================
-
-// Datos seguros del prompt con fallbacks
-const safePromptData = computed(() => {
-  const data = promptData.value
-  
-  if (!data || typeof data !== 'object') {
-    return {
-      id: 'loading',
-      displayName: 'Cargando...',
-      content: '',
-      icon: '🤖',
-      placeholder: 'Cargando prompt...',
-      isCustom: false,
-      lastModified: null
-    }
-  }
-  
-  return {
-    id: data.id || data.name || 'unknown',
-    displayName: data.displayName || data.display_name || 'Prompt',
-    content: data.content || '',
-    icon: data.icon || '🤖',
-    placeholder: data.placeholder || 'Escribe aquí tu prompt personalizado...',
-    isCustom: data.isCustom || data.is_custom || false,
-    lastModified: data.lastModified || data.last_modified || null
-  }
-})
 
 const hasUnsavedChanges = computed(() => {
   return internalContent.value !== originalContent.value
 })
 
 const statusClass = computed(() => {
-  const data = safePromptData.value
-  return data?.isCustom ? 'custom' : 'default'
+  if (props.promptData?.isCustom) {
+    return 'custom'
+  }
+  return 'default'
 })
 
 const statusText = computed(() => {
-  const data = safePromptData.value
+  const data = props.promptData
   
-  if (!data) return 'Cargando...' // ✅ Estado seguro
-  
-  if (data.isCustom) {
+  if (data?.isCustom) {
     let text = '✅ Personalizado'
     if (data.lastModified) {
       text += ` (${new Date(data.lastModified).toLocaleDateString()})`
@@ -200,13 +161,11 @@ const statusText = computed(() => {
 })
 
 // ============================================================================
-// ✅ WATCHERS CON VERIFICACIÓN DE EXISTENCIA
+// WATCHERS
 // ============================================================================
 
-watch(promptData, (newData) => {
-  if (newData && typeof newData === 'object') {
-    // ✅ Procesar datos solo si son válidos
-    console.log('Prompt data updated:', newData.displayName || newData.id)
+watch(() => props.promptData, (newData) => {
+  if (newData) {
     internalContent.value = newData.content || ''
     originalContent.value = internalContent.value
     validateContent()
@@ -215,34 +174,26 @@ watch(promptData, (newData) => {
 
 watch(internalContent, () => {
   validateContent()
-  
-  // Emitir cambios con datos seguros
   emit('change', {
     content: internalContent.value,
     hasChanges: hasUnsavedChanges.value,
     isValid: validationErrors.value.length === 0,
-    promptData: safePromptData.value
+    promptData: props.promptData
   })
 })
 
 // ============================================================================
-// FUNCIONES PRINCIPALES - ✅ CON VERIFICACIONES SEGURAS
+// FUNCIONES PRINCIPALES CORREGIDAS - EMITIR SOLO agentName
 // ============================================================================
 
 /**
- * ✅ Actualiza el prompt con verificaciones
+ * Actualiza el prompt - ✅ CORREGIDO: Emitir solo agentName, no objeto completo
  */
 const updatePrompt = () => {
   const content = internalContent.value.trim()
-  const data = safePromptData.value
   
   if (!content) {
     console.warn('El prompt no puede estar vacío')
-    return
-  }
-  
-  if (!data?.id) {
-    console.warn('ID del prompt no disponible')
     return
   }
   
@@ -254,10 +205,10 @@ const updatePrompt = () => {
   try {
     isProcessing.value = true
     
-    // Emitir datos estructurados
+    // ✅ FIX: Pasar el contenido actual como parámetro
     emit('update', {
-      agentName: data.id,
-      content: content
+      agentName: props.promptData.id || props.promptData.name,
+      content: content  // Pasar el contenido actual
     })
     
   } finally {
@@ -266,22 +217,15 @@ const updatePrompt = () => {
 }
 
 /**
- * ✅ Resetea el prompt con verificaciones
+ * Resetea el prompt - ✅ CORREGIDO: Emitir solo agentName
  */
 const resetToDefault = async () => {
-  const data = safePromptData.value
-  
-  if (!data?.isCustom) {
+  if (!props.promptData.isCustom) {
     console.warn('Este prompt ya está en su valor por defecto')
     return
   }
   
-  if (!data?.id) {
-    console.warn('ID del prompt no disponible')
-    return
-  }
-  
-  const agentName = data.displayName || data.id
+  const agentName = props.promptData.displayName
   
   if (!confirm(`¿Estás seguro de restaurar el prompt por defecto para ${agentName}?`)) {
     return
@@ -290,7 +234,8 @@ const resetToDefault = async () => {
   try {
     isProcessing.value = true
     
-    emit('reset', data.id)
+    // ✅ CORREGIDO: Emitir solo el nombre del agente
+    emit('reset', props.promptData.id || props.promptData.name)
     
   } finally {
     isProcessing.value = false
@@ -298,26 +243,20 @@ const resetToDefault = async () => {
 }
 
 /**
- * ✅ Muestra vista previa con verificaciones
+ * Muestra vista previa - ✅ CORREGIDO: Emitir solo agentName
  */
 const showPreview = async () => {
   const content = internalContent.value.trim()
-  const data = safePromptData.value
-  
   if (!content) {
     console.warn('El prompt no puede estar vacío')
-    return
-  }
-  
-  if (!data?.id) {
-    console.warn('ID del prompt no disponible')
     return
   }
   
   try {
     isProcessing.value = true
     
-    emit('preview', data.id)
+    // ✅ CORREGIDO: Emitir solo el nombre del agente
+    emit('preview', props.promptData.id || props.promptData.name)
     
   } finally {
     isProcessing.value = false
@@ -325,7 +264,7 @@ const showPreview = async () => {
 }
 
 // ============================================================================
-// FUNCIONES DE VALIDACIÓN Y UTILIDADES - ✅ SIN CAMBIOS
+// FUNCIONES DE VALIDACIÓN Y UTILIDADES (SIN CAMBIOS)
 // ============================================================================
 
 const validateContent = () => {
@@ -342,10 +281,14 @@ const validateContent = () => {
     errors.push('Solo se permite una instancia de {user_message}')
   }
   
+  // ✅ CORRECCIÓN: Remover validación de variables (era demasiado estricta)
+  // Los prompts pueden contener JSON válido con cualquier formato de variables
+  
   validationErrors.value = errors
 }
 
 const onContentChange = () => {
+  // Validación automática al cambiar contenido
   validateContent()
 }
 
@@ -384,24 +327,23 @@ const formatDateTime = (dateString) => {
 }
 
 // ============================================================================
-// LIFECYCLE - ✅ CON VERIFICACIONES
+// LIFECYCLE
 // ============================================================================
 
 onMounted(() => {
   // Validación inicial
   validateContent()
   
-  // ✅ Exponer funciones globales solo si hay datos válidos
-  const data = safePromptData.value
-  if (data?.id && typeof window !== 'undefined') {
-    window[`updatePrompt_${data.id}`] = updatePrompt
-    window[`resetPrompt_${data.id}`] = resetToDefault
-    window[`previewPrompt_${data.id}`] = showPreview
+  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
+  const agentName = props.promptData.id || props.promptData.name
+  if (agentName && typeof window !== 'undefined') {
+    window[`updatePrompt_${agentName}`] = updatePrompt
+    window[`resetPrompt_${agentName}`] = resetToDefault
+    window[`previewPrompt_${agentName}`] = showPreview
   }
 })
 </script>
 
-<!-- Estilos sin cambios - mantener los existentes -->
 <style scoped>
 /* ===== ESTILOS PARA PROMPT EDITOR ===== */
 
