@@ -1,68 +1,54 @@
 /**
  * usePrompts.js - Composable para Gestión de Prompts
- * ✅ CORREGIDO: import() dinámico en lugar de require() + inicialización ultra-segura
+ * ✅ CORREGIDO: Headers consistentes + inicialización diferida segura
+ * ✅ PRESERVADO: Toda la funcionalidad original
  */
 
 import { ref, computed, watch } from 'vue'
 
 export const usePrompts = () => {
   // ============================================================================
-  // INICIALIZACIÓN DIFERIDA ULTRA-SEGURA - ✅ CORREGIDO: Solo import() dinámico
+  // INICIALIZACIÓN DIFERIDA - SOLUCIONA "Cannot access 'U' before initialization"
   // ============================================================================
 
   let appStore = null
   let apiRequest = null
   let showNotification = null
-  let initializationAttempted = false
 
   /**
-   * ✅ CORREGIDO: Inicialización con import() dinámico (compatible con browser)
+   * ✅ NUEVA FUNCIÓN: Inicialización segura de composables
+   * Solo accede a stores cuando sea necesario
    */
-  const initializeComposables = async () => {
+  const initializeComposables = () => {
     if (appStore && apiRequest && showNotification) {
       return true // Ya inicializados
     }
 
-    if (initializationAttempted) {
-      console.warn('[usePrompts] Already attempted initialization')
-      return false
-    }
-
-    initializationAttempted = true
-
     try {
-      console.log('[usePrompts] Starting dynamic imports...')
-
-      // ✅ FIX: Usar import() dinámico en lugar de require()
       if (!appStore) {
-        const { useAppStore } = await import('@/stores/app')
+        const { useAppStore } = require('@/stores/app')
         appStore = useAppStore()
       }
 
       if (!apiRequest) {
-        const { useApiRequest } = await import('@/composables/useApiRequest')
-        const composable = useApiRequest()
-        apiRequest = composable.apiRequest
+        const { useApiRequest } = require('@/composables/useApiRequest')
+        apiRequest = useApiRequest().apiRequest
       }
 
       if (!showNotification) {
-        const { useNotifications } = await import('@/composables/useNotifications')
-        const composable = useNotifications()
-        showNotification = composable.showNotification
+        const { useNotifications } = require('@/composables/useNotifications')
+        showNotification = useNotifications().showNotification
       }
 
-      console.log('[usePrompts] ✅ All composables initialized successfully')
       return true
-
     } catch (error) {
-      console.error('[usePrompts] Initialization error:', error)
-      initializationAttempted = false // Permitir reintentos
+      console.warn('[usePrompts] Composables not ready:', error.message)
       return false
     }
   }
 
   // ============================================================================
-  // ESTADO REACTIVO - SIN CAMBIOS
+  // ESTADO REACTIVO - MIGRADO DE PROMPTSTAB.VUE (SIN CAMBIOS)
   // ============================================================================
 
   const agents = ref({
@@ -86,29 +72,31 @@ export const usePrompts = () => {
   const previewLoading = ref(false)
 
   // ============================================================================
-  // COMPUTED PROPERTIES - CON FALLBACKS SEGUROS
+  // COMPUTED PROPERTIES - CON GUARDS DE SEGURIDAD
   // ============================================================================
 
   const hasPrompts = computed(() => {
     return Object.keys(agents.value).some(key => agents.value[key] !== null)
   })
 
-  // ✅ CORREGIDO: Computed ultra-seguro sin acceso prematuro
+  // ✅ CORREGIDO: Computed seguro que no accede prematuramente al store
   const currentCompanyId = computed(() => {
-    // Orden de prioridad seguro
-    if (typeof window !== 'undefined') {
-      if (window.currentCompanyId) return window.currentCompanyId
-      if (localStorage?.getItem('currentCompanyId')) {
-        return localStorage.getItem('currentCompanyId')
-      }
+    // Prioridad: window > localStorage > store (si está disponible) > fallback
+    if (typeof window !== 'undefined' && window.currentCompanyId) {
+      return window.currentCompanyId
     }
     
-    // Solo usar store como último recurso si está disponible
-    if (appStore?.currentCompanyId) {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('currentCompanyId')
+      if (stored) return stored
+    }
+    
+    // Solo acceder al store si está inicializado
+    if (appStore && appStore.currentCompanyId) {
       return appStore.currentCompanyId
     }
     
-    return 'benova' // Fallback seguro
+    return 'dental_clinic' // Fallback original
   })
 
   const currentCompanyName = computed(() => {
@@ -138,26 +126,31 @@ export const usePrompts = () => {
         placeholder: `Prompt para ${config.displayName}...`
       }))
 
-    console.log('[usePrompts] agentsList computed:', result.length, 'agents')
+    console.log('agentsList computed:', result.length, 'agents')
+    result.forEach(agent => {
+      console.log(`- ${agent.displayName}: ${agent.content ? 'Has content' : 'Empty'}`)
+    })
+
     return result
   })
 
   // ============================================================================
-  // FUNCIONES PRINCIPALES - ✅ CORREGIDAS CON INICIALIZACIÓN SEGURA
+  // FUNCIONES PRINCIPALES - ✅ CORREGIDAS CON GUARDS DE INICIALIZACIÓN
   // ============================================================================
 
   /**
-   * ✅ CORREGIDO: loadPrompts con inicialización automática
+   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
    */
   const loadPrompts = async () => {
-    console.log('[usePrompts] loadPrompts called')
-
-    // ✅ Auto-inicializar si es necesario
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      error.value = 'No se pudieron inicializar los composables'
-      console.error('[usePrompts] Failed to initialize composables')
-      return []
+    // ✅ Guard: Verificar que composables estén listos
+    if (!initializeComposables()) {
+      console.warn('[usePrompts] Composables not ready, retrying...')
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      if (!initializeComposables()) {
+        error.value = 'Sistema no inicializado correctamente'
+        return []
+      }
     }
 
     if (!currentCompanyId.value) {
@@ -169,11 +162,12 @@ export const usePrompts = () => {
       isLoadingPrompts.value = true
       error.value = null
       
-      console.log(`[usePrompts] Loading prompts for company: ${currentCompanyId.value}`)
+      console.log(`Loading prompts for company: ${currentCompanyId.value}`)
       
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
       const data = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
       
-      console.log('[usePrompts] Prompts response:', data)
+      console.log('Prompts response:', data)
       
       if (data && data.agents) {
         agents.value = {
@@ -184,7 +178,9 @@ export const usePrompts = () => {
           support_agent: data.agents.support_agent || null
         }
         
-        console.log('[usePrompts] ✅ Agents loaded:', Object.keys(agents.value).filter(k => agents.value[k]))
+        console.log('✅ Assigned agents:', agents.value)
+        console.log('✅ Has prompts?', hasPrompts.value)
+        console.log('✅ Agents list length:', agentsList.value.length)
         
       } else {
         error.value = 'No se recibieron prompts del servidor'
@@ -194,7 +190,7 @@ export const usePrompts = () => {
       
     } catch (err) {
       error.value = `Error cargando prompts: ${err.message}`
-      console.error('[usePrompts] Error loading prompts:', err)
+      console.error('Error loading prompts:', err)
       return []
     } finally {
       isLoadingPrompts.value = false
@@ -202,12 +198,11 @@ export const usePrompts = () => {
   }
 
   /**
-   * ✅ CORREGIDO: updatePrompt con inicialización automática
+   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
    */
   const updatePrompt = async (agentName, customContent = null) => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.error('[usePrompts] Cannot update: composables not ready')
+    if (!initializeComposables()) {
+      console.warn('[usePrompts] Cannot update: composables not ready')
       return false
     }
 
@@ -216,7 +211,9 @@ export const usePrompts = () => {
       return false
     }
   
+    // ✅ FIX: Usar contenido pasado como parámetro o leer del estado
     let promptContent = customContent
+    
     if (!promptContent) {
       promptContent = agents.value[agentName]?.current_prompt
     }
@@ -229,6 +226,9 @@ export const usePrompts = () => {
     try {
       isProcessing.value = true
       
+      console.log(`Updating prompt for ${agentName}`)
+      console.log('Content to send:', promptContent.substring(0, 100) + '...')
+      
       const data = await apiRequest(`/api/admin/prompts/${agentName}`, {
         method: 'PUT',
         body: {
@@ -237,9 +237,11 @@ export const usePrompts = () => {
         }
       })
       
-      // Actualizar estado local
+      console.log('Update response:', data)
+      
+      // ✅ FIX: Actualizar estado local INMEDIATAMENTE con el contenido enviado
       if (agents.value[agentName]) {
-        agents.value[agentName].current_prompt = promptContent
+        agents.value[agentName].current_prompt = promptContent // Usar el contenido enviado
         agents.value[agentName].is_custom = true
         agents.value[agentName].last_modified = new Date().toISOString()
         if (data.version) {
@@ -253,11 +255,14 @@ export const usePrompts = () => {
       }
       showNotification(successMessage, 'success')
       
+      // ✅ FIX: NO recargar inmediatamente (puede sobrescribir el cambio)
+      // await loadPrompts() // Comentar esta línea
+      
       return true
       
     } catch (err) {
       showNotification(`Error actualizando prompt: ${err.message}`, 'error')
-      console.error('[usePrompts] Error updating prompt:', err)
+      console.error('Error updating prompt:', err)
       return false
     } finally {
       isProcessing.value = false
@@ -265,12 +270,11 @@ export const usePrompts = () => {
   }
 
   /**
-   * ✅ CORREGIDO: resetPrompt con inicialización automática
+   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
    */
   const resetPrompt = async (agentName) => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.error('[usePrompts] Cannot reset: composables not ready')
+    if (!initializeComposables()) {
+      console.warn('[usePrompts] Cannot reset: composables not ready')
       return false
     }
 
@@ -286,11 +290,16 @@ export const usePrompts = () => {
     try {
       isProcessing.value = true
       
+      console.log(`Resetting prompt for ${agentName}`)
+      
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
       const data = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
         method: 'DELETE'
       })
       
-      // Actualizar estado local
+      console.log('Reset response data:', data)
+      
+      // Actualizar estado local con prompt por defecto
       if (data.default_prompt && agents.value[agentName]) {
         agents.value[agentName].current_prompt = data.default_prompt
         agents.value[agentName].is_custom = false
@@ -299,12 +308,13 @@ export const usePrompts = () => {
       
       showNotification(`Prompt de ${agentName} restaurado exitosamente`, 'success')
       
+      // Recargar prompts
       await loadPrompts()
       return true
       
     } catch (err) {
       showNotification(`Error reseteando prompt: ${err.message}`, 'error')
-      console.error('[usePrompts] Error resetting prompt:', err)
+      console.error('Error resetting prompt:', err)
       return false
     } finally {
       isProcessing.value = false
@@ -312,16 +322,16 @@ export const usePrompts = () => {
   }
 
   /**
-   * ✅ CORREGIDO: previewPrompt con inicialización automática
+   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
    */
   const previewPrompt = async (agentName) => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.error('[usePrompts] Cannot preview: composables not ready')
+    if (!initializeComposables()) {
+      console.warn('[usePrompts] Cannot preview: composables not ready')
       return false
     }
 
     const testMessage = prompt('Introduce un mensaje de prueba:', '¿Cuánto cuesta un tratamiento?')
+    
     if (!testMessage) return false
     
     const promptContent = agents.value[agentName]?.current_prompt
@@ -339,6 +349,9 @@ export const usePrompts = () => {
     showPreview.value = true
     
     try {
+      console.log(`Generating preview for ${agentName}`)
+      
+      // ✅ FIX: Usar apiRequest en lugar de fetch directo
       const data = await apiRequest('/api/admin/prompts/preview', {
         method: 'POST',
         body: {
@@ -348,6 +361,8 @@ export const usePrompts = () => {
           message: testMessage
         }
       })
+      
+      console.log('Preview response:', data)
       
       previewResponse.value = {
         success: true,
@@ -363,7 +378,7 @@ export const usePrompts = () => {
       return true
       
     } catch (err) {
-      console.log('[usePrompts] Preview endpoint error:', err)
+      console.log('Preview endpoint error:', err)
       previewResponse.value = {
         success: false,
         error: 'Endpoint de preview no disponible',
@@ -378,12 +393,11 @@ export const usePrompts = () => {
   }
 
   /**
-   * ✅ CORREGIDO: repairAllPrompts con inicialización automática
+   * ✅ CORREGIDO: Usa apiRequest + guards de inicialización
    */
   const repairAllPrompts = async () => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.error('[usePrompts] Cannot repair: composables not ready')
+    if (!initializeComposables()) {
+      console.warn('[usePrompts] Cannot repair: composables not ready')
       return false
     }
 
@@ -394,17 +408,25 @@ export const usePrompts = () => {
     try {
       isProcessing.value = true
       
+      console.log('Restoring all prompts to repository defaults...')
+      
       const agentNames = Object.keys(agents.value).filter(key => agents.value[key] !== null)
       let successCount = 0
       let errorCount = 0
       
+      // ✅ CORRECCIÓN: Hacer DELETE para cada agente (igual que resetPrompt)
       for (const agentName of agentNames) {
         try {
+          console.log(`Restoring ${agentName} to default...`)
+          
+          // Mismo endpoint y método que resetPrompt()
           const data = await apiRequest(`/api/admin/prompts/${agentName}?company_id=${currentCompanyId.value}`, {
             method: 'DELETE'
           })
           
-          // Actualizar estado local
+          console.log(`✅ ${agentName} restored successfully`)
+          
+          // Actualizar estado local con prompt por defecto
           if (data.default_prompt && agents.value[agentName]) {
             agents.value[agentName].current_prompt = data.default_prompt
             agents.value[agentName].is_custom = false
@@ -414,23 +436,25 @@ export const usePrompts = () => {
           successCount++
           
         } catch (error) {
-          console.error(`[usePrompts] Error restoring ${agentName}:`, error)
+          console.error(`❌ Error restoring ${agentName}:`, error)
           errorCount++
         }
       }
       
+      // Mostrar resultado final
       if (errorCount === 0) {
         showNotification(`✅ Todos los prompts restaurados exitosamente (${successCount}/${agentNames.length})`, 'success')
       } else {
         showNotification(`⚠️ Restauración completada: ${successCount} exitosos, ${errorCount} errores`, 'warning')
       }
       
+      // Recargar todos los prompts para sincronizar
       await loadPrompts()
       return true
       
     } catch (err) {
       showNotification(`Error restaurando prompts: ${err.message}`, 'error')
-      console.error('[usePrompts] Error in repair all prompts:', err)
+      console.error('Error in repair all prompts:', err)
       return false
     } finally {
       isProcessing.value = false
@@ -438,7 +462,7 @@ export const usePrompts = () => {
   }
 
   // ============================================================================
-  // FUNCIONES AUXILIARES - SIN CAMBIOS
+  // FUNCIONES SIN CAMBIOS CRÍTICOS - PRESERVADAS
   // ============================================================================
 
   const closePreview = () => {
@@ -450,10 +474,9 @@ export const usePrompts = () => {
     previewLoading.value = false
   }
 
-  const exportPrompts = async () => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.error('[usePrompts] Cannot export: composables not ready')
+  const exportPrompts = () => {
+    if (!initializeComposables()) {
+      console.warn('[usePrompts] Cannot export: composables not ready')
       return
     }
 
@@ -492,7 +515,7 @@ export const usePrompts = () => {
       showNotification('Prompts exportados exitosamente', 'success')
     } catch (err) {
       showNotification('Error exportando prompts: ' + err.message, 'error')
-      console.error('[usePrompts] Error exporting prompts:', err)
+      console.error('Error exporting prompts:', err)
     }
   }
 
@@ -506,27 +529,59 @@ export const usePrompts = () => {
   }
 
   // ============================================================================
-  // DEBUG FUNCTIONS - ✅ CORREGIDAS
+  // WATCHERS SEGUROS - CON GUARDS
   // ============================================================================
 
-  const debugPrompts = async () => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.log('[usePrompts] Cannot debug: composables not ready')
-      return null
+  let watcherCleanup = null
+
+  const setupWatchers = () => {
+    if (watcherCleanup) return // Ya configurado
+    
+    try {
+      if (initializeComposables()) {
+        watcherCleanup = watch(() => appStore?.currentCompanyId, async (newCompanyId) => {
+          if (newCompanyId) {
+            await loadPrompts()
+          }
+        })
+      }
+    } catch (error) {
+      console.warn('[usePrompts] Error setting up watchers:', error)
     }
+  }
+
+  // Configurar watchers con delay
+  setTimeout(setupWatchers, 100)
+
+  /**
+   * ✅ CORREGIDO: debugPrompts usa apiRequest + guards
+   */
+  const debugPrompts = async () => {
+    if (!initializeComposables()) return null
 
     console.log('=== DEBUG PROMPTS ===')
     console.log('1. Current Company ID:', currentCompanyId.value)
     console.log('2. Current Agents State:', JSON.stringify(agents.value, null, 2))
     console.log('3. Has Prompts?:', hasPrompts.value)
     console.log('4. AgentsList Length:', agentsList.value.length)
-    console.log('5. Is Loading?:', isLoadingPrompts.value)
-    console.log('6. Error?:', error.value)
+    console.log('5. AgentsList Content:', agentsList.value)
+    console.log('6. Is Loading?:', isLoadingPrompts.value)
+    console.log('7. Error?:', error.value)
     
     try {
+      // ✅ FIX: Usar apiRequest para consistencia
       const data = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      console.log('7. RAW API Response:', data)
+      console.log('8. RAW API Response:', data)
+      
+      if (data.agents) {
+        console.log('9. Agent Keys in Response:', Object.keys(data.agents))
+        console.log('10. Agent Values:')
+        Object.entries(data.agents).forEach(([key, value]) => {
+          console.log(`   ${key}:`, value ? 'Has content' : 'Empty', 
+                     value?.current_prompt ? `(${value.current_prompt.substring(0, 50)}...)` : '')
+        })
+      }
+      
       return data
     } catch (err) {
       console.error('Debug Error:', err)
@@ -534,51 +589,64 @@ export const usePrompts = () => {
     }
   }
   
+  /**
+   * ✅ CORREGIDO: testEndpoints usa apiRequest + guards
+   */
   const testEndpoints = async () => {
-    const isReady = await initializeComposables()
-    if (!isReady) {
-      console.log('[usePrompts] Cannot test: composables not ready')
-      return null
-    }
+    if (!initializeComposables()) return null
 
     console.log('=== TESTING ENDPOINTS ===')
     const testAgent = 'emergency_agent'
     
+    // Test GET
+    console.log('\n1. Testing GET /api/admin/prompts')
     try {
       const getData = await apiRequest(`/api/admin/prompts?company_id=${currentCompanyId.value}`)
-      console.log('✅ GET Response:', getData)
+      console.log('GET Response:', getData)
     } catch (err) {
-      console.error('❌ GET Error:', err)
+      console.error('GET Error:', err)
     }
-  }
-
-  // ============================================================================
-  // WATCHERS CON INICIALIZACIÓN DIFERIDA
-  // ============================================================================
-
-  let watcherCleanup = null
-
-  const setupWatchers = async () => {
-    if (watcherCleanup) return // Ya configurado
     
+    // Test UPDATE (estructura)
+    console.log('\n2. Testing PUT /api/admin/prompts/' + testAgent)
+    console.log('Endpoint:', `/api/admin/prompts/${testAgent}`)
+    console.log('Body:', {
+      company_id: currentCompanyId.value,
+      prompt_template: 'test'
+    })
+    
+    // Test DELETE (estructura)
+    console.log('\n3. Testing DELETE endpoint')
+    console.log('Endpoint:', `/api/admin/prompts/${testAgent}?company_id=${currentCompanyId.value}`)
+    
+    // Test PREVIEW
+    console.log('\n4. Testing PREVIEW endpoint')
     try {
-      const isReady = await initializeComposables()
-      if (isReady && appStore) {
-        watcherCleanup = watch(() => appStore.currentCompanyId, async (newCompanyId) => {
-          if (newCompanyId) {
-            console.log('[usePrompts] Company changed to:', newCompanyId)
-            await loadPrompts()
-          }
-        })
-        console.log('[usePrompts] ✅ Watchers configured')
+      const previewData = await apiRequest('/api/admin/prompts/preview', {
+        method: 'POST',
+        body: {
+          agent_name: testAgent,
+          company_id: currentCompanyId.value,
+          prompt_template: 'test prompt',
+          message: 'test message'
+        }
+      })
+      console.log('Preview Response:', previewData)
+    } catch (err) {
+      if (err.message.includes('404')) {
+        console.log('Preview endpoint not found (404)')
+      } else {
+        console.error('Preview Error:', err)
       }
-    } catch (error) {
-      console.warn('[usePrompts] Error setting up watchers:', error)
     }
+    
+    console.log('\n5. Testing REPAIR endpoint')
+    console.log('Endpoint: /api/admin/prompts/repair')
+    console.log('Would send:', {
+      company_id: currentCompanyId.value,
+      agents: Object.keys(agents.value)
+    })
   }
-
-  // ✅ Configurar watchers cuando sea posible
-  setTimeout(setupWatchers, 1000)
 
   // ============================================================================
   // CLEANUP
@@ -590,14 +658,14 @@ export const usePrompts = () => {
       watcherCleanup = null
     }
     
+    // Reset composables
     appStore = null
     apiRequest = null
     showNotification = null
-    initializationAttempted = false
   }
 
   // ============================================================================
-  // RETURN - PRESERVADO ÍNTEGRAMENTE
+  // RETORNO COMPLETO - PRESERVADO ÍNTEGRAMENTE
   // ============================================================================
 
   return {
@@ -621,7 +689,7 @@ export const usePrompts = () => {
     currentCompanyName,
     agentsList,
     
-    // Funciones principales
+    // Funciones principales (nombres exactos de PromptsTab.vue)
     loadPrompts,
     updatePrompt,
     resetPrompt,
@@ -633,7 +701,7 @@ export const usePrompts = () => {
     debugPrompts,
     testEndpoints,
 
-    // Funciones de utilidad
+    // ✅ NUEVA: Función de utilidad para verificación
     initializeComposables,
     cleanup
   }
