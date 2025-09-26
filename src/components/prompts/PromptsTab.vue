@@ -8,7 +8,7 @@
       </p>
     </div>
 
-    <!-- ✅ NUEVO: Estado de inicialización -->
+    <!-- ✅ Estado de inicialización -->
     <div v-if="!componentsReady" class="initializing-section">
       <div class="loading-spinner"></div>
       <p>Inicializando sistema de prompts...</p>
@@ -17,9 +17,9 @@
       </small>
     </div>
 
-    <!-- ✅ PRESERVADO: Todo el contenido original, pero solo cuando está listo -->
+    <!-- ✅ Contenido principal cuando está listo -->
     <template v-else>
-      <!-- Estado del Sistema - PASO 1: ACTIVADO -->
+      <!-- Estado del Sistema -->
       <PromptsStatus 
         @status-loaded="handleStatusLoaded"
         @migration-complete="handleMigrationComplete"
@@ -37,7 +37,7 @@
           <div class="actions-bar">
             <button @click="safeLoadPrompts" class="btn-refresh" :disabled="isLoadingPrompts">
               <span v-if="isLoadingPrompts">⏳ Cargando...</span>
-              <span v-else>🔄 Recargar Todos</span>
+              <span v-else">🔄 Recargar Todos</span>
             </button>
             <button @click="safeRepairAllPrompts" class="btn-repair-all" :disabled="isProcessing">
               🔧 Reparar Todos
@@ -53,7 +53,7 @@
           <p>⚠️ {{ error }}</p>
         </div>
 
-        <!-- Prompts Grid - PASO 3: USAR PROMPT EDITOR MODULAR -->
+        <!-- Prompts Grid -->
         <div v-if="hasPrompts" class="prompts-grid">
           <PromptEditor
             v-for="agent in agentsList"
@@ -80,7 +80,7 @@
         <p>Cargando prompts del sistema...</p>
       </div>
 
-      <!-- PASO 4: PROMPT PREVIEW MODULAR -->
+      <!-- Prompt Preview -->
       <PromptPreview
         :visible="showPreview"
         :agent-name="previewAgent"
@@ -98,17 +98,15 @@
 
 <script setup>
 // ===============================================================================
-// IMPORTS MODULARES COMPLETOS + CORRECCIONES DE INICIALIZACIÓN
+// IMPORTS MODULARES SEGUROS
 // ===============================================================================
 import { ref, watch, onMounted, onUnmounted, getCurrentInstance, nextTick } from 'vue'
-
-// ✅ CORREGIDO: Importaciones estáticas seguras (no causan problemas de inicialización)
 import PromptsStatus from './PromptsStatus.vue'
 import PromptEditor from './PromptEditor.vue'
 import PromptPreview from './PromptPreview.vue'
 
 // ===============================================================================
-// PROPS - PRESERVADO ORIGINAL
+// PROPS
 // ===============================================================================
 const props = defineProps({
   isActive: {
@@ -118,12 +116,12 @@ const props = defineProps({
 })
 
 // ===============================================================================
-// ✅ NUEVO: ESTADO DE INICIALIZACIÓN SEGURA
+// ✅ ESTADO DE INICIALIZACIÓN CORREGIDO
 // ===============================================================================
 const componentsReady = ref(false)
 const initializationError = ref(null)
 
-// ✅ NUEVO: Estado reactivo local (independiente del composable hasta que esté listo)
+// Estado reactivo local (independiente del composable hasta que esté listo)
 const isLoadingPrompts = ref(false)
 const isProcessing = ref(false)
 const error = ref(null)
@@ -138,11 +136,11 @@ const currentCompanyId = ref('benova')
 const currentCompanyName = ref('benova')
 const agentsList = ref([])
 
-// ✅ NUEVO: Referencia al composable (se inicializa después)
+// Referencia al composable (se inicializa después)
 let promptsComposable = null
 
 // ===============================================================================
-// ✅ NUEVO: INICIALIZACIÓN SEGURA DEL COMPOSABLE
+// ✅ INICIALIZACIÓN ASYNC CORREGIDA
 // ===============================================================================
 
 const initializeComposable = async () => {
@@ -152,7 +150,7 @@ const initializeComposable = async () => {
     // Esperar a que Vue esté completamente inicializado
     await nextTick()
     
-    // ✅ IMPORTACIÓN DINÁMICA SEGURA - Evita acceso prematuro a stores
+    // ✅ CORREGIDO: Importación dinámica async
     const { usePrompts } = await import('@/composables/usePrompts')
     promptsComposable = usePrompts()
     
@@ -162,7 +160,7 @@ const initializeComposable = async () => {
     }
 
     // ✅ Sincronizar estado reactivo con el composable
-    syncComposableState()
+    await syncComposableState()
     
     componentsReady.value = true
     console.log('[PromptsTab] ✅ Composable initialized successfully')
@@ -183,14 +181,17 @@ const initializeComposable = async () => {
 }
 
 // ===============================================================================
-// ✅ NUEVO: SINCRONIZACIÓN DE ESTADO CON COMPOSABLE
+// ✅ SINCRONIZACIÓN DE ESTADO ASYNC
 // ===============================================================================
 
-const syncComposableState = () => {
+const syncComposableState = async () => {
   if (!promptsComposable || !componentsReady.value) return
 
   try {
-    // ✅ Sincronizar estado reactivo bidireccional
+    // ✅ Asegurar que el composable esté inicializado primero
+    await promptsComposable.initializeComposables()
+    
+    // Sincronizar estado reactivo
     isLoadingPrompts.value = promptsComposable.isLoadingPrompts.value
     isProcessing.value = promptsComposable.isProcessing.value
     error.value = promptsComposable.error.value
@@ -212,7 +213,7 @@ const syncComposableState = () => {
 }
 
 // ===============================================================================
-// ✅ NUEVO: FUNCIONES SEGURAS QUE VERIFICAN INICIALIZACIÓN
+// ✅ FUNCIONES SEGURAS CON ASYNC/AWAIT
 // ===============================================================================
 
 const safeLoadPrompts = async () => {
@@ -223,7 +224,7 @@ const safeLoadPrompts = async () => {
   
   try {
     await promptsComposable.loadPrompts()
-    syncComposableState()
+    await syncComposableState()
   } catch (error) {
     console.error('[PromptsTab] Error loading prompts:', error)
   }
@@ -237,83 +238,66 @@ const safeRepairAllPrompts = async () => {
   
   try {
     await promptsComposable.repairAllPrompts()
-    syncComposableState()
+    await syncComposableState()
   } catch (error) {
     console.error('[PromptsTab] Error repairing prompts:', error)
   }
 }
 
-const safeExportPrompts = () => {
+const safeExportPrompts = async () => {
   if (!componentsReady.value || !promptsComposable) {
     console.warn('[PromptsTab] Cannot export prompts: not ready')
     return
   }
   
   try {
-    promptsComposable.exportPrompts()
+    await promptsComposable.exportPrompts()
   } catch (error) {
     console.error('[PromptsTab] Error exporting prompts:', error)
   }
 }
 
 // ===============================================================================
-// HANDLERS CORREGIDOS - PRESERVADO ORIGINAL CON GUARDS DE SEGURIDAD
+// HANDLERS CON ASYNC/AWAIT
 // ===============================================================================
 
-/**
- * ✅ PRESERVADO: Handler para evento update de PromptEditor
- * ✅ CORREGIDO: Con guard de seguridad + sync
- */
-const handlePromptUpdate = (updateData) => {
+const handlePromptUpdate = async (updateData) => {
   if (!componentsReady.value || !promptsComposable) return
 
   try {
     if (typeof updateData === 'string') {
-      // Compatibilidad con llamadas antiguas (solo agentName)
-      promptsComposable.updatePrompt(updateData)
+      await promptsComposable.updatePrompt(updateData)
     } else {
-      // ✅ FIX: Usar el nuevo formato con contenido
-      promptsComposable.updatePrompt(updateData.agentName, updateData.content)
+      await promptsComposable.updatePrompt(updateData.agentName, updateData.content)
     }
-    syncComposableState()
+    await syncComposableState()
   } catch (error) {
     console.error('[PromptsTab] Error updating prompt:', error)
   }
 }
 
-/**
- * ✅ PRESERVADO: Handler para evento reset de PromptEditor  
- * ✅ CORREGIDO: Con guard de seguridad + sync
- */
-const handlePromptReset = (agentName) => {
+const handlePromptReset = async (agentName) => {
   if (!componentsReady.value || !promptsComposable) return
 
   try {
-    promptsComposable.resetPrompt(agentName)
-    syncComposableState()
+    await promptsComposable.resetPrompt(agentName)
+    await syncComposableState()
   } catch (error) {
     console.error('[PromptsTab] Error resetting prompt:', error)
   }
 }
 
-/**
- * ✅ PRESERVADO: Handler para evento preview de PromptEditor
- * ✅ CORREGIDO: Con guard de seguridad + sync
- */
-const handlePromptPreview = (agentName) => {
+const handlePromptPreview = async (agentName) => {
   if (!componentsReady.value || !promptsComposable) return
 
   try {
-    promptsComposable.previewPrompt(agentName)
-    syncComposableState()
+    await promptsComposable.previewPrompt(agentName)
+    await syncComposableState()
   } catch (error) {
     console.error('[PromptsTab] Error previewing prompt:', error)
   }
 }
 
-/**
- * ✅ PRESERVADO: Close preview con guard
- */
 const closePreview = () => {
   if (!componentsReady.value || !promptsComposable) return
 
@@ -326,24 +310,23 @@ const closePreview = () => {
 }
 
 // ===============================================================================
-// HANDLERS PARA EVENTOS DE PROMPTSSTATUS.VUE - PRESERVADO ORIGINAL
+// HANDLERS PARA EVENTOS DE PROMPTSSTATUS.VUE
 // ===============================================================================
-const handleStatusLoaded = (status) => {
+const handleStatusLoaded = async (status) => {
   console.log('Status loaded:', status)
   if (status?.postgresql_available && status?.tables_exist) {
-    safeLoadPrompts()
+    await safeLoadPrompts()
   }
 }
 
-const handleMigrationComplete = () => {
-  safeLoadPrompts()
+const handleMigrationComplete = async () => {
+  await safeLoadPrompts()
 }
 
 // ===============================================================================
-// WATCHERS - PRESERVADO ORIGINAL CON CORRECCIONES DE SEGURIDAD
+// WATCHERS CORREGIDOS CON ASYNC
 // ===============================================================================
 
-// ✅ PRESERVADO: Watch para activación del tab
 watch(() => props.isActive, async (newVal) => {
   if (newVal) {
     console.log('[PromptsTab] Tab activated')
@@ -359,20 +342,19 @@ watch(() => props.isActive, async (newVal) => {
 })
 
 // ===============================================================================
-// LIFECYCLE HOOKS - PRESERVADO ORIGINAL CON CORRECCIONES DE INICIALIZACIÓN
+// LIFECYCLE HOOKS CORREGIDOS
 // ===============================================================================
 
 onMounted(async () => {
   console.log('[PromptsTab] Component mounted, isActive:', props.isActive)
   
-  // ✅ CORREGIDO: Inicialización diferida para evitar problemas de timing
+  // ✅ CRÍTICO: Inicialización diferida y segura
   setTimeout(async () => {
     await initializeComposable()
-  }, 100)
+  }, 150) // Aumentar delay para asegurar que Pinia esté listo
   
-  // ✅ PRESERVADO: FUNCIONES GLOBALES EXACTAS DEL MONOLITO (solo las esenciales al inicio)
+  // Funciones globales básicas para compatibilidad inmediata
   if (typeof window !== 'undefined') {
-    // Funciones básicas para compatibilidad inmediata
     window.loadCurrentPrompts = () => safeLoadPrompts()
     window.repairAllPrompts = () => safeRepairAllPrompts()
     window.exportPrompts = () => safeExportPrompts()
@@ -382,51 +364,52 @@ onMounted(async () => {
 onUnmounted(() => {
   console.log('[PromptsTab] Component unmounting, cleaning up...')
 
-  // ✅ PRESERVADO: Limpiar TODAS las funciones globales
+  // Limpiar composable
+  if (promptsComposable?.cleanup) {
+    promptsComposable.cleanup()
+  }
+
+  // Limpiar funciones globales
   if (typeof window !== 'undefined') {
-    delete window.loadCurrentPrompts
-    delete window.updatePrompt
-    delete window.resetPrompt
-    delete window.previewPrompt
-    delete window.repairAllPrompts
-    delete window.exportPrompts
-    delete window.debugPrompts
-    delete window.testPromptEndpoints
-    delete window.PromptsTabInstance
+    const globalFunctions = [
+      'loadCurrentPrompts', 'updatePrompt', 'resetPrompt', 'previewPrompt',
+      'repairAllPrompts', 'exportPrompts', 'debugPrompts', 'testPromptEndpoints',
+      'PromptsTabInstance'
+    ]
+    globalFunctions.forEach(func => delete window[func])
   }
 })
 
 // ===============================================================================
-// ✅ NUEVO: CONFIGURACIÓN DIFERIDA DE FUNCIONES GLOBALES COMPLETAS
+// ✅ CONFIGURACIÓN DIFERIDA DE FUNCIONES GLOBALES COMPLETAS
 // ===============================================================================
 
-// ✅ Configurar todas las funciones globales después de la inicialización
-watch(componentsReady, (ready) => {
+watch(componentsReady, async (ready) => {
   if (ready && promptsComposable && typeof window !== 'undefined') {
-    // ✅ PRESERVADO: EXPONER FUNCIONES GLOBALES EXACTAS DEL MONOLITO
+    // ✅ EXPONER FUNCIONES GLOBALES ASYNC
     window.loadCurrentPrompts = () => safeLoadPrompts()
-    window.updatePrompt = (agentName) => {
+    window.updatePrompt = async (agentName) => {
       if (promptsComposable) {
-        promptsComposable.updatePrompt(agentName)
-        syncComposableState()
+        await promptsComposable.updatePrompt(agentName)
+        await syncComposableState()
       }
     }
-    window.resetPrompt = (agentName) => {
+    window.resetPrompt = async (agentName) => {
       if (promptsComposable) {
-        promptsComposable.resetPrompt(agentName) 
-        syncComposableState()
+        await promptsComposable.resetPrompt(agentName) 
+        await syncComposableState()
       }
     }
-    window.previewPrompt = (agentName) => {
+    window.previewPrompt = async (agentName) => {
       if (promptsComposable) {
-        promptsComposable.previewPrompt(agentName)
-        syncComposableState()
+        await promptsComposable.previewPrompt(agentName)
+        await syncComposableState()
       }
     }
     window.repairAllPrompts = () => safeRepairAllPrompts()
     window.exportPrompts = () => safeExportPrompts()
     
-    // ✅ PRESERVADO: Funciones debug faltantes (igual que el monolito)
+    // Funciones debug
     window.debugPrompts = () => {
       if (promptsComposable) {
         return promptsComposable.debugPrompts()
@@ -438,16 +421,16 @@ watch(componentsReady, (ready) => {
       }
     }
     
-    // ✅ PRESERVADO: Instancia para debug (igual que el monolito)
+    // Instancia para debug
     window.PromptsTabInstance = getCurrentInstance()
     
-    console.log('[PromptsTab] ✅ All global functions configured')
+    console.log('[PromptsTab] ✅ All global functions configured (async)')
   }
 })
 </script>
 
 <style scoped>
-/* ✅ PRESERVADO: Todos los estilos originales */
+/* Estilos preservados del archivo original */
 .prompts-tab {
   padding: 20px;
   max-width: 1400px;
@@ -471,7 +454,6 @@ watch(componentsReady, (ready) => {
   margin: 0;
 }
 
-/* ✅ NUEVO: Estilos para inicialización */
 .initializing-section {
   text-align: center;
   padding: 60px 20px;
@@ -571,138 +553,10 @@ watch(componentsReady, (ready) => {
   margin-bottom: 20px;
 }
 
-/* Prompts Grid */
 .prompts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
   gap: 20px;
-}
-
-.agent-card {
-  background: white;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  transition: transform 0.2s;
-}
-
-.agent-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-}
-
-.agent-header {
-  background: #f8f9fa;
-  padding: 15px;
-  border-bottom: 1px solid #dee2e6;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.agent-header h3 {
-  margin: 0;
-  font-size: 1.1em;
-  color: #495057;
-}
-
-.status-badge {
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 0.85em;
-  font-weight: 600;
-}
-
-.status-badge.custom {
-  background: rgba(40, 167, 69, 0.1);
-  color: #28a745;
-}
-
-.status-badge.default {
-  background: rgba(108, 117, 125, 0.1);
-  color: #6c757d;
-}
-
-.agent-body {
-  padding: 15px;
-}
-
-.prompt-textarea {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #ced4da;
-  border-radius: 4px;
-  font-family: 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  resize: vertical;
-  transition: border-color 0.2s;
-}
-
-.prompt-textarea:focus {
-  outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
-}
-
-.prompt-info {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 10px;
-  font-size: 0.85em;
-  color: #6c757d;
-}
-
-.agent-actions {
-  padding: 15px;
-  background: #f8f9fa;
-  border-top: 1px solid #dee2e6;
-  display: flex;
-  gap: 10px;
-}
-
-.agent-actions button {
-  flex: 1;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9em;
-  transition: all 0.2s;
-}
-
-.btn-update {
-  background: #007bff;
-  color: white;
-}
-
-.btn-update:hover:not(:disabled) {
-  background: #0056b3;
-}
-
-.btn-reset {
-  background: #6c757d;
-  color: white;
-}
-
-.btn-reset:hover:not(:disabled) {
-  background: #545b62;
-}
-
-.btn-preview {
-  background: #17a2b8;
-  color: white;
-}
-
-.btn-preview:hover:not(:disabled) {
-  background: #117a8b;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .no-prompts-section {
