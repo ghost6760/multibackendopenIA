@@ -86,7 +86,7 @@
               class="btn btn-secondary"
             >
               <span v-if="isLoading">⏳</span>
-              <span v-else">🔄</span>
+              <span v-else>🔄</span>
               Actualizar Lista
             </button>
             
