@@ -17,16 +17,6 @@ export const useSystemLog = () => {
   const filterLevel = ref('all')
   const searchQuery = ref('')
 
-  // Función para obtener el store de forma segura
-  const getStore = () => {
-    try {
-      const { useAppStore } = require('@/stores/app')
-      return useAppStore()
-    } catch (error) {
-      return null
-    }
-  }
-
   // ============================================================================
   // COMPUTED PROPERTIES
   // ============================================================================
