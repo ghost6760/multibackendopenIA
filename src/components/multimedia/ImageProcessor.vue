@@ -89,7 +89,7 @@
         :disabled="!selectedImage || !userId.trim() || isProcessing"
       >
         <span v-if="isProcessing">⏳ Analizando...</span>
-        <span v-else">🔍 Analizar Imagen</span>
+        <span v-else>🔍 Analizar Imagen</span>
       </button>
       
       <button 
