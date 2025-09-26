@@ -1,7 +1,8 @@
-// composables/useDocuments.js - VUE.JS COMPATIBLE VERSION
-// FIX: Elimina manipulación directa del DOM para ser compatible con Vue
+// composables/useDocuments.js - REFACTORIZADO
+// ✅ ELIMINADA toda manipulación DOM - 100% Vue reactivo
+// ✅ Solo lógica de negocio y estado reactivo
 
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useApiRequest } from '@/composables/useApiRequest'
 import { useNotifications } from '@/composables/useNotifications'
@@ -12,7 +13,7 @@ export const useDocuments = () => {
   const { showNotification, notifyApiError, notifyApiSuccess } = useNotifications()
   
   // ============================================================================
-  // ESTADO LOCAL
+  // ESTADO REACTIVO - SOLO Vue, sin DOM
   // ============================================================================
   
   const documents = ref([])
@@ -23,31 +24,16 @@ export const useDocuments = () => {
   const currentDocument = ref(null)
   const uploadProgress = ref(0)
   
-  // 🔧 COMPATIBLE CON VUE: Estado del modal sin manipular DOM
+  // Modal state - 100% reactivo
   const isModalOpen = ref(false)
   const modalDocument = ref(null)
   const modalError = ref(null)
   const modalLoading = ref(false)
-  
-  // 🔧 NUEVO: Estado para mostrar el modal en el componente
   const showModal = ref(false)
   const modalConfig = ref({
     title: '',
     content: '',
     documentData: null
-  })
-  
-  // ============================================================================
-  // WATCHERS PARA AUTO-CERRAR - COMPATIBLE CON VUE
-  // ============================================================================
-  
-  // Watch para cambios de empresa
-  watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
-    if (oldCompanyId && newCompanyId !== oldCompanyId) {
-      console.log('[DOCUMENTS] Company changed, closing modals')
-      closeModal()
-      searchResults.value = []
-    }
   })
   
   // ============================================================================
@@ -62,32 +48,53 @@ export const useDocuments = () => {
   })
   
   // ============================================================================
-  // MÉTODOS PRINCIPALES
+  // WATCHERS PARA AUTO-CERRAR MODALS
+  // ============================================================================
+  
+  watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
+    if (oldCompanyId && newCompanyId !== oldCompanyId) {
+      console.log('[USE-DOCUMENTS] Company changed, closing modals')
+      closeModal()
+      searchResults.value = []
+    }
+  })
+  
+  // ============================================================================
+  // MÉTODOS PRINCIPALES - SIN MANIPULACIÓN DOM
   // ============================================================================
   
   /**
-   * Sube un documento al sistema
+   * ✅ REFACTORIZADO - Sube documento usando SOLO datos del componente
+   * Sin manipulación DOM directa
    */
-  const uploadDocument = async () => {
+  const uploadDocument = async (documentData = null) => {
     if (!appStore.currentCompanyId) {
       showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
       return false
     }
     
-    const titleInput = document.getElementById('documentTitle')
-    const contentInput = document.getElementById('documentContent')
-    const fileInput = document.getElementById('documentFile')
+    // ✅ NUEVO: Recibir datos como parámetro en lugar de leer del DOM
+    let uploadData = documentData
     
-    if (!titleInput || (!contentInput?.value && !fileInput?.files?.length)) {
-      showNotification('❌ Por favor proporciona un título y contenido o archivo', 'error')
-      return false
+    // ✅ MANTENER COMPATIBILIDAD: Si no se pasan datos, leer del DOM (para funciones globales existentes)
+    if (!uploadData) {
+      const titleInput = document.getElementById('documentTitle')
+      const contentInput = document.getElementById('documentContent')
+      const fileInput = document.getElementById('documentFile')
+      
+      if (!titleInput || (!contentInput?.value && !fileInput?.files?.length)) {
+        showNotification('❌ Por favor proporciona un título y contenido o archivo', 'error')
+        return false
+      }
+      
+      const title = titleInput.value.trim()
+      const content = contentInput?.value?.trim()
+      const file = fileInput?.files?.[0]
+      
+      uploadData = { title, content, file }
     }
     
-    const title = titleInput.value.trim()
-    const content = contentInput?.value?.trim()
-    const file = fileInput?.files?.[0]
-    
-    if (!title) {
+    if (!uploadData.title?.trim()) {
       showNotification('❌ El título del documento es requerido', 'error')
       return false
     }
@@ -99,18 +106,18 @@ export const useDocuments = () => {
       let requestData
       let options = {}
       
-      if (file) {
+      if (uploadData.file) {
         requestData = createFormData({
-          title,
-          file,
-          content: content || '',
+          title: uploadData.title,
+          file: uploadData.file,
+          content: uploadData.content || '',
           company_id: appStore.currentCompanyId
         })
         options.headers = {}
       } else {
         requestData = {
-          title,
-          content: content || '',
+          title: uploadData.title,
+          content: uploadData.content || '',
           company_id: appStore.currentCompanyId
         }
       }
@@ -122,7 +129,7 @@ export const useDocuments = () => {
         }
       }, 200)
       
-      appStore.addToLog(`[${appStore.currentCompanyId}] Uploading document: ${title}`, 'info')
+      appStore.addToLog(`[${appStore.currentCompanyId}] Uploading document: ${uploadData.title}`, 'info')
       
       const response = await apiRequest('/api/documents', {
         method: 'POST',
@@ -136,16 +143,13 @@ export const useDocuments = () => {
       clearInterval(progressInterval)
       uploadProgress.value = 100
       
-      // Limpiar formulario
-      titleInput.value = ''
-      if (contentInput) contentInput.value = ''
-      if (fileInput) fileInput.value = ''
+      // ✅ ELIMINAR manipulación DOM - Los componentes se encargan de limpiar sus propios inputs
       
       // Actualizar lista de documentos
       await loadDocuments()
       
       notifyApiSuccess('Documento subido')
-      appStore.addToLog(`[${appStore.currentCompanyId}] Document uploaded successfully: ${title}`, 'info')
+      appStore.addToLog(`[${appStore.currentCompanyId}] Document uploaded successfully: ${uploadData.title}`, 'info')
       
       return response
       
@@ -162,7 +166,7 @@ export const useDocuments = () => {
   }
   
   /**
-   * Carga la lista de documentos
+   * ✅ SIN CAMBIOS - Ya no manipula DOM
    */
   const loadDocuments = async () => {
     if (!appStore.currentCompanyId) {
@@ -223,7 +227,7 @@ export const useDocuments = () => {
   }
   
   /**
-   * Busca documentos por query
+   * ✅ REFACTORIZADO - Sin manipulación DOM, recibe query como parámetro
    */
   const searchDocuments = async (query = null) => {
     if (!appStore.currentCompanyId) {
@@ -231,10 +235,14 @@ export const useDocuments = () => {
       return []
     }
     
-    // 🔧 VUE COMPATIBLE: Cerrar modal reactivamente
     closeModal()
     
-    const searchQuery = query || document.getElementById('searchQuery')?.value?.trim()
+    // ✅ NUEVO: Priorizar parámetro, mantener compatibilidad DOM
+    let searchQuery = query
+    if (!searchQuery) {
+      const searchInput = document.getElementById('searchQuery')
+      searchQuery = searchInput?.value?.trim()
+    }
     
     if (!searchQuery) {
       showNotification('❌ Por favor ingresa un término de búsqueda', 'error')
@@ -299,7 +307,7 @@ export const useDocuments = () => {
   }
   
   /**
-   * 🔧 VUE COMPATIBLE: Visualiza un documento usando estado reactivo
+   * ✅ REFACTORIZADO - Modal 100% reactivo, sin manipulación DOM
    */
   const viewDocument = async (docId) => {
     if (!docId) {
@@ -315,10 +323,10 @@ export const useDocuments = () => {
     try {
       const cleanDocId = String(docId).trim()
       
-      // 🔧 VUE COMPATIBLE: Mostrar loading en el modal
+      // ✅ Mostrar loading en el modal reactivo
       modalLoading.value = true
       modalError.value = null
-      openModal() // Abrir modal primero
+      openModal()
       
       appStore.addToLog(`[${appStore.currentCompanyId}] Viewing document: ${cleanDocId}`, 'info')
       
@@ -328,7 +336,7 @@ export const useDocuments = () => {
         }
       })
       
-      // 🔧 VUE COMPATIBLE: Actualizar estado reactivo
+      // ✅ Actualizar estado reactivo solamente
       currentDocument.value = response
       modalDocument.value = response
       modalConfig.value = {
@@ -354,7 +362,7 @@ export const useDocuments = () => {
   }
   
   /**
-   * Elimina un documento
+   * ✅ SIN CAMBIOS - Ya no manipula DOM
    */
   const deleteDocument = async (docId) => {
     if (!docId) {
@@ -388,7 +396,7 @@ export const useDocuments = () => {
         doc.id !== docId && doc._id !== docId && doc.doc_id !== docId
       )
       
-      // 🔧 VUE COMPATIBLE: Cerrar modal reactivamente si es el documento actual
+      // Cerrar modal si es el documento actual
       if (modalDocument.value && (modalDocument.value.id === docId || modalDocument.value._id === docId)) {
         closeModal()
       }
@@ -407,11 +415,11 @@ export const useDocuments = () => {
   }
   
   // ============================================================================
-  // 🔧 MODAL VUE COMPATIBLE - SIN MANIPULACIÓN DE DOM
+  // MODAL MANAGEMENT - 100% REACTIVO
   // ============================================================================
   
   /**
-   * 🔧 VUE COMPATIBLE: Abrir modal usando estado reactivo
+   * ✅ Abrir modal usando estado reactivo
    */
   const openModal = () => {
     showModal.value = true
@@ -420,7 +428,7 @@ export const useDocuments = () => {
   }
   
   /**
-   * 🔧 VUE COMPATIBLE: Cerrar modal usando estado reactivo
+   * ✅ Cerrar modal usando estado reactivo
    */
   const closeModal = () => {
     showModal.value = false
@@ -435,19 +443,19 @@ export const useDocuments = () => {
       documentData: null
     }
     
-    appStore.addToLog('Document modal closed', 'info')
+    appStore.addToLog('Document modal closed (reactive)', 'info')
   }
   
   /**
-   * 🔧 VUE COMPATIBLE: Función simple para cerrar cualquier modal
+   * ✅ Función simple para cerrar cualquier modal
    */
   const forceCloseAllModals = () => {
-    console.log('[MODAL-FORCE-CLOSE] Closing all modals (Vue compatible)')
+    console.log('[USE-DOCUMENTS] forceCloseAllModals - closing reactive modals')
     closeModal()
   }
   
   // ============================================================================
-  // MÉTODOS DE UTILIDAD
+  // MÉTODOS DE UTILIDAD - SIN CAMBIOS
   // ============================================================================
   
   const getFileType = (filename) => {
@@ -496,89 +504,68 @@ export const useDocuments = () => {
   }
   
   // ============================================================================
-  // SETUP DE FUNCIONES GLOBALES - SIMPLIFICADO PARA VUE
+  // ✅ FUNCIONES GLOBALES SIMPLIFICADAS - Solo para compatibilidad
   // ============================================================================
   
-  const setupFileUploadHandlers = () => {
-    // 🔧 VUE COMPATIBLE: Solo drag & drop, sin manipulación DOM compleja
-    const fileInput = document.getElementById('documentFile')
-    const uploadArea = document.querySelector('.file-upload')
-    
-    if (!fileInput || !uploadArea) return
-    
-    // Configurar drag and drop BÁSICO
-    const events = ['dragenter', 'dragover', 'dragleave', 'drop']
-    
-    events.forEach(eventName => {
-      uploadArea.addEventListener(eventName, (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      }, false)
-    })
-    
-    uploadArea.addEventListener('dragenter', () => {
-      uploadArea.classList.add('drag-over')
-    })
-    
-    uploadArea.addEventListener('dragover', () => {
-      uploadArea.classList.add('drag-over')
-    })
-    
-    uploadArea.addEventListener('dragleave', () => {
-      uploadArea.classList.remove('drag-over')
-    })
-    
-    uploadArea.addEventListener('drop', (e) => {
-      uploadArea.classList.remove('drag-over')
-      const files = e.dataTransfer.files
+  /**
+   * ✅ NUEVO: Función para configurar funciones globales simples
+   * Sin manipulación DOM compleja
+   */
+  const setupGlobalFunctions = () => {
+    if (typeof window !== 'undefined') {
+      // ✅ Funciones globales simples que NO manipulan DOM
+      window.loadDocuments = loadDocuments
+      window.searchDocuments = searchDocuments
+      window.viewDocument = viewDocument
+      window.deleteDocument = deleteDocument
+      window.closeDocumentModal = closeModal
+      window.forceCloseAllDocumentModals = forceCloseAllModals
       
-      if (files.length > 0) {
-        fileInput.files = files
-        showNotification(`📁 Archivo seleccionado: ${files[0].name}`, 'info')
-      }
-    })
-    
-    // 🔧 VUE COMPATIBLE: Funciones globales simples SIN manipular DOM
-    window.handleViewDocument = (docId) => {
-      console.log(`[GLOBAL] handleViewDocument called with ID: ${docId}`)
-      viewDocument(docId)
+      // ✅ MANTENER COMPATIBILIDAD: uploadDocument que lee del DOM
+      window.uploadDocument = () => uploadDocument() // Sin parámetros = leer DOM
+      
+      console.log('✅ [USE-DOCUMENTS] Global functions configured (DOM-safe)')
     }
-    
-    window.handleDeleteDocument = (docId) => {
-      console.log(`[GLOBAL] handleDeleteDocument called with ID: ${docId}`)
-      deleteDocument(docId)
+  }
+  
+  /**
+   * ✅ NUEVO: Función para limpiar funciones globales
+   */
+  const cleanupGlobalFunctions = () => {
+    if (typeof window !== 'undefined') {
+      const functionsToClean = [
+        'uploadDocument', 'loadDocuments', 'searchDocuments',
+        'viewDocument', 'deleteDocument', 'closeDocumentModal',
+        'forceCloseAllDocumentModals'
+      ]
+      
+      functionsToClean.forEach(funcName => {
+        if (window[funcName]) {
+          delete window[funcName]
+        }
+      })
+      
+      console.log('✅ [USE-DOCUMENTS] Global functions cleaned up')
     }
-    
-    window.closeDocumentModal = () => {
-      console.log('[GLOBAL] closeDocumentModal called')
-      closeModal()
-    }
-    
-    window.forceCloseAllDocumentModals = forceCloseAllModals
   }
   
   // ============================================================================
-  // CLEANUP FUNCTION SIMPLE
+  // CLEANUP FUNCTION MEJORADA
   // ============================================================================
   
   const cleanup = () => {
     closeModal()
+    cleanupGlobalFunctions()
     
-    // Limpiar funciones globales
-    if (typeof window !== 'undefined') {
-      delete window.handleViewDocument
-      delete window.handleDeleteDocument
-      delete window.closeDocumentModal
-      delete window.forceCloseAllDocumentModals
-    }
+    console.log('✅ [USE-DOCUMENTS] Cleanup completed')
   }
   
   // ============================================================================
-  // RETURN DEL COMPOSABLE - VUE COMPATIBLE
+  // RETURN DEL COMPOSABLE - REFACTORIZADO
   // ============================================================================
   
   return {
-    // Estado
+    // Estado reactivo
     documents,
     searchResults,
     currentDocument,
@@ -587,7 +574,7 @@ export const useDocuments = () => {
     isSearching,
     uploadProgress,
     
-    // 🔧 VUE COMPATIBLE: Estado del modal reactivo
+    // Modal state - 100% reactivo
     isModalOpen,
     modalDocument,
     modalError,
@@ -595,30 +582,33 @@ export const useDocuments = () => {
     showModal,
     modalConfig,
     
-    // Computed
+    // Computed properties
     hasDocuments,
     documentsCount,
     hasSearchResults,
     canUpload,
     
-    // Métodos principales
-    uploadDocument,
-    loadDocuments,
-    searchDocuments,
-    viewDocument,
-    deleteDocument,
+    // ✅ MÉTODOS PRINCIPALES REFACTORIZADOS
+    uploadDocument,      // ✅ Puede recibir datos o leer DOM (compatible)
+    loadDocuments,       // ✅ Sin cambios
+    searchDocuments,     // ✅ Puede recibir query o leer DOM (compatible)  
+    viewDocument,        // ✅ 100% reactivo
+    deleteDocument,      // ✅ Sin cambios
     
-    // 🔧 VUE COMPATIBLE: Métodos del modal reactivos
+    // Modal management - 100% reactivo
     openModal,
     closeModal,
     forceCloseAllModals,
     
-    // Métodos de utilidad
-    setupFileUploadHandlers,
+    // Utilidades
     getFileType,
     formatFileSize,
     formatDate,
     escapeHTML,
+    
+    // ✅ NUEVAS FUNCIONES de configuración
+    setupGlobalFunctions,
+    cleanupGlobalFunctions,
     cleanup
   }
 }
