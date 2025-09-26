@@ -83,17 +83,11 @@ class EnterpriseCompanyConfig:
         if not self.sales_agent_name:
             self.sales_agent_name = f"Asistente de {self.company_name}"
     
-    def to_legacy_config(self) -> 'CompanyConfig':
-        """
-        Convertir EnterpriseCompanyConfig → CompanyConfig para compatibilidad
-        Mantiene exactamente la misma estructura que el sistema legacy
-        """
-        from app.config.company_config import CompanyConfig
-        
+    def to_legacy_config(self) -> CompanyConfig:
+        """Convertir a formato legacy para compatibilidad"""
         return CompanyConfig(
             company_id=self.company_id,
             company_name=self.company_name,
-            business_type=self.business_type,
             redis_prefix=self.redis_prefix,
             vectorstore_index=self.vectorstore_index,
             schedule_service_url=self.schedule_service_url,
