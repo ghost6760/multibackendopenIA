@@ -108,6 +108,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useDocuments } from '@/composables/useDocuments' // ✅ USAR composable refactorizado
 import { useNotifications } from '@/composables/useNotifications'
 
 // ============================================================================
@@ -117,11 +118,18 @@ import { useNotifications } from '@/composables/useNotifications'
 const emit = defineEmits(['uploaded', 'refresh'])
 
 // ============================================================================
-// STORES & COMPOSABLES
+// STORES & COMPOSABLES - REFACTORIZADOS
 // ============================================================================
 
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
+
+// ✅ USAR COMPOSABLE REFACTORIZADO
+const { 
+  uploadDocument, 
+  isUploading, 
+  uploadProgress 
+} = useDocuments()
 
 // ============================================================================
 // ESTADO LOCAL
@@ -131,8 +139,6 @@ const documentTitle = ref('')
 const documentContent = ref('')
 const selectedFile = ref(null)
 const isDragOver = ref(false)
-const isUploading = ref(false)
-const uploadProgress = ref(0)
 const uploadResult = ref(null)
 const fileInputRef = ref(null)
 
@@ -148,11 +154,12 @@ const canUploadDocument = computed(() => {
 })
 
 // ============================================================================
-// MÉTODOS PRINCIPALES
+// MÉTODOS PRINCIPALES - REFACTORIZADOS
 // ============================================================================
 
 /**
- * Handle upload - PRESERVAR FUNCIONALIDAD EXACTA
+ * ✅ REFACTORIZADO - Pasa datos estructurados al composable
+ * En lugar de que el composable lea del DOM
  */
 const handleUpload = async () => {
   if (!canUploadDocument.value) {
@@ -166,65 +173,41 @@ const handleUpload = async () => {
   }
 
   try {
-    isUploading.value = true
-    uploadProgress.value = 0
     uploadResult.value = null
     
-    // Simulate progress
-    const progressInterval = setInterval(() => {
-      uploadProgress.value += Math.random() * 15
-      if (uploadProgress.value >= 90) {
-        clearInterval(progressInterval)
-      }
-    }, 200)
-
-    // Prepare document data - FORMATO EXACTO DEL ORIGINAL
-    let documentData = {
+    // ✅ NUEVO - Preparar datos estructurados
+    const uploadData = {
       title: documentTitle.value.trim(),
-      company_id: appStore.currentCompanyId
+      content: documentContent.value.trim(),
+      file: selectedFile.value
     }
+    
+    // ✅ Pasar datos al composable (en lugar de manipulación DOM)
+    const response = await uploadDocument(uploadData)
 
-    if (documentContent.value.trim()) {
-      documentData.content = documentContent.value.trim()
+    if (response) {
+      // ✅ Mostrar resultado de éxito
+      uploadResult.value = {
+        type: 'result-success',
+        title: '✅ Documento subido exitosamente',
+        message: `"${uploadData.title}" ha sido agregado a la base de datos.`
+      }
+
+      // ✅ Limpiar formulario local
+      clearForm()
+      
+      // ✅ Emitir evento a componente padre
+      emit('uploaded', response)
+      emit('refresh')
+      
+    } else {
+      // Error ya manejado por el composable
+      uploadResult.value = {
+        type: 'result-error', 
+        title: '❌ Error al subir documento',
+        message: 'Revisa la consola para más detalles'
+      }
     }
-
-    if (selectedFile.value) {
-      // Read file content if selected
-      const fileContent = await readFileContent(selectedFile.value)
-      documentData.content = fileContent
-      documentData.file_name = selectedFile.value.name
-    }
-
-    // Make API request - PRESERVAR URL Y FORMATO EXACTO
-    const response = await appStore.apiRequest('/api/documents', {
-      method: 'POST',
-      body: documentData
-    })
-
-    uploadProgress.value = 100
-    clearInterval(progressInterval)
-
-    // Show success result
-    uploadResult.value = {
-      type: 'result-success',
-      title: '✅ Documento subido exitosamente',
-      message: `"${documentData.title}" ha sido agregado a la base de datos.`
-    }
-
-    showNotification('Documento subido exitosamente', 'success')
-    appStore.addToLog(`Document uploaded: ${documentData.title}`, 'info')
-
-    // Clear form
-    documentTitle.value = ''
-    documentContent.value = ''
-    selectedFile.value = null
-    if (fileInputRef.value) {
-      fileInputRef.value.value = ''
-    }
-
-    // Emit events
-    emit('uploaded', response)
-    emit('refresh')
 
   } catch (error) {
     console.error('Error uploading document:', error)
@@ -236,29 +219,31 @@ const handleUpload = async () => {
     }
     
     showNotification('Error al subir documento: ' + error.message, 'error')
-    appStore.addToLog(`Document upload error: ${error.message}`, 'error')
-    
-  } finally {
-    isUploading.value = false
-    uploadProgress.value = 0
   }
 }
 
 /**
- * Read file content
+ * ✅ NUEVO - Limpiar formulario local
  */
-const readFileContent = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => resolve(e.target.result)
-    reader.onerror = reject
-    reader.readAsText(file)
-  })
+const clearForm = () => {
+  documentTitle.value = ''
+  documentContent.value = ''
+  selectedFile.value = null
+  
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+  }
+  
+  // Limpiar resultado después de un tiempo
+  setTimeout(() => {
+    uploadResult.value = null
+  }, 5000)
 }
 
-/**
- * File selection methods
- */
+// ============================================================================
+// FILE SELECTION METHODS - SIN CAMBIOS
+// ============================================================================
+
 const triggerFileSelect = () => {
   if (!isUploading.value && fileInputRef.value) {
     fileInputRef.value.click()
@@ -281,7 +266,7 @@ const clearSelectedFile = () => {
 }
 
 // ============================================================================
-// DRAG & DROP HANDLERS
+// DRAG & DROP HANDLERS - SIN CAMBIOS
 // ============================================================================
 
 const handleDragEnter = () => {
@@ -317,12 +302,9 @@ const handleDrop = (event) => {
 }
 
 // ============================================================================
-// UTILITY METHODS
+// UTILITY METHODS - SIN CAMBIOS
 // ============================================================================
 
-/**
- * Get file icon based on type
- */
 const getFileIcon = (type) => {
   const iconMap = {
     'application/pdf': '📕',
@@ -337,9 +319,6 @@ const getFileIcon = (type) => {
   return iconMap[type] || '📄'
 }
 
-/**
- * Format file size
- */
 const formatFileSize = (bytes) => {
   if (!bytes) return 'Desconocido'
   
@@ -349,18 +328,22 @@ const formatFileSize = (bytes) => {
 }
 
 // ============================================================================
-// LIFECYCLE HOOKS
+// LIFECYCLE HOOKS - REFACTORIZADO
 // ============================================================================
 
 onMounted(() => {
-  // Expose global function for compatibility
-  window.uploadDocument = handleUpload
+  // ✅ MANTENER COMPATIBILIDAD - Exponer función global simplificada
+  window.uploadDocument = async () => {
+    // Usar datos del DOM para mantener compatibilidad
+    return await uploadDocument() // Sin parámetros = leer DOM en composable
+  }
   
-  appStore.addToLog('DocumentUpload component mounted', 'info')
+  appStore.addToLog('DocumentUpload component mounted (improved)', 'info')
 })
 </script>
 
 <style scoped>
+/* Estilos sin cambios - mantenemos los existentes */
 .card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
