@@ -53,6 +53,60 @@ def _get_company_id_from_request():
         logger.warning(f"Error getting company_id from request: {e}")
         return None
 
+def _safe_reload_orchestrator(company_id: str, operation: str, agent_name: str = None) -> Dict[str, Any]:
+    """Recarga SEGURA del orquestador con preservación de company_id"""
+    try:
+        logger.info(f"🔄 Starting safe reload for {company_id} after {operation}")
+        
+        # Validar que company_id no se haya corrompido
+        original_company_id = company_id.strip()
+        if not original_company_id:
+            return {
+                "attempted": True,
+                "successful": False,
+                "company_id_preserved": False,
+                "error": "Empty company_id detected"
+            }
+        
+        # Limpiar cache del factory
+        factory = get_multi_agent_factory()
+        factory.clear_company_cache(original_company_id)
+        
+        # Recrear orquestador
+        new_orchestrator = factory.get_orchestrator(original_company_id)
+        
+        if new_orchestrator:
+            # Verificar que el company_id se preservó
+            if hasattr(new_orchestrator, 'company_id'):
+                preserved = new_orchestrator.company_id == original_company_id
+            else:
+                # Si no tiene atributo, asumir que se preservó si se creó exitosamente
+                preserved = True
+            
+            return {
+                "attempted": True,
+                "successful": True,
+                "company_id_preserved": preserved,
+                "operation": operation,
+                "agent_name": agent_name
+            }
+        else:
+            return {
+                "attempted": True,
+                "successful": False,
+                "company_id_preserved": False,
+                "error": "Could not create new orchestrator"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in safe reload for {company_id}: {e}")
+        return {
+            "attempted": True,
+            "successful": False,
+            "company_id_preserved": False,
+            "error": str(e)
+        }
+
 # ============================================================================
 # ENDPOINTS PARA GESTIÓN DE PROMPTS - VERSIÓN REFACTORIZADA
 # MANTIENE 100% COMPATIBILIDAD CON FRONTEND EXISTENTE
@@ -318,7 +372,7 @@ def repair_prompts():
         
     except Exception as e:
         logger.error(f"Error in repair operation: {e}", exc_info=True)
-        return create_error_response(f"Repair operation failed: {str(e)}", 50
+        return create_error_response(f"Repair operation failed: {str(e)}", 500)
 
 @bp.route('/prompts/preview', methods=['POST'])
 @handle_errors
@@ -515,6 +569,7 @@ def _get_prompt_modification_date(company_id: str, agent_name: str) -> Optional[
     except Exception as e:
         logger.warning(f"Error getting modification date: {e}")
         return None
+
 # ============================================================================
 # OTROS ENDPOINTS EXISTENTES - MANTENER SIN CAMBIOS
 # ============================================================================
