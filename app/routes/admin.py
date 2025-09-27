@@ -103,12 +103,10 @@ def get_prompts():
 @handle_errors  
 def update_agent_prompt(agent_name):
     """
-    Actualizar prompt de agente - REFACTORIZADO CON POSTGRESQL
-    MANTIENE: Endpoint exacto, validaciones, formato de respuesta
-    MEJORA: PostgreSQL con versionado automático
+    Actualizar prompt de agente con RECARGA CONTROLADA Y SEGURA
     """
     try:
-        # MANTENER validación de entrada exacta
+        # Validación de entrada exacta
         data = request.get_json()
         if not data:
             return create_error_response("JSON data is required", 400)
@@ -120,22 +118,25 @@ def update_agent_prompt(agent_name):
         if not company_id or not template:
             return create_error_response("company_id and prompt_template are required", 400)
         
+        # CRÍTICO: Preservar company_id original
+        original_company_id = company_id.strip()
+        
         # Validar empresa
         company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        if not company_manager.validate_company_id(original_company_id):
+            return create_error_response(f"Invalid company_id: {original_company_id}", 400)
         
         # Validar agente
         valid_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent']
         if agent_name not in valid_agents:
             return create_error_response(f"Invalid agent_name: {agent_name}", 400)
         
-        logger.info(f"Updating prompt for {agent_name} in company {company_id}")
+        logger.info(f"Updating prompt for {agent_name} in company {original_company_id}")
         
-        # 🆕 NUEVA LÓGICA: PostgreSQL con versionado automático
+        # GUARDAR PROMPT (SIN auto-recarga en PromptService)
         prompt_service = get_prompt_service()
         success = prompt_service.save_custom_prompt(
-            company_id, 
+            original_company_id, 
             agent_name, 
             template, 
             modified_by
@@ -144,15 +145,33 @@ def update_agent_prompt(agent_name):
         if not success:
             return create_error_response("Failed to save prompt", 500)
         
-        # MANTENER formato de respuesta exacto
+        logger.info(f"✅ Prompt saved successfully for {original_company_id}/{agent_name}")
+        
+        # RECARGA CONTROLADA después de guardar exitosamente
+        reload_result = _safe_reload_orchestrator(original_company_id, "update_prompt", agent_name)
+        
+        # Preparar respuesta
         response_data = {
             "message": f"Prompt updated successfully for {agent_name}",
-            "company_id": company_id,
+            "company_id": original_company_id,
             "agent_name": agent_name,
-            # 🆕 INFORMACIÓN ADICIONAL (no rompe compatibilidad)
-            "version": prompt_service.get_current_version(company_id, agent_name),
-            "database_status": prompt_service.get_db_status()
+            "version": prompt_service.get_current_version(original_company_id, agent_name),
+            "database_status": prompt_service.get_db_status(),
+            # Información de recarga
+            "orchestrator_reload": {
+                "attempted": reload_result["attempted"],
+                "successful": reload_result["successful"],
+                "company_id_preserved": reload_result["company_id_preserved"],
+                "error": reload_result.get("error")
+            }
         }
+        
+        # Log resultado de recarga
+        if reload_result["successful"]:
+            logger.info(f"✅ Orchestrator reloaded successfully after prompt update")
+        else:
+            logger.warning(f"⚠️ Orchestrator reload failed: {reload_result.get('error')}")
+            # No fallar la respuesta si solo falla la recarga
         
         return create_success_response(response_data)
         
@@ -164,9 +183,7 @@ def update_agent_prompt(agent_name):
 @handle_errors
 def reset_agent_prompt(agent_name):
     """
-    Restaurar prompt a default - REFACTORIZADO CON POSTGRESQL
-    MANTIENE: Endpoint exacto, comportamiento idéntico
-    MEJORA: PostgreSQL con preservación de historial
+    Restaurar prompt a default con RECARGA CONTROLADA Y SEGURA
     """
     try:
         company_id = _get_company_id_from_request()
@@ -174,22 +191,25 @@ def reset_agent_prompt(agent_name):
         if not company_id:
             return create_error_response("company_id is required", 400)
         
+        # CRÍTICO: Preservar company_id original
+        original_company_id = company_id.strip()
+        
         # Validar empresa
         company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        if not company_manager.validate_company_id(original_company_id):
+            return create_error_response(f"Invalid company_id: {original_company_id}", 400)
         
         # Validar agente
         valid_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent', 'availability_agent']
         if agent_name not in valid_agents:
             return create_error_response(f"Invalid agent_name: {agent_name}", 400)
         
-        logger.info(f"Resetting prompt for {agent_name} in company {company_id}")
+        logger.info(f"Resetting prompt for {agent_name} in company {original_company_id}")
         
-        # 🆕 NUEVA LÓGICA: PostgreSQL con preservación de historial
+        # RESTAURAR PROMPT (SIN auto-recarga en PromptService)
         prompt_service = get_prompt_service()
         success = prompt_service.restore_default_prompt(
-            company_id, 
+            original_company_id, 
             agent_name, 
             modified_by="admin_reset"
         )
@@ -197,12 +217,29 @@ def reset_agent_prompt(agent_name):
         if not success:
             return create_error_response("Failed to reset prompt", 500)
         
-        # MANTENER formato de respuesta exacto
+        logger.info(f"✅ Prompt reset successfully for {original_company_id}/{agent_name}")
+        
+        # RECARGA CONTROLADA después de restaurar exitosamente
+        reload_result = _safe_reload_orchestrator(original_company_id, "restore_prompt", agent_name)
+        
+        # Preparar respuesta
         response_data = {
             "message": f"Prompt reset to default for {agent_name}",
-            "company_id": company_id,
-            "agent_name": agent_name
+            "company_id": original_company_id,
+            "agent_name": agent_name,
+            "orchestrator_reload": {
+                "attempted": reload_result["attempted"],
+                "successful": reload_result["successful"], 
+                "company_id_preserved": reload_result["company_id_preserved"],
+                "error": reload_result.get("error")
+            }
         }
+        
+        # Log resultado de recarga
+        if reload_result["successful"]:
+            logger.info(f"✅ Orchestrator reloaded successfully after prompt reset")
+        else:
+            logger.warning(f"⚠️ Orchestrator reload failed: {reload_result.get('error')}")
         
         return create_success_response(response_data)
         
@@ -210,13 +247,11 @@ def reset_agent_prompt(agent_name):
         logger.error(f"Error resetting prompt: {e}", exc_info=True)
         return create_error_response(f"Failed to reset prompt: {str(e)}", 500)
 
-# 🆕 NUEVA FUNCIÓN PARA BOTÓN REPARAR DEL FRONTEND
 @bp.route('/prompts/repair', methods=['POST'])
 @handle_errors
 def repair_prompts():
     """
-    Nueva función REPARAR - Restaura prompts desde repositorio
-    Endpoint nuevo que no rompe compatibilidad existente
+    Reparar prompts desde repositorio con RECARGA CONTROLADA Y SEGURA
     """
     try:
         data = request.get_json()
@@ -229,10 +264,13 @@ def repair_prompts():
         if not company_id:
             return create_error_response("company_id is required", 400)
         
+        # CRÍTICO: Preservar company_id original
+        original_company_id = company_id.strip()
+        
         # Validar empresa
         company_manager = get_company_manager()
-        if not company_manager.validate_company_id(company_id):
-            return create_error_response(f"Invalid company_id: {company_id}", 400)
+        if not company_manager.validate_company_id(original_company_id):
+            return create_error_response(f"Invalid company_id: {original_company_id}", 400)
         
         # Validar agente si se especifica
         if agent_name:
@@ -240,31 +278,47 @@ def repair_prompts():
             if agent_name not in valid_agents:
                 return create_error_response(f"Invalid agent_name: {agent_name}", 400)
         
-        logger.info(f"Repairing prompts for company {company_id}, agent: {agent_name or 'ALL'}")
+        logger.info(f"Repairing prompts for company {original_company_id}, agent: {agent_name or 'ALL'}")
         
-        # Ejecutar reparación
+        # EJECUTAR REPARACIÓN (SIN auto-recarga en PromptService)
         prompt_service = get_prompt_service()
-        success = prompt_service.repair_from_repository(company_id, agent_name, "admin_repair")
+        success = prompt_service.repair_from_repository(original_company_id, agent_name, "admin_repair")
         
         if not success:
             return create_error_response("Repair operation failed", 500)
         
         repair_summary = prompt_service.get_repair_summary()
+        repaired_count = len([item for item in repair_summary if item['success']])
         
+        logger.info(f"✅ Repair completed: {repaired_count} agents repaired for {original_company_id}")
+        
+        # RECARGA CONTROLADA después de reparar exitosamente (solo si hubo cambios)
+        reload_result = {"attempted": False}
+        if repaired_count > 0:
+            reload_result = _safe_reload_orchestrator(original_company_id, "repair_prompts", agent_name)
+        
+        # Preparar respuesta
         response_data = {
-            "message": "Prompts reparados exitosamente desde repositorio",
-            "company_id": company_id,
+            "message": f"Prompts reparados exitosamente desde repositorio",
+            "company_id": original_company_id,
             "agent_name": agent_name,
             "repaired_items": repair_summary,
-            "total_repaired": len([item for item in repair_summary if item['success']]),
-            "total_attempted": len(repair_summary)
+            "total_repaired": repaired_count,
+            "total_attempted": len(repair_summary),
+            "orchestrator_reload": reload_result
         }
+        
+        # Log resultado de recarga
+        if reload_result.get("successful"):
+            logger.info(f"✅ Orchestrator reloaded successfully after repair")
+        elif reload_result.get("attempted"):
+            logger.warning(f"⚠️ Orchestrator reload failed: {reload_result.get('error')}")
         
         return create_success_response(response_data)
         
     except Exception as e:
         logger.error(f"Error in repair operation: {e}", exc_info=True)
-        return create_error_response(f"Repair operation failed: {str(e)}", 500)
+        return create_error_response(f"Repair operation failed: {str(e)}", 50
 
 @bp.route('/prompts/preview', methods=['POST'])
 @handle_errors
