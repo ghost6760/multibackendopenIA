@@ -1,6 +1,7 @@
 # app/agents/base_agent.py - Refactorizado para soportar PostgreSQL con fallbacks
 # MANTIENE: 100% compatibilidad con agentes existentes
 # AÑADE: Carga de prompts desde PostgreSQL con fallbacks automáticos
+# CORRIGE: Logging detallado para diagnosticar problemas de carga
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Tuple
@@ -27,6 +28,7 @@ class BaseAgent(ABC):
     - Carga de prompts desde PostgreSQL con fallbacks automáticos
     - Preserva compatibilidad total con agentes existentes
     - Añade funciones para gestión de prompts personalizados
+    - CORRIGE: Logging detallado para diagnosticar problemas
     """
     
     def __init__(self, company_config: CompanyConfig, openai_service: OpenAIService):
@@ -41,6 +43,9 @@ class BaseAgent(ABC):
         # 🆕 NUEVO: Cache del prompt actual para rendimiento
         self._current_prompt_template = None
         self._prompt_source = None
+        
+        # 🔧 LOGGING INICIAL
+        logger.info(f"🏗️ [{self.company_config.company_id}] Initializing {self.agent_name}")
         
         # Inicializar el agente específico con soporte para prompts personalizados
         self._initialize_agent()
@@ -57,96 +62,173 @@ class BaseAgent(ABC):
         JERARQUÍA DE CARGA:
         1. PostgreSQL custom_prompts (Personalizado por empresa)
         2. PostgreSQL default_prompts (Por defecto del repositorio)
-        3. Método _create_default_prompt_template() (Hardcoded en agente)
-        4. Fallback de emergencia (Prompt básico)
+        3. Fallback a JSON (compatibilidad temporal)
+        4. Método _create_default_prompt_template() (Hardcoded en agente)
+        5. Fallback de emergencia (Prompt básico)
         """
         
+        company_id = self.company_config.company_id
+        agent_key = self._get_agent_key()
+        
+        logger.info(f"🔄 [{company_id}] Creating prompt template for {self.agent_name} (key: {agent_key})")
+        
         # 1. Intentar cargar prompt personalizado desde PostgreSQL
+        logger.info(f"🔍 [{company_id}] Step 1: Checking PostgreSQL custom prompts...")
         custom_template = self._load_custom_prompt_from_postgresql()
         if custom_template:
             self._prompt_source = "postgresql_custom"
             self._log_prompt_load("custom", "postgresql")
+            logger.info(f"✅ [{company_id}] SUCCESS: Using PostgreSQL custom prompt for {agent_key}")
             return self._build_custom_prompt_template(custom_template)
         
         # 2. Intentar cargar prompt por defecto desde PostgreSQL
+        logger.info(f"🔍 [{company_id}] Step 2: Checking PostgreSQL default prompts...")
         default_template = self._load_default_prompt_from_postgresql()
         if default_template:
             self._prompt_source = "postgresql_default"
             self._log_prompt_load("default", "postgresql")
+            logger.info(f"✅ [{company_id}] SUCCESS: Using PostgreSQL default prompt for {agent_key}")
             return self._build_custom_prompt_template(default_template)
         
         # 3. Fallback a JSON (compatibilidad temporal)
+        logger.info(f"🔍 [{company_id}] Step 3: Checking JSON fallback...")
         json_template = self._load_custom_prompt_from_json()
         if json_template:
             self._prompt_source = "json_fallback"
             self._log_prompt_load("custom", "json_fallback")
+            logger.warning(f"⚠️ [{company_id}] Using JSON fallback prompt for {agent_key}")
             return self._build_custom_prompt_template(json_template)
+        
+        # 🆕 VERIFICACIÓN ADICIONAL: ¿Por qué no hay prompts en DB?
+        logger.warning(f"🚨 [{company_id}] No prompts found in PostgreSQL or JSON for {agent_key}")
+        try:
+            # Verificar conectividad a DB
+            db_status = self.prompt_service.get_db_status()
+            logger.info(f"🔍 [{company_id}] DB Status: {db_status}")
+            
+            if db_status.get('postgresql_available', False):
+                logger.error(f"🚨 [{company_id}] PostgreSQL is available but no prompts found!")
+                logger.error(f"🚨 [{company_id}] This indicates a configuration or data problem")
+                
+                # Log todas las empresas y agentes disponibles
+                try:
+                    all_agents = self.prompt_service.get_company_prompts(company_id)
+                    logger.error(f"🔍 [{company_id}] Available agents in DB: {list(all_agents.keys())}")
+                    for ag_name, ag_data in all_agents.items():
+                        logger.error(f"🔍 [{company_id}]   - {ag_name}: {ag_data.get('source', 'unknown')}")
+                except Exception as debug_error:
+                    logger.error(f"💥 [{company_id}] Error getting debug info: {debug_error}")
+        except Exception as e:
+            logger.error(f"💥 [{company_id}] Error checking DB status: {e}")
         
         # 4. Fallback a prompt hardcoded del agente
         try:
             self._prompt_source = "hardcoded_agent"
             self._log_prompt_load("default", "hardcoded_agent")
+            logger.error(f"🚨 [{company_id}] FALLING BACK TO HARDCODED for {agent_key} - THIS SHOULD BE FIXED!")
             return self._create_default_prompt_template()
         except Exception as e:
-            logger.error(f"Error creating default prompt template: {e}")
+            logger.error(f"💥 [{company_id}] Error creating default prompt template: {e}")
         
         # 5. Fallback de emergencia
         self._prompt_source = "emergency_fallback"
         self._log_prompt_load("emergency", "fallback")
+        logger.error(f"🚨 [{company_id}] EMERGENCY FALLBACK for {agent_key}")
         return self._create_emergency_prompt_template()
     
     def _load_custom_prompt_from_postgresql(self) -> Optional[str]:
-        """Cargar prompt personalizado desde PostgreSQL"""
+        """Cargar prompt personalizado desde PostgreSQL - VERSIÓN MEJORADA CON LOGGING"""
         try:
             company_id = self.company_config.company_id
             agent_key = self._get_agent_key()
             
+            logger.info(f"🔍 [{company_id}] Loading CUSTOM prompt for agent_key: {agent_key}")
+            
+            # Verificar servicio de prompts
+            if not self.prompt_service:
+                logger.error(f"❌ [{company_id}] prompt_service is None!")
+                return None
+            
             # Usar el servicio de prompts con fallback automático
+            logger.info(f"🔍 [{company_id}] Calling prompt_service.get_company_prompts({company_id})")
             agents_data = self.prompt_service.get_company_prompts(company_id)
+            
+            logger.info(f"🔍 [{company_id}] Available agents in response: {list(agents_data.keys())}")
+            
             agent_data = agents_data.get(agent_key, {})
+            logger.info(f"🔍 [{company_id}] Data for {agent_key}: {agent_data}")
             
             # Solo retornar si es personalizado y viene de PostgreSQL
-            if (agent_data.get('is_custom', False) and 
-                agent_data.get('source') in ['custom', 'postgresql_custom'] and
-                agent_data.get('current_prompt')):
-                
-                logger.info(f"[{company_id}] Loaded custom prompt from PostgreSQL for {agent_key}")
-                return agent_data['current_prompt']
+            is_custom = agent_data.get('is_custom', False)
+            source = agent_data.get('source', 'unknown')
+            has_prompt = bool(agent_data.get('current_prompt'))
             
+            logger.info(f"🔍 [{company_id}] Evaluation: is_custom={is_custom}, source={source}, has_prompt={has_prompt}")
+            
+            if (is_custom and 
+                source in ['custom', 'postgresql_custom'] and
+                has_prompt):
+                
+                prompt_content = agent_data['current_prompt']
+                logger.info(f"✅ [{company_id}] Found CUSTOM prompt for {agent_key} (length: {len(prompt_content)})")
+                logger.info(f"✅ [{company_id}] Prompt preview: {prompt_content[:100]}...")
+                return prompt_content
+            
+            logger.info(f"❌ [{company_id}] No custom prompt found for {agent_key}")
             return None
             
         except Exception as e:
-            logger.warning(f"Error loading custom prompt from PostgreSQL: {e}")
+            logger.exception(f"💥 [{company_id}] Error loading custom prompt from PostgreSQL: {e}")
             return None
     
     def _load_default_prompt_from_postgresql(self) -> Optional[str]:
-        """Cargar prompt por defecto desde PostgreSQL usando arquitectura separada CORREGIDA"""
+        """Cargar prompt por defecto desde PostgreSQL - VERSIÓN MEJORADA CON LOGGING"""
         try:
             if not self.prompt_service:
+                logger.error(f"❌ prompt_service is None!")
                 return None
             
             company_id = self.company_config.company_id
             agent_key = self._get_agent_key()
             
-            # ✅ CORREGIDO: Usar el servicio que busca con company_id + agent_name separados
+            logger.info(f"🔍 [{company_id}] Loading DEFAULT prompt for agent_key: {agent_key}")
+            
+            # Usar el servicio que busca con company_id + agent_name separados
+            logger.info(f"🔍 [{company_id}] Calling prompt_service.get_company_prompts({company_id}) for defaults")
             agents_data = self.prompt_service.get_company_prompts(company_id)
             
-            # ✅ CORREGIDO: Buscar directamente con agent_key (no concatenado)
+            logger.info(f"🔍 [{company_id}] Available agents for defaults: {list(agents_data.keys())}")
+            
             if agent_key in agents_data:
                 agent_data = agents_data[agent_key]
-                if (agent_data.get('source') in ['default', 'postgresql_default'] and
-                    agent_data.get('current_prompt')):
-                    # ✅ CORREGIDO: Log específico para identificar origen
-                    if agent_data.get('source') == 'postgresql_default':
-                        logger.info(f"[{company_id}] ✅ Loaded company-specific default prompt for {agent_key}")
+                logger.info(f"🔍 [{company_id}] Default data for {agent_key}: {agent_data}")
+                
+                source = agent_data.get('source', 'unknown')
+                has_prompt = bool(agent_data.get('current_prompt'))
+                
+                logger.info(f"🔍 [{company_id}] Default evaluation: source={source}, has_prompt={has_prompt}")
+                
+                if (source in ['default', 'postgresql_default'] and has_prompt):
+                    prompt_content = agent_data['current_prompt']
+                    logger.info(f"✅ [{company_id}] Found DEFAULT prompt for {agent_key} (length: {len(prompt_content)})")
+                    logger.info(f"✅ [{company_id}] Default prompt preview: {prompt_content[:100]}...")
+                    
+                    if source == 'postgresql_default':
+                        logger.info(f"✅ [{company_id}] Using company-specific default prompt for {agent_key}")
                     else:
-                        logger.info(f"[{company_id}] ⚡ Loaded fallback default prompt for {agent_key}")
-                    return agent_data['current_prompt']
+                        logger.info(f"✅ [{company_id}] Using fallback default prompt for {agent_key}")
+                    
+                    return prompt_content
+                else:
+                    logger.info(f"❌ [{company_id}] Default prompt doesn't meet criteria for {agent_key}")
+            else:
+                logger.warning(f"❌ [{company_id}] Agent key {agent_key} not found in agents_data")
+                logger.warning(f"❌ [{company_id}] Available keys: {list(agents_data.keys())}")
             
             return None
             
         except Exception as e:
-            logger.warning(f"Error loading default prompt from PostgreSQL: {e}")
+            logger.exception(f"💥 [{company_id if 'company_id' in locals() else 'unknown'}] Error loading default prompt from PostgreSQL: {e}")
             return None
     
     def _load_custom_prompt_from_json(self) -> Optional[str]:
@@ -157,37 +239,53 @@ class BaseAgent(ABC):
                 'custom_prompts.json'
             )
             
+            company_id = self.company_config.company_id
+            agent_key = self._get_agent_key()
+            
+            logger.info(f"🔍 [{company_id}] Checking JSON file: {custom_prompts_file}")
+            
             if not os.path.exists(custom_prompts_file):
+                logger.info(f"❌ [{company_id}] JSON file does not exist")
                 return None
             
             with open(custom_prompts_file, 'r', encoding='utf-8') as f:
                 custom_prompts = json.load(f)
             
-            company_id = self.company_config.company_id
-            agent_key = self._get_agent_key()
+            logger.info(f"🔍 [{company_id}] JSON companies available: {list(custom_prompts.keys())}")
             
             # Navegar la estructura JSON
             company_prompts = custom_prompts.get(company_id, {})
+            if not company_prompts:
+                logger.info(f"❌ [{company_id}] Company not found in JSON")
+                return None
+            
+            logger.info(f"🔍 [{company_id}] JSON agents for company: {list(company_prompts.keys())}")
+            
             agent_data = company_prompts.get(agent_key, {})
             
             if isinstance(agent_data, dict) and agent_data.get('is_custom', False):
                 template = agent_data.get('template')
                 if template and template != "null":
-                    logger.info(f"[{company_id}] Loaded custom prompt from JSON fallback for {agent_key}")
+                    logger.info(f"✅ [{company_id}] Found JSON custom prompt for {agent_key}")
                     return template
             
+            logger.info(f"❌ [{company_id}] No valid JSON prompt for {agent_key}")
             return None
             
         except Exception as e:
-            logger.warning(f"Error loading custom prompt from JSON: {e}")
+            logger.exception(f"💥 [{self.company_config.company_id if hasattr(self, 'company_config') else 'unknown'}] Error loading custom prompt from JSON: {e}")
             return None
     
     def _build_custom_prompt_template(self, custom_template: str) -> ChatPromptTemplate:
         """Construir ChatPromptTemplate desde template personalizado"""
         try:
+            company_id = self.company_config.company_id
+            logger.info(f"🔧 [{company_id}] Building custom prompt template (length: {len(custom_template)})")
+            
             # Verificar si el template ya incluye variables de contexto
             if "{company_name}" in custom_template or "{services}" in custom_template:
                 # Template ya tiene contexto, usar directamente
+                logger.info(f"🔧 [{company_id}] Template already has context variables")
                 return ChatPromptTemplate.from_messages([
                     ("system", custom_template),
                     MessagesPlaceholder(variable_name="chat_history", optional=True),
@@ -195,6 +293,7 @@ class BaseAgent(ABC):
                 ])
             else:
                 # Añadir contexto empresarial al template
+                logger.info(f"🔧 [{company_id}] Adding context variables to template")
                 enhanced_template = f"""{custom_template}
 
 CONTEXTO DE LA EMPRESA:
@@ -210,7 +309,7 @@ Responde de manera profesional y acorde a la empresa."""
                 ])
                 
         except Exception as e:
-            logger.error(f"Error building custom prompt template: {e}")
+            logger.exception(f"💥 [{self.company_config.company_id}] Error building custom prompt template: {e}")
             # Fallback al template por defecto del agente
             return self._create_default_prompt_template()
     
@@ -385,15 +484,21 @@ Ayuda al usuario de manera profesional."""
             if not question:
                 return f"No se proporcionó una pregunta válida para {self.company_config.company_name}."
             
+            # 🆕 LOGGING ANTES DE PROCESAR
+            logger.info(f"🤖 [{self.company_config.company_id}] {self.agent_name}.invoke() called")
+            logger.info(f"🤖 [{self.company_config.company_id}] Question: {question[:100]}...")
+            logger.info(f"🤖 [{self.company_config.company_id}] Using prompt source: {self._prompt_source}")
+            
             # Usar el método existente process_message
-            return self.process_message(question, chat_history, context)
+            result = self.process_message(question, chat_history, context)
+            
+            logger.info(f"🤖 [{self.company_config.company_id}] Response generated (length: {len(result)})")
+            return result
             
         except Exception as e:
-            logger.error(f"Error in invoke method for {self.agent_name}: {e}")
+            logger.exception(f"💥 [{self.company_config.company_id}] Error in invoke method for {self.agent_name}: {e}")
             return f"Lo siento, estoy experimentando dificultades técnicas. Por favor, contacta con {self.company_config.company_name} directamente."
 
-
-    
     def process_message(self, question: str, chat_history: List[BaseMessage] = None, context: str = "") -> str:
         """
         MANTENER: Función principal de procesamiento de mensajes
@@ -415,6 +520,13 @@ Ayuda al usuario de manera profesional."""
                 "services": self.company_config.services
             }
             
+            # 🆕 LOGGING DETALLADO ANTES DE ENVIAR A OPENAI
+            logger.info(f"🔧 [{self.company_config.company_id}] Preparing chain inputs:")
+            logger.info(f"🔧 [{self.company_config.company_id}]   - question: {question[:100]}...")
+            logger.info(f"🔧 [{self.company_config.company_id}]   - company_name: {self.company_config.company_name}")
+            logger.info(f"🔧 [{self.company_config.company_id}]   - services: {self.company_config.services}")
+            logger.info(f"🔧 [{self.company_config.company_id}]   - prompt_source: {self._prompt_source}")
+            
             # Log de procesamiento
             self._log_agent_activity("message_processed", {
                 "message_length": len(question),
@@ -422,11 +534,15 @@ Ayuda al usuario de manera profesional."""
                 "has_history": bool(chat_history)
             })
             
+            # 🚨 AQUÍ SE EJECUTA LA CHAIN QUE VA A OPENAI
+            logger.info(f"🚀 [{self.company_config.company_id}] Executing chain.invoke()...")
             response = self.chain.invoke(inputs)
+            
+            logger.info(f"✅ [{self.company_config.company_id}] Chain executed successfully, response length: {len(response)}")
             return response
             
         except Exception as e:
-            logger.error(f"Error processing message in {self.agent_name}: {e}")
+            logger.exception(f"💥 [{self.company_config.company_id}] Error processing message in {self.agent_name}: {e}")
             # Respuesta de fallback
             return f"Lo siento, estoy experimentando dificultades técnicas. Por favor, contacta con {self.company_config.company_name} directamente."
 
