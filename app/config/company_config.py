@@ -423,7 +423,7 @@ class CompanyConfigManager:
             # ✅ NUEVO: También actualizar en PostgreSQL si está disponible
             if self._postgresql_available and self._enterprise_service:
                 try:
-                    success = self._enterprise_service.update_company(company_id, updates, updated_by="company_manager")
+                    success = self._enterprise_service.update_company(company_id, updates, modified_by="company_manager")
                     if success:
                         logger.info(f"✅ Company {company_id} also updated in PostgreSQL")
                 except Exception as e:
