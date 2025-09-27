@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+
 class DocumentManager:
     """Manager for document operations multi-tenant"""
     
