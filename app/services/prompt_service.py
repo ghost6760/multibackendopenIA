@@ -1,5 +1,5 @@
-# app/services/prompt_service.py
-# Servicio refactorizado para gestión de prompts con PostgreSQL y fallbacks
+# app/services/prompt_service.py - MEJORADO CON AUTO-RECARGA DE ORCHESTRATOR
+# Servicio refactorizado para gestión de prompts con PostgreSQL, fallbacks y auto-recarga
 
 import logging
 import json
@@ -8,12 +8,11 @@ from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from app.config.company_config import get_company_manager
 
 logger = logging.getLogger(__name__)
 
 class PromptService:
-    """Servicio para gestión de prompts con PostgreSQL, fallbacks y versionado"""
+    """Servicio para gestión de prompts con PostgreSQL, fallbacks, versionado y AUTO-RECARGA"""
     
     def __init__(self, db_connection_string: str = None):
         """
@@ -40,6 +39,331 @@ class PromptService:
             'availability_agent': 'Eres un asistente de disponibilidad. Proporciona información sobre horarios y disponibilidad de servicios.'
         }
     
+    # ============================================================================
+    # NUEVA FUNCIONALIDAD: AUTO-RECARGA DE ORCHESTRATOR
+    # ============================================================================
+    
+    def _reload_orchestrator_for_company(self, company_id: str) -> bool:
+        """
+        Recargar orchestrator para una empresa específica después de cambiar prompts
+        
+        Args:
+            company_id: ID de la empresa
+            
+        Returns:
+            bool: True si se recargó exitosamente
+        """
+        try:
+            # Importar aquí para evitar imports circulares
+            from app.services.multi_agent_factory import get_multi_agent_factory
+            
+            logger.info(f"🔄 [AUTO-RELOAD] Reloading orchestrator for {company_id}")
+            
+            factory = get_multi_agent_factory()
+            
+            # Verificar si existe el orchestrator actual
+            if hasattr(factory, '_orchestrators') and company_id in factory._orchestrators:
+                logger.info(f"🔄 [AUTO-RELOAD] Removing cached orchestrator for {company_id}")
+                del factory._orchestrators[company_id]
+            
+            # Crear nuevo orchestrator (esto carga prompts frescos desde la DB)
+            new_orchestrator = factory.get_orchestrator(company_id)
+            
+            if new_orchestrator:
+                logger.info(f"✅ [AUTO-RELOAD] Orchestrator reloaded successfully for {company_id}")
+                return True
+            else:
+                logger.warning(f"⚠️ [AUTO-RELOAD] Failed to create new orchestrator for {company_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ [AUTO-RELOAD] Error reloading orchestrator for {company_id}: {e}")
+            return False
+    
+    def _auto_reload_after_prompt_change(self, company_id: str, operation: str, agent_name: str = None) -> None:
+        """
+        Ejecutar auto-recarga después de cualquier cambio en prompts
+        
+        Args:
+            company_id: ID de la empresa
+            operation: Tipo de operación (update, restore, repair)
+            agent_name: Nombre del agente (opcional)
+        """
+        try:
+            logger.info(f"🔄 [AUTO-RELOAD] Triggering auto-reload after {operation} for {company_id}")
+            
+            # Intentar recargar orchestrator
+            reload_success = self._reload_orchestrator_for_company(company_id)
+            
+            if reload_success:
+                logger.info(f"✅ [AUTO-RELOAD] Auto-reload completed successfully after {operation}")
+            else:
+                logger.warning(f"⚠️ [AUTO-RELOAD] Auto-reload failed after {operation}, but prompt operation was successful")
+            
+            # También limpiar cache del company manager si existe
+            try:
+                from app.config.company_config import get_company_manager
+                company_manager = get_company_manager()
+                
+                if hasattr(company_manager, '_configs') and company_id in company_manager._configs:
+                    # Forzar recarga de configuración específica
+                    del company_manager._configs[company_id]
+                    logger.info(f"🧹 [AUTO-RELOAD] Cleared company manager cache for {company_id}")
+                    
+            except Exception as cm_error:
+                logger.warning(f"Could not clear company manager cache: {cm_error}")
+                
+        except Exception as e:
+            logger.error(f"❌ [AUTO-RELOAD] Error in auto-reload process: {e}")
+            # No fallar la operación principal por errores de recarga
+    
+    # ============================================================================
+    # MÉTODOS EXISTENTES MEJORADOS CON AUTO-RECARGA
+    # ============================================================================
+    
+    def save_custom_prompt(self, company_id: str, agent_name: str, template: str, modified_by: str = "admin") -> bool:
+        """
+        Guardar prompt personalizado con versionado automático y AUTO-RECARGA
+        
+        Args:
+            company_id: ID de la empresa
+            agent_name: Nombre del agente
+            template: Template del prompt
+            modified_by: Usuario que modifica
+            
+        Returns:
+            bool: True si se guardó exitosamente
+        """
+        conn = self.get_db_connection()
+        if not conn:
+            # Fallback a JSON si no hay PostgreSQL
+            success = self._save_prompt_to_json(company_id, agent_name, template, modified_by)
+            if success:
+                self._auto_reload_after_prompt_change(company_id, "update_json", agent_name)
+            return success
+        
+        try:
+            with conn.cursor() as cursor:
+                # Usar UPSERT para insertar o actualizar
+                cursor.execute("""
+                    INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (company_id, agent_name) 
+                    DO UPDATE SET 
+                        template = EXCLUDED.template,
+                        modified_by = EXCLUDED.modified_by,
+                        modified_at = CURRENT_TIMESTAMP,
+                        notes = EXCLUDED.notes,
+                        is_active = true
+                """, (company_id, agent_name, template, modified_by, modified_by, f"Updated by {modified_by}"))
+                
+                conn.commit()
+                logger.info(f"Prompt saved for {company_id}/{agent_name} by {modified_by}")
+                
+                # ✅ AUTO-RECARGA DESPUÉS DE GUARDAR
+                self._auto_reload_after_prompt_change(company_id, "update", agent_name)
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error saving prompt to PostgreSQL: {e}")
+            conn.rollback()
+            # Fallback a JSON
+            success = self._save_prompt_to_json(company_id, agent_name, template, modified_by)
+            if success:
+                self._auto_reload_after_prompt_change(company_id, "update_json_fallback", agent_name)
+            return success
+        finally:
+            conn.close()
+    
+    def restore_default_prompt(self, company_id: str, agent_name: str, modified_by: str = "admin") -> bool:
+        """
+        Restaurar prompt a default eliminando personalización y AUTO-RECARGA
+        
+        Args:
+            company_id: ID de la empresa
+            agent_name: Nombre del agente
+            modified_by: Usuario que restaura
+            
+        Returns:
+            bool: True si se restauró exitosamente
+        """
+        conn = self.get_db_connection()
+        if not conn:
+            # Fallback a JSON
+            success = self._restore_prompt_in_json(company_id, agent_name)
+            if success:
+                self._auto_reload_after_prompt_change(company_id, "restore_json", agent_name)
+            return success
+        
+        try:
+            with conn.cursor() as cursor:
+                # Marcar como inactivo en lugar de eliminar (preservar historial)
+                cursor.execute("""
+                    UPDATE custom_prompts 
+                    SET is_active = false, 
+                        modified_by = %s, 
+                        modified_at = CURRENT_TIMESTAMP,
+                        notes = 'Restored to default'
+                    WHERE company_id = %s AND agent_name = %s
+                """, (modified_by, company_id, agent_name))
+                
+                rows_affected = cursor.rowcount
+                conn.commit()
+                
+                if rows_affected > 0:
+                    logger.info(f"Prompt restored to default for {company_id}/{agent_name}")
+                else:
+                    logger.info(f"No custom prompt found to restore for {company_id}/{agent_name}")
+                
+                # ✅ AUTO-RECARGA DESPUÉS DE RESTAURAR
+                self._auto_reload_after_prompt_change(company_id, "restore", agent_name)
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error restoring prompt in PostgreSQL: {e}")
+            conn.rollback()
+            # Fallback a JSON
+            success = self._restore_prompt_in_json(company_id, agent_name)
+            if success:
+                self._auto_reload_after_prompt_change(company_id, "restore_json_fallback", agent_name)
+            return success
+        finally:
+            conn.close()
+    
+    def repair_from_repository(self, company_id: str = None, agent_name: str = None, repair_user: str = "system_repair") -> bool:
+        """
+        Función REPARAR - Restaura prompts desde repositorio con AUTO-RECARGA
+        
+        Args:
+            company_id: ID de empresa (requerido)
+            agent_name: Agente específico (opcional, None = todos)
+            repair_user: Usuario que ejecuta la reparación
+            
+        Returns:
+            bool: True si la reparación fue exitosa
+        """
+        if not company_id:
+            logger.error("company_id is required for repair operation")
+            return False
+        
+        self.repair_summary = []
+        
+        conn = self.get_db_connection()
+        if not conn:
+            # Fallback: reparar desde hardcoded prompts
+            success = self._repair_from_hardcoded(company_id, agent_name, repair_user)
+            if success:
+                self._auto_reload_after_prompt_change(company_id, "repair_hardcoded", agent_name)
+            return success
+        
+        try:
+            with conn.cursor() as cursor:
+                # Usar la función SQL de reparación si existe, si no, implementar lógica aquí
+                agents_to_repair = [agent_name] if agent_name else list(self._hardcoded_prompts.keys())
+                
+                for agent in agents_to_repair:
+                    try:
+                        # Buscar prompt default en PostgreSQL
+                        cursor.execute("""
+                            SELECT template FROM default_prompts 
+                            WHERE company_id = %s AND agent_name = %s
+                        """, (company_id, agent))
+                        
+                        default_result = cursor.fetchone()
+                        
+                        if default_result:
+                            # Restaurar desde default_prompts
+                            template = default_result['template']
+                            action = "REPAIR_FROM_DEFAULT"
+                        else:
+                            # Usar hardcoded como fallback
+                            template = self._hardcoded_prompts.get(agent)
+                            action = "REPAIR_FROM_HARDCODED"
+                        
+                        if template:
+                            # Guardar como custom prompt
+                            cursor.execute("""
+                                INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (company_id, agent_name) 
+                                DO UPDATE SET 
+                                    template = EXCLUDED.template,
+                                    modified_by = EXCLUDED.modified_by,
+                                    modified_at = CURRENT_TIMESTAMP,
+                                    notes = EXCLUDED.notes,
+                                    is_active = true
+                            """, (company_id, agent, template, repair_user, repair_user, f"Repaired by {repair_user}"))
+                            
+                            self.repair_summary.append({
+                                "agent_name": agent,
+                                "action": action,
+                                "success": True,
+                                "message": f"Repaired from {'default_prompts' if default_result else 'hardcoded'}"
+                            })
+                        else:
+                            self.repair_summary.append({
+                                "agent_name": agent,
+                                "action": "REPAIR_FAILED",
+                                "success": False,
+                                "message": "No template found"
+                            })
+                            
+                    except Exception as agent_error:
+                        logger.error(f"Error repairing agent {agent}: {agent_error}")
+                        self.repair_summary.append({
+                            "agent_name": agent,
+                            "action": "REPAIR_ERROR",
+                            "success": False,
+                            "message": str(agent_error)
+                        })
+                
+                conn.commit()
+                
+                success_count = sum(1 for item in self.repair_summary if item['success'])
+                total_agents = len(self.repair_summary)
+                
+                logger.info(f"Repair completed: {success_count}/{total_agents} agents repaired for {company_id}")
+                
+                # ✅ AUTO-RECARGA DESPUÉS DE REPARAR (solo si hubo cambios exitosos)
+                if success_count > 0:
+                    self._auto_reload_after_prompt_change(company_id, "repair", agent_name)
+                
+                return success_count > 0
+                
+        except Exception as e:
+            logger.error(f"Error in repair operation: {e}")
+            conn.rollback()
+            # Fallback a reparación hardcoded
+            success = self._repair_from_hardcoded(company_id, agent_name, repair_user)
+            if success:
+                self._auto_reload_after_prompt_change(company_id, "repair_fallback", agent_name)
+            return success
+        finally:
+            conn.close()
+    
+    # ============================================================================
+    # MÉTODO MANUAL PARA RECARGA (SI SE NECESITA)
+    # ============================================================================
+    
+    def reload_orchestrator(self, company_id: str) -> bool:
+        """
+        Método público para recargar orchestrator manualmente
+        
+        Args:
+            company_id: ID de la empresa
+            
+        Returns:
+            bool: True si se recargó exitosamente
+        """
+        logger.info(f"🔄 [MANUAL-RELOAD] Manual orchestrator reload requested for {company_id}")
+        return self._reload_orchestrator_for_company(company_id)
+    
+    # ============================================================================
+    # MÉTODOS EXISTENTES SIN CAMBIOS
+    # ============================================================================
+    
     def get_last_fallback_info(self) -> dict:
         """Obtener información del último fallback usado"""
         return self._last_fallback_info
@@ -59,61 +383,7 @@ class PromptService:
         except Exception as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             return None
-
-
-
     
-    def _get_prompts_from_json_fallback(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
-        """Fallback a custom_prompts.json para compatibilidad temporal"""
-        try:
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            if not os.path.exists(custom_prompts_file):
-                return None
-            
-            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                custom_prompts = json.load(f)
-            
-            company_prompts = custom_prompts.get(company_id, {})
-            agents_data = {}
-            
-            for agent_name in agents:
-                agent_data = company_prompts.get(agent_name, {})
-                
-                if isinstance(agent_data, dict):
-                    # Priorizar template personalizado, luego default_template
-                    template = agent_data.get('template')
-                    if not template or template == "null":
-                        template = agent_data.get('default_template') or self._hardcoded_prompts.get(agent_name)
-                    
-                    agents_data[agent_name] = {
-                        "current_prompt": template,
-                        "is_custom": agent_data.get('is_custom', False),
-                        "last_modified": agent_data.get('modified_at'),
-                        "version": 1,
-                        "source": "json_file",
-                        "fallback_level": "json_compatibility"
-                    }
-                else:
-                    agents_data[agent_name] = {
-                        "current_prompt": self._hardcoded_prompts.get(agent_name, f"Default prompt for {agent_name}"),
-                        "is_custom": False,
-                        "last_modified": None,
-                        "version": 0,
-                        "source": "hardcoded",
-                        "fallback_level": "json_hardcoded"
-                    }
-            
-            return agents_data
-            
-        except Exception as e:
-            logger.error(f"Error reading JSON prompts: {e}")
-            return None
-
-
     def get_company_prompts(self, company_id: str, agents: List[str] = None) -> Optional[Dict[str, Dict]]:
         """
         Obtener prompts de una empresa con arquitectura separada
@@ -197,53 +467,7 @@ class PromptService:
         finally:
             conn.close()
     
-    def _get_prompts_from_postgresql(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
-        """Obtener prompts desde PostgreSQL usando función con fallback"""
-        conn = self.get_db_connection()
-        if not conn:
-            return None
-        
-        agents_data = {}
-        
-        try:
-            with conn.cursor() as cursor:
-                for agent_name in agents:
-                    # Usar función SQL con fallback automático
-                    cursor.execute("""
-                        SELECT template, source, is_custom, version, modified_at
-                        FROM get_prompt_with_fallback(%s, %s)
-                    """, (company_id, agent_name))
-                    
-                    result = cursor.fetchone()
-                    if result:
-                        agents_data[agent_name] = {
-                            "current_prompt": result['template'],
-                            "is_custom": result['is_custom'],
-                            "last_modified": result['modified_at'].isoformat() if result['modified_at'] else None,
-                            "version": result['version'],
-                            "source": result['source'],
-                            "fallback_level": "postgresql"
-                        }
-                    else:
-                        # Si la función no retorna nada, usar hardcoded
-                        agents_data[agent_name] = {
-                            "current_prompt": self._hardcoded_prompts.get(agent_name, f"Default prompt for {agent_name}"),
-                            "is_custom": False,
-                            "last_modified": None,
-                            "version": 0,
-                            "source": "hardcoded",
-                            "fallback_level": "postgresql_hardcoded"
-                        }
-            
-            return agents_data
-            
-        except Exception as e:
-            logger.error(f"Error querying PostgreSQL prompts: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    def _get_prompts_from_json(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
+    def _get_prompts_from_json_fallback(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
         """Fallback a custom_prompts.json para compatibilidad temporal"""
         try:
             custom_prompts_file = os.path.join(
@@ -264,6 +488,7 @@ class PromptService:
                 agent_data = company_prompts.get(agent_name, {})
                 
                 if isinstance(agent_data, dict):
+                    # Priorizar template personalizado, luego default_template
                     template = agent_data.get('template')
                     if not template or template == "null":
                         template = agent_data.get('default_template') or self._hardcoded_prompts.get(agent_name)
@@ -291,51 +516,6 @@ class PromptService:
         except Exception as e:
             logger.error(f"Error reading JSON prompts: {e}")
             return None
-    
-    def save_custom_prompt(self, company_id: str, agent_name: str, template: str, modified_by: str = "admin") -> bool:
-        """
-        Guardar prompt personalizado con versionado automático
-        
-        Args:
-            company_id: ID de la empresa
-            agent_name: Nombre del agente
-            template: Template del prompt
-            modified_by: Usuario que modifica
-            
-        Returns:
-            bool: True si se guardó exitosamente
-        """
-        conn = self.get_db_connection()
-        if not conn:
-            # Fallback a JSON si no hay PostgreSQL
-            return self._save_prompt_to_json(company_id, agent_name, template, modified_by)
-        
-        try:
-            with conn.cursor() as cursor:
-                # Usar UPSERT para insertar o actualizar
-                cursor.execute("""
-                    INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (company_id, agent_name) 
-                    DO UPDATE SET 
-                        template = EXCLUDED.template,
-                        modified_by = EXCLUDED.modified_by,
-                        modified_at = CURRENT_TIMESTAMP,
-                        notes = EXCLUDED.notes,
-                        is_active = true
-                """, (company_id, agent_name, template, modified_by, modified_by, f"Updated by {modified_by}"))
-                
-                conn.commit()
-                logger.info(f"Prompt saved for {company_id}/{agent_name} by {modified_by}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error saving prompt to PostgreSQL: {e}")
-            conn.rollback()
-            # Fallback a JSON
-            return self._save_prompt_to_json(company_id, agent_name, template, modified_by)
-        finally:
-            conn.close()
     
     def _save_prompt_to_json(self, company_id: str, agent_name: str, template: str, modified_by: str) -> bool:
         """Fallback para guardar en JSON"""
@@ -378,53 +558,6 @@ class PromptService:
             logger.error(f"Error saving prompt to JSON: {e}")
             return False
     
-    def restore_default_prompt(self, company_id: str, agent_name: str, modified_by: str = "admin") -> bool:
-        """
-        Restaurar prompt a default eliminando personalización
-        
-        Args:
-            company_id: ID de la empresa
-            agent_name: Nombre del agente
-            modified_by: Usuario que restaura
-            
-        Returns:
-            bool: True si se restauró exitosamente
-        """
-        conn = self.get_db_connection()
-        if not conn:
-            # Fallback a JSON
-            return self._restore_prompt_in_json(company_id, agent_name)
-        
-        try:
-            with conn.cursor() as cursor:
-                # Marcar como inactivo en lugar de eliminar (preservar historial)
-                cursor.execute("""
-                    UPDATE custom_prompts 
-                    SET is_active = false, 
-                        modified_by = %s, 
-                        modified_at = CURRENT_TIMESTAMP,
-                        notes = 'Restored to default'
-                    WHERE company_id = %s AND agent_name = %s
-                """, (modified_by, company_id, agent_name))
-                
-                rows_affected = cursor.rowcount
-                conn.commit()
-                
-                if rows_affected > 0:
-                    logger.info(f"Prompt restored to default for {company_id}/{agent_name}")
-                    return True
-                else:
-                    logger.info(f"No custom prompt found to restore for {company_id}/{agent_name}")
-                    return True  # Consideramos exitoso si no había nada que restaurar
-                
-        except Exception as e:
-            logger.error(f"Error restoring prompt in PostgreSQL: {e}")
-            conn.rollback()
-            # Fallback a JSON
-            return self._restore_prompt_in_json(company_id, agent_name)
-        finally:
-            conn.close()
-    
     def _restore_prompt_in_json(self, company_id: str, agent_name: str) -> bool:
         """Fallback para restaurar en JSON"""
         try:
@@ -458,63 +591,6 @@ class PromptService:
         except Exception as e:
             logger.error(f"Error restoring prompt in JSON: {e}")
             return False
-    
-    def repair_from_repository(self, company_id: str = None, agent_name: str = None, repair_user: str = "system_repair") -> bool:
-        """
-        Función REPARAR - Restaura prompts desde repositorio (default_prompts)
-        
-        Args:
-            company_id: ID de empresa (requerido)
-            agent_name: Agente específico (opcional, None = todos)
-            repair_user: Usuario que ejecuta la reparación
-            
-        Returns:
-            bool: True si la reparación fue exitosa
-        """
-        if not company_id:
-            logger.error("company_id is required for repair operation")
-            return False
-        
-        self.repair_summary = []
-        
-        conn = self.get_db_connection()
-        if not conn:
-            # Fallback: reparar desde hardcoded prompts
-            return self._repair_from_hardcoded(company_id, agent_name, repair_user)
-        
-        try:
-            with conn.cursor() as cursor:
-                # Usar la función SQL de reparación
-                cursor.execute("""
-                    SELECT agent_name, action, success, message
-                    FROM repair_prompts_from_repository(%s, %s, %s)
-                """, (company_id, agent_name, repair_user))
-                
-                results = cursor.fetchall()
-                conn.commit()
-                
-                # Procesar resultados
-                success_count = 0
-                for result in results:
-                    self.repair_summary.append({
-                        "agent_name": result['agent_name'],
-                        "action": result['action'],
-                        "success": result['success'],
-                        "message": result['message']
-                    })
-                    if result['success']:
-                        success_count += 1
-                
-                logger.info(f"Repair completed: {success_count}/{len(results)} agents repaired for {company_id}")
-                return len(results) > 0 and success_count > 0
-                
-        except Exception as e:
-            logger.error(f"Error in repair operation: {e}")
-            conn.rollback()
-            # Fallback a reparación hardcoded
-            return self._repair_from_hardcoded(company_id, agent_name, repair_user)
-        finally:
-            conn.close()
     
     def _repair_from_hardcoded(self, company_id: str, agent_name: str = None, repair_user: str = "system_repair") -> bool:
         """Fallback para reparar usando prompts hardcodeados"""
