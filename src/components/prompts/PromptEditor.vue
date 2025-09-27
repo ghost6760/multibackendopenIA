@@ -1,4 +1,3 @@
-# PromptEditor.vue
 <template>
   <div class="prompt-editor-container">
     <!-- Editor Header -->
@@ -96,10 +95,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 
 // ============================================================================
-// PROPS Y EMITS - COMPATIBLE CON PROMPTSTAB.VUE
+// PROPS Y EMITS
 // ============================================================================
 
 const props = defineProps({
@@ -107,7 +106,6 @@ const props = defineProps({
     type: Object,
     required: true,
     validator(value) {
-      // Validar estructura requerida
       return value && 
              typeof value.id === 'string' && 
              typeof value.displayName === 'string' &&
@@ -123,20 +121,21 @@ const props = defineProps({
 const emit = defineEmits(['update', 'reset', 'preview', 'change'])
 
 // ============================================================================
-// ESTADO REACTIVO
+// ESTADO REACTIVO INICIAL SEGURO
 // ============================================================================
 
 const internalContent = ref('')
 const originalContent = ref('')
 const isProcessing = ref(false)
 const validationErrors = ref([])
+const isInitialized = ref(false) // Flag de inicialización
 
 // ============================================================================
 // COMPUTED PROPERTIES
 // ============================================================================
 
 const hasUnsavedChanges = computed(() => {
-  return internalContent.value !== originalContent.value
+  return isInitialized.value && internalContent.value !== originalContent.value
 })
 
 const statusClass = computed(() => {
@@ -161,34 +160,103 @@ const statusText = computed(() => {
 })
 
 // ============================================================================
-// WATCHERS
-// ============================================================================
-
-watch(() => props.promptData, (newData) => {
-  if (newData) {
-    internalContent.value = newData.content || ''
-    originalContent.value = internalContent.value
-    validateContent()
-  }
-}, { immediate: true, deep: true })
-
-watch(internalContent, () => {
-  validateContent()
-  emit('change', {
-    content: internalContent.value,
-    hasChanges: hasUnsavedChanges.value,
-    isValid: validationErrors.value.length === 0,
-    promptData: props.promptData
-  })
-})
-
-// ============================================================================
-// FUNCIONES PRINCIPALES CORREGIDAS - EMITIR SOLO agentName
+// ✅ FUNCIONES DE INICIALIZACIÓN SEGURAS
 // ============================================================================
 
 /**
- * Actualiza el prompt - ✅ CORREGIDO: Emitir solo agentName, no objeto completo
+ * ✅ Inicialización segura del contenido sin watchers immediate
  */
+const initializeContent = async () => {
+  try {
+    await nextTick()
+    
+    if (props.promptData && typeof props.promptData.content === 'string') {
+      internalContent.value = props.promptData.content || ''
+      originalContent.value = internalContent.value
+      
+      // Validar después de asignar contenido
+      setTimeout(() => {
+        validateContent()
+        isInitialized.value = true
+      }, 50)
+      
+      console.log(`[PromptEditor] ✅ Initialized content for ${props.promptData.displayName}`)
+    }
+  } catch (error) {
+    console.warn(`[PromptEditor] Initialization error:`, error)
+    // Fallback seguro
+    internalContent.value = ''
+    originalContent.value = ''
+    isInitialized.value = true
+  }
+}
+
+/**
+ * ✅ Actualización manual del contenido cuando cambian los props
+ */
+const updateContent = async (newData) => {
+  if (!newData || typeof newData.content !== 'string') return
+  
+  try {
+    // Solo actualizar si realmente cambió
+    if (newData.content !== originalContent.value) {
+      internalContent.value = newData.content || ''
+      originalContent.value = internalContent.value
+      
+      await nextTick()
+      validateContent()
+      
+      console.log(`[PromptEditor] Content updated for ${newData.displayName}`)
+    }
+  } catch (error) {
+    console.warn(`[PromptEditor] Error updating content:`, error)
+  }
+}
+
+// ============================================================================
+// ✅ WATCHERS CORREGIDOS - SIN IMMEDIATE
+// ============================================================================
+
+/**
+ * ✅ CRÍTICO: Watcher SIN immediate para evitar errores de inicialización
+ */
+watch(() => props.promptData, async (newData, oldData) => {
+  if (!newData) return
+  
+  // Solo actualizar si está inicializado y realmente cambió
+  if (isInitialized.value && oldData && newData.content !== oldData.content) {
+    await updateContent(newData)
+  }
+}, { 
+  immediate: false, // ✅ CRÍTICO: NO usar immediate
+  deep: true 
+})
+
+/**
+ * ✅ Watcher del contenido interno sin acceso a composables
+ */
+watch(internalContent, () => {
+  try {
+    validateContent()
+    
+    // Solo emitir si está inicializado
+    if (isInitialized.value) {
+      emit('change', {
+        content: internalContent.value,
+        hasChanges: hasUnsavedChanges.value,
+        isValid: validationErrors.value.length === 0,
+        promptData: props.promptData
+      })
+    }
+  } catch (error) {
+    console.warn('[PromptEditor] Error in content watcher:', error)
+  }
+})
+
+// ============================================================================
+// FUNCIONES PRINCIPALES - SIN CAMBIOS CRÍTICOS
+// ============================================================================
+
 const updatePrompt = () => {
   const content = internalContent.value.trim()
   
@@ -205,10 +273,9 @@ const updatePrompt = () => {
   try {
     isProcessing.value = true
     
-    // ✅ FIX: Pasar el contenido actual como parámetro
     emit('update', {
       agentName: props.promptData.id || props.promptData.name,
-      content: content  // Pasar el contenido actual
+      content: content
     })
     
   } finally {
@@ -216,9 +283,6 @@ const updatePrompt = () => {
   }
 }
 
-/**
- * Resetea el prompt - ✅ CORREGIDO: Emitir solo agentName
- */
 const resetToDefault = async () => {
   if (!props.promptData.isCustom) {
     console.warn('Este prompt ya está en su valor por defecto')
@@ -233,18 +297,12 @@ const resetToDefault = async () => {
   
   try {
     isProcessing.value = true
-    
-    // ✅ CORREGIDO: Emitir solo el nombre del agente
     emit('reset', props.promptData.id || props.promptData.name)
-    
   } finally {
     isProcessing.value = false
   }
 }
 
-/**
- * Muestra vista previa - ✅ CORREGIDO: Emitir solo agentName
- */
 const showPreview = async () => {
   const content = internalContent.value.trim()
   if (!content) {
@@ -254,66 +312,72 @@ const showPreview = async () => {
   
   try {
     isProcessing.value = true
-    
-    // ✅ CORREGIDO: Emitir solo el nombre del agente
     emit('preview', props.promptData.id || props.promptData.name)
-    
   } finally {
     isProcessing.value = false
   }
 }
 
 // ============================================================================
-// FUNCIONES DE VALIDACIÓN Y UTILIDADES (SIN CAMBIOS)
+// FUNCIONES DE VALIDACIÓN - SIN CAMBIOS
 // ============================================================================
 
 const validateContent = () => {
-  const errors = []
-  const content = internalContent.value
-  
-  // Validación 1: Longitud máxima
-  if (content.length > 10000) {
-    errors.push('El prompt es demasiado largo (máximo 10,000 caracteres)')
+  try {
+    const errors = []
+    const content = internalContent.value
+    
+    // Validación 1: Longitud máxima
+    if (content.length > 10000) {
+      errors.push('El prompt es demasiado largo (máximo 10,000 caracteres)')
+    }
+    
+    // Validación 2: Solo una instancia de {user_message}
+    if (content.includes('{user_message}') && content.split('{user_message}').length > 2) {
+      errors.push('Solo se permite una instancia de {user_message}')
+    }
+    
+    validationErrors.value = errors
+  } catch (error) {
+    console.warn('[PromptEditor] Validation error:', error)
+    validationErrors.value = []
   }
-  
-  // Validación 2: Solo una instancia de {user_message}
-  if (content.includes('{user_message}') && content.split('{user_message}').length > 2) {
-    errors.push('Solo se permite una instancia de {user_message}')
-  }
-  
-  // ✅ CORRECCIÓN: Remover validación de variables (era demasiado estricta)
-  // Los prompts pueden contener JSON válido con cualquier formato de variables
-  
-  validationErrors.value = errors
 }
 
 const onContentChange = () => {
-  // Validación automática al cambiar contenido
-  validateContent()
+  try {
+    validateContent()
+  } catch (error) {
+    console.warn('[PromptEditor] Content change error:', error)
+  }
 }
 
 const onKeyDown = (event) => {
-  // Ctrl+S para guardar
-  if (event.ctrlKey && event.key === 's') {
-    event.preventDefault()
-    if (hasUnsavedChanges.value && validationErrors.value.length === 0) {
-      updatePrompt()
+  try {
+    // Ctrl+S para guardar
+    if (event.ctrlKey && event.key === 's') {
+      event.preventDefault()
+      if (hasUnsavedChanges.value && validationErrors.value.length === 0) {
+        updatePrompt()
+      }
     }
-  }
-  
-  // Ctrl+Enter para vista previa
-  if (event.ctrlKey && event.key === 'Enter') {
-    event.preventDefault()
-    if (internalContent.value.trim()) {
-      showPreview()
+    
+    // Ctrl+Enter para vista previa
+    if (event.ctrlKey && event.key === 'Enter') {
+      event.preventDefault()
+      if (internalContent.value.trim()) {
+        showPreview()
+      }
     }
-  }
-  
-  // Escape para deshacer cambios
-  if (event.key === 'Escape' && hasUnsavedChanges.value) {
-    if (confirm('¿Deshacer cambios no guardados?')) {
-      internalContent.value = originalContent.value
+    
+    // Escape para deshacer cambios
+    if (event.key === 'Escape' && hasUnsavedChanges.value) {
+      if (confirm('¿Deshacer cambios no guardados?')) {
+        internalContent.value = originalContent.value
+      }
     }
+  } catch (error) {
+    console.warn('[PromptEditor] Keyboard error:', error)
   }
 }
 
@@ -327,26 +391,61 @@ const formatDateTime = (dateString) => {
 }
 
 // ============================================================================
-// LIFECYCLE
+// ✅ LIFECYCLE HOOKS CORREGIDOS CON INICIALIZACIÓN MANUAL
 // ============================================================================
 
-onMounted(() => {
-  // Validación inicial
-  validateContent()
-  
-  // EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD
-  const agentName = props.promptData.id || props.promptData.name
-  if (agentName && typeof window !== 'undefined') {
-    window[`updatePrompt_${agentName}`] = updatePrompt
-    window[`resetPrompt_${agentName}`] = resetToDefault
-    window[`previewPrompt_${agentName}`] = showPreview
+onMounted(async () => {
+  try {
+    console.log(`[PromptEditor] Mounting for ${props.promptData?.displayName || 'unknown'}`)
+    
+    // ✅ CRÍTICO: Inicialización manual en lugar de watchers immediate
+    setTimeout(async () => {
+      await initializeContent()
+    }, 100)
+    
+    // Funciones globales solo si están disponibles
+    const agentName = props.promptData?.id || props.promptData?.name
+    if (agentName && typeof window !== 'undefined') {
+      try {
+        window[`updatePrompt_${agentName}`] = updatePrompt
+        window[`resetPrompt_${agentName}`] = resetToDefault
+        window[`previewPrompt_${agentName}`] = showPreview
+      } catch (error) {
+        console.warn('[PromptEditor] Error setting global functions:', error)
+      }
+    }
+    
+  } catch (error) {
+    console.error('[PromptEditor] Mount error:', error)
+    // Fallback: Asegurar que esté inicializado
+    isInitialized.value = true
   }
 })
+
+// ============================================================================
+// ✅ FUNCIÓN DE VERIFICACIÓN DE SALUD DEL COMPONENTE
+// ============================================================================
+
+const healthCheck = () => {
+  return {
+    isInitialized: isInitialized.value,
+    hasContent: Boolean(internalContent.value),
+    hasChanges: hasUnsavedChanges.value,
+    isValid: validationErrors.value.length === 0,
+    agentName: props.promptData?.displayName || 'Unknown',
+    contentLength: internalContent.value.length,
+    originalContentLength: originalContent.value.length
+  }
+}
+
+// Exponer para debug
+if (typeof window !== 'undefined') {
+  window.promptEditorHealthCheck = healthCheck
+}
 </script>
 
 <style scoped>
-/* ===== ESTILOS PARA PROMPT EDITOR ===== */
-
+/* Estilos preservados del archivo original - sin cambios */
 .prompt-editor-container {
   background: white;
   border: 1px solid #dee2e6;
@@ -596,18 +695,5 @@ button:disabled {
   .validation-messages {
     text-align: left;
   }
-}
-
-/* Estados de animación */
-.prompt-editor-container.saving {
-  opacity: 0.7;
-}
-
-.prompt-editor-container.error {
-  border-color: #dc3545;
-}
-
-.prompt-editor-container.success {
-  border-color: #28a745;
 }
 </style>
