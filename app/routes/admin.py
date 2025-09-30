@@ -1177,7 +1177,7 @@ def create_new_company_enterprise():
             vectorstore_status = f"failed: {str(e)}"
         
         # 4. VERIFICAR SISTEMA DE PROMPTS (NO CREAR PROMPTS CUSTOM)
-        prompt_status = "system_ready"
+        prompt_status = "not_initialized"
         try:
             from app.services.prompt_service import get_prompt_service
             prompt_service = get_prompt_service()
@@ -1186,27 +1186,44 @@ def create_new_company_enterprise():
             db_status = prompt_service.get_db_status()
             if not db_status.get('postgresql_available', False):
                 logger.warning(f"PostgreSQL not available for {company_id}, will use fallback prompts")
-            
-            # Verificar que puede obtener prompts para la empresa (usa fallbacks automáticos)
-            test_agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
-            agents_data = prompt_service.get_company_prompts(company_id)
-            
-            if agents_data:
-                # Contar qué tipos de prompts está usando
-                sources = {}
-                for agent_name, agent_info in agents_data.items():
-                    source = agent_info.get('source', 'unknown')
-                    sources[source] = sources.get(source, 0) + 1
-                
-                prompt_status = f"verified ({len(agents_data)} agents using sources: {sources})"
-                logger.info(f"✅ Prompt system ready for {company_id}: {prompt_status}")
+                prompt_status = "fallback_mode (no PostgreSQL)"
             else:
-                prompt_status = "fallback_mode (using hardcoded prompts)"
-                logger.warning(f"⚠️ Prompt system in fallback mode for {company_id}")
+                # 🆕 NUEVO: Inicializar prompts default para la empresa
+                logger.info(f"🔄 [{company_id}] Initializing default prompts in PostgreSQL...")
+                
+                # Convertir a legacy config para obtener los parámetros necesarios
+                legacy_config = enterprise_config.to_legacy_config()
+                
+                prompt_init_stats = prompt_service.initialize_default_prompts_for_company(
+                    company_id=company_id,
+                    company_config=legacy_config
+                )
+                
+                if prompt_init_stats.get("success"):
+                    prompts_created = prompt_init_stats.get("prompts_created", 0)
+                    agents_list = ", ".join(prompt_init_stats.get("agents_initialized", []))
+                    prompt_status = f"initialized ({prompts_created} agents: {agents_list})"
+                    logger.info(f"✅ [{company_id}] Default prompts initialized successfully")
+                else:
+                    errors = prompt_init_stats.get("errors", [])
+                    prompt_status = f"partial_failure (errors: {len(errors)})"
+                    logger.error(f"❌ [{company_id}] Failed to initialize prompts: {errors}")
+                
+                # Verificar que los prompts están disponibles
+                agents_data = prompt_service.get_company_prompts(company_id)
+                if agents_data:
+                    sources = {}
+                    for agent_name, agent_info in agents_data.items():
+                        source = agent_info.get('source', 'unknown')
+                        sources[source] = sources.get(source, 0) + 1
+                    
+                    logger.info(f"✅ [{company_id}] Prompts verified - sources: {sources}")
+                else:
+                    logger.warning(f"⚠️ [{company_id}] No prompts found after initialization")
             
         except Exception as e:
-            logger.error(f"Error verifying prompt system for {company_id}: {e}")
-            prompt_status = f"error: {str(e)} (will use hardcoded fallbacks)"
+            logger.error(f"Error initializing prompts for {company_id}: {e}")
+            prompt_status = f"error: {str(e)}"
 
         # 5. AGREGAR AL COMPANY MANAGER LEGACY PRIMERO (PARA COMPATIBILIDAD)
         company_manager_status = "not_added"
