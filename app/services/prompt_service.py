@@ -731,6 +731,151 @@ class PromptService:
             conn.close()
 
 
+
+    # Agregar al final de la clase PromptService en app/services/prompt_service.py
+    
+    def initialize_default_prompts_for_company(self, company_id: str, company_config=None) -> Dict[str, Any]:
+        """
+        Inicializar prompts default para una nueva empresa usando los métodos existentes de cada agente
+        ✅ Usa _create_default_prompt_template() que ya existe en cada agente
+        ✅ NO duplica código ni lógica
+        
+        Args:
+            company_id: ID de la empresa
+            company_config: CompanyConfig object (opcional, se obtiene si no se provee)
+        
+        Returns:
+            Dict con estadísticas de inicialización
+        """
+        stats = {
+            "company_id": company_id,
+            "prompts_created": 0,
+            "agents_initialized": [],
+            "errors": [],
+            "success": False
+        }
+        
+        conn = self.get_db_connection()
+        if not conn:
+            stats["errors"].append("No database connection available")
+            logger.error(f"❌ [{company_id}] Cannot initialize prompts - No DB connection")
+            return stats
+        
+        try:
+            # 1. Obtener configuración de la empresa si no se provee
+            if company_config is None:
+                from app.config.company_config import get_company_manager
+                company_manager = get_company_manager()
+                company_config = company_manager.get_company_config(company_id)
+                
+                if not company_config:
+                    stats["errors"].append(f"Company config not found for {company_id}")
+                    logger.error(f"❌ [{company_id}] Cannot find company config")
+                    return stats
+            
+            # 2. Obtener OpenAI service (necesario para instanciar agentes)
+            from app.services.openai_service import OpenAIService
+            openai_service = OpenAIService()
+            
+            # 3. Importar clases de agentes
+            from app.agents.router_agent import RouterAgent
+            from app.agents.sales_agent import SalesAgent
+            from app.agents.support_agent import SupportAgent
+            from app.agents.emergency_agent import EmergencyAgent
+            from app.agents.schedule_agent import ScheduleAgent
+            from app.agents.availability_agent import AvailabilityAgent
+            
+            # 4. Mapeo de agentes
+            agent_classes = {
+                "router_agent": RouterAgent,
+                "sales_agent": SalesAgent,
+                "support_agent": SupportAgent,
+                "emergency_agent": EmergencyAgent,
+                "schedule_agent": ScheduleAgent,
+                "availability_agent": AvailabilityAgent
+            }
+            
+            logger.info(f"🔄 [{company_id}] Initializing {len(agent_classes)} default prompts using agent methods...")
+            
+            with conn.cursor() as cursor:
+                for agent_name, agent_class in agent_classes.items():
+                    try:
+                        # ✅ Instanciar temporalmente el agente (ligero, solo para obtener prompt)
+                        temp_agent = agent_class(company_config, openai_service)
+                        
+                        # ✅ Llamar al método que YA EXISTE en el agente
+                        prompt_template = temp_agent._create_default_prompt_template()
+                        
+                        # ✅ Extraer el contenido del system message
+                        # El ChatPromptTemplate tiene una estructura: messages[0] = system message
+                        system_message = prompt_template.messages[0]
+                        
+                        # Obtener el template string del system message
+                        if hasattr(system_message, 'prompt'):
+                            # Es un SystemMessagePromptTemplate
+                            prompt_string = system_message.prompt.template
+                        elif hasattr(system_message, 'content'):
+                            # Es un mensaje directo
+                            prompt_string = system_message.content
+                        else:
+                            # Fallback: convertir a string
+                            prompt_string = str(system_message)
+                        
+                        # ✅ Insertar en default_prompts
+                        cursor.execute("""
+                            INSERT INTO default_prompts (
+                                company_id, 
+                                agent_name, 
+                                template, 
+                                description,
+                                category,
+                                created_at,
+                                updated_at
+                            )
+                            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            ON CONFLICT (company_id, agent_name) DO UPDATE SET
+                                template = EXCLUDED.template,
+                                updated_at = CURRENT_TIMESTAMP,
+                                description = EXCLUDED.description
+                        """, (
+                            company_id,
+                            agent_name,
+                            prompt_string,
+                            f"Default prompt for {agent_name} - Extracted from agent class",
+                            "default"
+                        ))
+                        
+                        stats["prompts_created"] += 1
+                        stats["agents_initialized"].append(agent_name)
+                        logger.info(f"✅ [{company_id}] Initialized {agent_name} (length: {len(prompt_string)})")
+                        
+                        # Limpiar referencia temporal
+                        del temp_agent
+                        
+                    except Exception as e:
+                        error_msg = f"Error initializing {agent_name}: {str(e)}"
+                        stats["errors"].append(error_msg)
+                        logger.error(f"❌ [{company_id}] {error_msg}")
+                
+                conn.commit()
+                
+                if stats["prompts_created"] > 0:
+                    stats["success"] = True
+                    logger.info(f"🎉 [{company_id}] Successfully initialized {stats['prompts_created']}/{len(agent_classes)} prompts")
+                else:
+                    logger.warning(f"⚠️ [{company_id}] No prompts were initialized")
+            
+        except Exception as e:
+            error_msg = f"Critical error initializing prompts: {str(e)}"
+            stats["errors"].append(error_msg)
+            logger.error(f"💥 [{company_id}] {error_msg}")
+            if 'conn' in locals():
+                conn.rollback()
+        finally:
+            if 'conn' in locals():
+                conn.close()
+        
+        return stats
 # ============================================================================
 # FACTORY FUNCTION
 # ============================================================================
