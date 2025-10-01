@@ -365,35 +365,6 @@ Sistema: {self.integration_type.replace('_', ' ').title()}"""
         else:
             return f"{base_url}/health"  # Generic REST
     
-    def _process_schedule_request(self, inputs):
-        """Procesar solicitud de agendamiento con lógica específica de empresa y RAG"""
-        try:
-            question = inputs.get("question", "")
-            user_id = inputs.get("user_id", "default_user")
-            chat_history = inputs.get("chat_history", [])
-            schedule_context = inputs.get("schedule_context", "")
-            required_fields = inputs.get("required_fields", [])
-            
-            self._log_agent_activity("processing_schedule", {
-                "question": question[:50],
-                "rag_enabled": self.vectorstore_service is not None,
-                "integration_type": self.integration_type
-            })
-            
-            # Verificar si es una consulta de disponibilidad
-            if self._is_availability_check(question):
-                return self._handle_availability_check(question, chat_history, schedule_context)
-            
-            # Verificar si es agendamiento completo
-            if self._should_use_schedule_api(question, chat_history):
-                return self._handle_api_scheduling(question, user_id, chat_history, required_fields)
-            
-            # Respuesta base para solicitudes de agendamiento con contexto RAG
-            return self._generate_base_schedule_response(question, inputs, schedule_context, required_fields)
-            
-        except Exception as e:
-            logger.error(f"Error in schedule processing for {self.company_config.company_name}: {e}")
-            return f"Error procesando tu solicitud de agenda en {self.company_config.company_name}. Te conectaré con un especialista... 📋"
     
     def _is_availability_check(self, question: str) -> bool:
         """Verificar si solo consulta disponibilidad"""
