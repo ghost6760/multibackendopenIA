@@ -10,6 +10,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
+
 class ScheduleAgent(BaseAgent):
     """Agente de agendamiento multi-tenant con integración de calendarios y RAG"""
     
