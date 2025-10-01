@@ -51,13 +51,100 @@ class ScheduleAgent(BaseAgent):
             return 'webhook'
         else:
             return 'generic_rest'
-    
+    ###
     def _create_chain(self):
-        """Crear cadena de agendamiento con RAG opcional"""
+        """Crear cadena híbrida: RAG + LLM + Herramientas opcionales"""
+        
+        def hybrid_schedule_processor(inputs):
+            """Procesa: RAG → LLM → Herramientas"""
+            question = inputs.get("question", "")
+            chat_history = inputs.get("chat_history", [])
+            user_id = inputs.get("user_id", "default_user")
+            
+            # ✅ PASO 1: Preparar contexto (incluyendo RAG)
+            llm_inputs = {
+                "schedule_status": inputs.get("schedule_status"),      # Ya procesado
+                "schedule_context": inputs.get("schedule_context"),    # Ya incluye RAG
+                "required_fields": inputs.get("required_fields"),      # Ya procesado
+                "question": question,
+                "chat_history": chat_history,
+                "company_name": inputs.get("company_name"),
+                "services": inputs.get("services")
+            }
+            
+            self._log_agent_activity("processing_schedule", {
+                "question": question[:50],
+                "rag_enabled": self.vectorstore_service is not None,
+                "integration_type": self.integration_type
+            })
+            
+            # ✅ PASO 2: LLM genera respuesta (usa prompt_template con RAG)
+            try:
+                llm_response = (self.prompt_template | self.llm).invoke(llm_inputs)
+                base_response = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+            except Exception as e:
+                logger.error(f"Error invoking LLM: {e}")
+                # Fallback a respuesta base
+                return self._generate_base_schedule_response(question, inputs, 
+                                                             inputs.get("schedule_context", ""),
+                                                             inputs.get("required_fields", []))
+            
+            # ✅ PASO 3: Complementar con herramientas programáticas si es necesario
+            
+            # Caso 1: Consulta de disponibilidad
+            if self._is_availability_check(question):
+                date = self._extract_date_from_question(question, chat_history)
+                treatment = self._extract_treatment_from_question(question)
+                
+                if date and treatment:
+                    try:
+                        treatment_config = self._get_treatment_configuration(treatment)
+                        availability = self._call_check_availability(date, treatment)
+                        
+                        if availability and availability.get("available_slots"):
+                            filtered_slots = self._filter_slots_by_configuration(
+                                availability["available_slots"],
+                                treatment_config
+                            )
+                            
+                            if filtered_slots:
+                                slots_formatted = self._format_slots_response(
+                                    filtered_slots, date, treatment_config
+                                )
+                                # Combinar respuesta del LLM con datos reales
+                                return f"{base_response}\n\n{slots_formatted}"
+                    except Exception as e:
+                        logger.error(f"Error checking availability: {e}")
+            
+            # Caso 2: Agendamiento completo con API
+            elif self._should_use_schedule_api(question, chat_history):
+                try:
+                    patient_info = self._validate_required_information(
+                        chat_history, 
+                        inputs.get("required_fields", [])
+                    )
+                    
+                    if patient_info['complete']:
+                        booking_result = self._call_booking_api(
+                            question, user_id, chat_history, patient_info['data']
+                        )
+                        
+                        if booking_result.get('success'):
+                            success_msg = self._format_booking_success(booking_result)
+                            return f"{base_response}\n\n{success_msg}"
+                        elif booking_result.get('requires_more_info'):
+                            return f"{base_response}\n\n{booking_result.get('response', '')}"
+                except Exception as e:
+                    logger.error(f"Error in API scheduling: {e}")
+            
+            # Caso 3: Solo respuesta del LLM (con RAG incluido en el contexto)
+            return base_response
+        
+        # ✅ Mantener la preparación de inputs (incluyendo RAG)
         self.chain = (
             {
-                "schedule_status": self._get_schedule_status,
-                "schedule_context": self._get_schedule_context,
+                "schedule_status": self._get_schedule_status,      # Prepara estado
+                "schedule_context": self._get_schedule_context,    # Prepara RAG
                 "required_fields": self._get_required_booking_fields,
                 "question": lambda x: x.get("question", ""),
                 "chat_history": lambda x: x.get("chat_history", []),
@@ -65,9 +152,15 @@ class ScheduleAgent(BaseAgent):
                 "company_name": lambda x: self.company_config.company_name,
                 "services": lambda x: self.company_config.services
             }
-            | RunnableLambda(self._process_schedule_request)
+            | RunnableLambda(hybrid_schedule_processor)  # Ahora SÍ usa LLM
         )
-
+    ###
+    def _format_required_fields(self, inputs):
+        """Formatear campos como texto"""
+        fields = self._get_required_booking_fields(inputs)
+        if isinstance(fields, list):
+            return "\n".join([f"• {field}" for field in fields])
+        return str(fields)
     ###
     def _create_default_prompt_template(self):
         """
