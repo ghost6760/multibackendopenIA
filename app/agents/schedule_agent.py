@@ -66,10 +66,45 @@ class ScheduleAgent(BaseAgent):
             }
             | RunnableLambda(self._process_schedule_request)
         )
-    
+
+    ###
     def _create_default_prompt_template(self):
-        """Template por defecto para agendamiento"""
-        pass
+        """
+        Template por defecto para agendamiento - mantiene compatibilidad con lógica actual
+        Este template se guarda en default_prompts pero el agente usa _process_schedule_request()
+        """
+        return f"""Especialista en agendamiento de {self.company_config.company_name}.
+    
+    OBJETIVO: Ayudar a los usuarios a programar, consultar y gestionar citas para los servicios de la empresa.
+    
+    SERVICIOS DISPONIBLES: {self.company_config.services}
+    
+    INFORMACIÓN DEL SISTEMA:
+    {{schedule_status}}
+    
+    CONTEXTO DE AGENDAMIENTO:
+    {{schedule_context}}
+    
+    CAMPOS REQUERIDOS PARA AGENDAR:
+    {{required_fields}}
+    
+    INSTRUCCIONES:
+    1. Si el usuario consulta disponibilidad, proporciona horarios disponibles
+    2. Si el usuario quiere agendar, solicita la información requerida de forma amigable
+    3. Usa el contexto de agendamiento para proporcionar información específica sobre duraciones, preparaciones y requisitos
+    4. Sé profesional pero cálido en tus respuestas
+    5. Si hay información adicional en el contexto (abonos, recomendaciones), menciónala apropiadamente
+    
+    TONO: Profesional, organizado, servicial y claro.
+    LONGITUD: Máximo 4-5 oraciones, a menos que se requiera información detallada.
+    
+    HISTORIAL DE CONVERSACIÓN:
+    {{chat_history}}
+    
+    CONSULTA DEL USUARIO: {{question}}
+    
+    Responde de manera clara y organizada, priorizando la experiencia del usuario."""
+
     
     def _get_schedule_status(self, inputs):
         """Obtener estado del servicio de agendamiento específico de la empresa"""
