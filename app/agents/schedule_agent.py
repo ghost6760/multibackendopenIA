@@ -70,10 +70,13 @@ class ScheduleAgent(BaseAgent):
     ###
     def _create_default_prompt_template(self):
         """
-        Template por defecto para agendamiento - mantiene compatibilidad con lógica actual
-        Este template se guarda en default_prompts pero el agente usa _process_schedule_request()
+        Template por defecto para agendamiento.
+        
+        NOTA: Este prompt se guarda en default_prompts pero el ScheduleAgent
+        actualmente usa _process_schedule_request() para su lógica.
+        Se mantiene este formato para compatibilidad con el sistema.
         """
-        return f"""Especialista en agendamiento de {self.company_config.company_name}.
+        template = f"""Especialista en agendamiento de {self.company_config.company_name}.
     
     OBJETIVO: Ayudar a los usuarios a programar, consultar y gestionar citas para los servicios de la empresa.
     
@@ -104,6 +107,11 @@ class ScheduleAgent(BaseAgent):
     CONSULTA DEL USUARIO: {{question}}
     
     Responde de manera clara y organizada, priorizando la experiencia del usuario."""
+    
+        return ChatPromptTemplate.from_messages([
+            ("system", template),
+            ("human", "{question}")
+        ])
 
     
     def _get_schedule_status(self, inputs):
