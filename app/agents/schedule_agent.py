@@ -80,7 +80,7 @@ class ScheduleAgent(BaseAgent):
             
             # ✅ PASO 2: LLM genera respuesta (usa prompt_template con RAG)
             try:
-                llm_response = (self.prompt_template | self.llm).invoke(llm_inputs)
+                llm_response = (self.prompt_template | self.chat_model).invoke(llm_inputs)
                 base_response = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
             except Exception as e:
                 logger.error(f"Error invoking LLM: {e}")
