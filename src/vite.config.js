@@ -23,6 +23,14 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true, // Para acceso desde contenedores
+    
+    // 🆕 Headers para permitir embedding en iframe
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    },
+    
     proxy: {
       // Proxy para las APIs del backend Flask
       '/api': {
