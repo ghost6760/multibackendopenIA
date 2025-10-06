@@ -223,27 +223,37 @@ def create_app(config_class=Config):
     @app.route('/packs/js/sdk.js')
     def serve_sdk_js():
         """Servir el archivo sdk.js con CORS y content-type correcto."""
-        # Ruta esperada dentro de STATIC_DIR: STATIC_DIR/packs/js/sdk.js
-        sdk_rel_path = os.path.join('packs', 'js', 'sdk.js')
-        sdk_abs_path = os.path.join(STATIC_DIR, 'packs', 'js', 'sdk.js')
-
-        logger.info(f"📡 Request for sdk.js -> check: {sdk_abs_path}, exists: {os.path.exists(sdk_abs_path)}")
-        if not os.path.exists(sdk_abs_path):
-            # Debug: si no existe, devolver info para troubleshooting (200/404 opcional)
-            logger.error(f"❌ sdk.js not found at {sdk_abs_path}")
-            return jsonify({
-                "error": "sdk.js not found",
-                "expected_path": sdk_abs_path,
-                "static_dir": STATIC_DIR,
-                "files": os.listdir(os.path.join(STATIC_DIR, 'packs')) if os.path.exists(os.path.join(STATIC_DIR, 'packs')) else []
-            }), 404
-
-        # Servir archivo con content-type correcto
+        sdk_path = os.path.join(STATIC_DIR, 'packs', 'js', 'sdk.js')
+        
+        # Si no existe, crear el directorio y archivo
+        if not os.path.exists(sdk_path):
+            logger.warning(f"sdk.js not found at {sdk_path}, creating it...")
+            os.makedirs(os.path.dirname(sdk_path), exist_ok=True)
+            
+            sdk_content = '''(function(){
+      if (window.chatwootSDK) return;
+      window.chatwootSDK = {
+        run: function(opts){
+          console.log('[sdk] run', opts);
+          window.chatwootSDK._lastRun = opts || {};
+          setTimeout(() => window.dispatchEvent(new Event('chatwoot:ready')), 100);
+        },
+        getUrl: function(){ 
+          return (window.chatwootSDK._lastRun && window.chatwootSDK._lastRun.baseUrl) || window.location.origin;
+        }
+      };
+    })();'''
+            
+            with open(sdk_path, 'w') as f:
+                f.write(sdk_content)
+            
+            logger.info(f"✅ Created sdk.js at {sdk_path}")
+        
+        # Servir archivo
         try:
-            resp = make_response(send_from_directory(os.path.join(STATIC_DIR, 'packs', 'js'), 'sdk.js'))
+            resp = make_response(send_file(sdk_path, mimetype='application/javascript'))
             resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
-
-            # CORS: permitir solamente orígenes permitidos (puedes ajustar)
+            
             origin = request.headers.get('Origin')
             allowed_origins = {
                 "https://chatwootultimate-production.up.railway.app",
@@ -254,16 +264,11 @@ def create_app(config_class=Config):
             if origin in allowed_origins:
                 resp.headers['Access-Control-Allow-Origin'] = origin
                 resp.headers['Access-Control-Allow-Credentials'] = 'true'
-                resp.headers['Vary'] = 'Origin'
-            else:
-                # Para pruebas temporales, podrías usar '*' pero no se recomienda en prod
-                # resp.headers['Access-Control-Allow-Origin'] = '*'
-                pass
-
+            
             return resp
         except Exception as e:
             logger.exception(f"Error serving sdk.js: {e}")
-            return jsonify({"error": "Could not serve sdk.js", "detail": str(e)}), 500
+            return jsonify({"error": str(e)}), 500
 
     # ============================================================================  
     # ENDPOINTS PRINCIPALES DEL SISTEMA  
