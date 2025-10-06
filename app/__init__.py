@@ -58,13 +58,28 @@ def create_app(config_class=Config):
     # Middleware para permitir embedding en iframe
     @app.after_request
     def add_security_headers(response):
-        # Permitir embedding en Chatwoot
-        response.headers['Content-Security-Policy'] = (
-            "frame-ancestors 'self' "
-            "https://chatwoottultimate-production.up.railway.app "
+        # CSP: permitir self y el panel de administración (corrige typo)
+        allowed_frame_ancestors = [
+            "'self'",
+            "https://chatwootultimate-production.up.railway.app",
             "http://localhost:3000"
-        )
-        # NO agregar X-Frame-Options si usas CSP frame-ancestors
+        ]
+        response.headers['Content-Security-Policy'] = "frame-ancestors " + " ".join(allowed_frame_ancestors)
+
+        # Añadir cabeceras CORS básicas para assets estáticos (se puede ampliar por ruta)
+        # Nota: flask_cors ya maneja CORS para rutas registradas; esto es un refuerzo para assets
+        if 'Access-Control-Allow-Origin' not in response.headers:
+            # Si la petición origin está en la lista permitida, úsala; si no, no añadir o usar fallback
+            origin = request.headers.get('Origin')
+            allowed_origins = {
+                "https://chatwootultimate-production.up.railway.app",
+                "https://multibackendopenia-production.up.railway.app",
+                "http://localhost:3000",
+                "http://localhost:5173"
+            }
+            if origin in allowed_origins:
+                response.headers['Access-Control-Allow-Origin'] = origin
+                response.headers['Access-Control-Allow-Credentials'] = 'true'
         return response
     
     # =============================
@@ -199,7 +214,57 @@ def create_app(config_class=Config):
     
     # Registrar manejadores de errores
     register_error_handlers(app)
-    
+
+
+
+    # ================================================================
+    # SERVIR SDK (packs/js/sdk.js) - ruta explícita para evitar fallback SPA
+    # ================================================================
+    @app.route('/packs/js/sdk.js')
+    def serve_sdk_js():
+        """Servir el archivo sdk.js con CORS y content-type correcto."""
+        # Ruta esperada dentro de STATIC_DIR: STATIC_DIR/packs/js/sdk.js
+        sdk_rel_path = os.path.join('packs', 'js', 'sdk.js')
+        sdk_abs_path = os.path.join(STATIC_DIR, 'packs', 'js', 'sdk.js')
+
+        logger.info(f"📡 Request for sdk.js -> check: {sdk_abs_path}, exists: {os.path.exists(sdk_abs_path)}")
+        if not os.path.exists(sdk_abs_path):
+            # Debug: si no existe, devolver info para troubleshooting (200/404 opcional)
+            logger.error(f"❌ sdk.js not found at {sdk_abs_path}")
+            return jsonify({
+                "error": "sdk.js not found",
+                "expected_path": sdk_abs_path,
+                "static_dir": STATIC_DIR,
+                "files": os.listdir(os.path.join(STATIC_DIR, 'packs')) if os.path.exists(os.path.join(STATIC_DIR, 'packs')) else []
+            }), 404
+
+        # Servir archivo con content-type correcto
+        try:
+            resp = make_response(send_from_directory(os.path.join(STATIC_DIR, 'packs', 'js'), 'sdk.js'))
+            resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+
+            # CORS: permitir solamente orígenes permitidos (puedes ajustar)
+            origin = request.headers.get('Origin')
+            allowed_origins = {
+                "https://chatwootultimate-production.up.railway.app",
+                "https://multibackendopenia-production.up.railway.app",
+                "http://localhost:3000",
+                "http://localhost:5173"
+            }
+            if origin in allowed_origins:
+                resp.headers['Access-Control-Allow-Origin'] = origin
+                resp.headers['Access-Control-Allow-Credentials'] = 'true'
+                resp.headers['Vary'] = 'Origin'
+            else:
+                # Para pruebas temporales, podrías usar '*' pero no se recomienda en prod
+                # resp.headers['Access-Control-Allow-Origin'] = '*'
+                pass
+
+            return resp
+        except Exception as e:
+            logger.exception(f"Error serving sdk.js: {e}")
+            return jsonify({"error": "Could not serve sdk.js", "detail": str(e)}), 500
+
     # ============================================================================  
     # ENDPOINTS PRINCIPALES DEL SISTEMA  
     # ============================================================================  
