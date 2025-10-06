@@ -32,8 +32,40 @@ import os
 
 def create_app(config_class=Config):
     """Factory pattern para crear la aplicación Flask multi-tenant"""
-    app = Flask(__name__, static_folder=None)  # Desactivar static folder por defecto
+    app = Flask(__name__, static_folder=None)
     app.config.from_object(config_class)
+    
+    # =============================
+    # 🆕 CONFIGURACIÓN CORS PARA IFRAME EMBEDDING
+    # =============================
+    from flask_cors import CORS
+    
+    # Configurar CORS
+    CORS(app, resources={
+        r"/*": {
+            "origins": [
+                "https://chatwoottultimate-production.up.railway.app",
+                "https://multibackendopenia-production.up.railway.app",
+                "http://localhost:3000",
+                "http://localhost:5173"
+            ],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Company-ID"],
+            "supports_credentials": True
+        }
+    })
+    
+    # Middleware para permitir embedding en iframe
+    @app.after_request
+    def add_security_headers(response):
+        # Permitir embedding en Chatwoot
+        response.headers['Content-Security-Policy'] = (
+            "frame-ancestors 'self' "
+            "https://chatwoottultimate-production.up.railway.app "
+            "http://localhost:3000"
+        )
+        # NO agregar X-Frame-Options si usas CSP frame-ancestors
+        return response
     
     # =============================
     # Configuración del directorio de archivos estáticos simples
