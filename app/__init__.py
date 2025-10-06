@@ -44,7 +44,7 @@ def create_app(config_class=Config):
     CORS(app, resources={
         r"/*": {
             "origins": [
-                "https://chatwoottultimate-production.up.railway.app",
+                "https://chatwootultimate-production.up.railway.app",
                 "https://multibackendopenia-production.up.railway.app",
                 "http://localhost:3000",
                 "http://localhost:5173"
