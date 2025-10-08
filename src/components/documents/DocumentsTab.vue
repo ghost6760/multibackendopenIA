@@ -80,7 +80,7 @@
         <div class="card-header">
           <h3>📋 Lista de Documentos</h3>
           <div class="card-actions">
-            <!-- ✅ AGREGAR - BOTÓN DE ESTADÍSTICAS -->
+            <!-- ✅ Botón de Estadísticas -->
             <button 
               @click="toggleStats" 
               :disabled="isLoading"
@@ -158,7 +158,7 @@
         </div>
       </div>
 
-      <!-- ✅ Document Statistics Card - MOVER AQUÍ DESDE FUERA DEL TEMPLATE -->
+      <!-- ✅ Document Statistics Card - DENTRO DEL TEMPLATE -->
       <div v-if="showStats" class="card document-stats-card">
         <div class="card-header">
           <h3>📊 Estadísticas de Documentos</h3>
@@ -239,6 +239,48 @@
         </div>
       </div>
 
+      <!-- Admin Functions (if API key is configured) -->
+      <div v-if="showAdminFunctions" class="card admin-functions">
+        <div class="api-key-functions">
+          <h4>🔧 Funciones Administrativas</h4>
+          <div class="admin-actions">
+            <button 
+              @click="exportDocuments" 
+              class="btn btn-outline"
+              :disabled="!hasDocuments"
+            >
+              📦 Exportar Documentos
+            </button>
+            <button 
+              @click="importDocuments" 
+              class="btn btn-outline"
+            >
+              📥 Importar Documentos
+            </button>
+            <button 
+              @click="runDocumentMaintenance" 
+              class="btn btn-secondary"
+            >
+              🔧 Mantenimiento
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- ✅ USAR COMPONENTE ESPECIALIZADO - DocumentModal -->
+    <DocumentModalVue
+      :show-modal="showModal"
+      :modal-config="modalConfig"
+      :modal-loading="modalLoading"
+      :modal-error="modalError"
+      @close="closeModal"
+      @delete="handleModalDelete"
+      @download="handleModalDownload"
+      @retry="handleModalRetry"
+    />
+  </div>
+</template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
@@ -250,7 +292,7 @@ import { useNotifications } from '@/composables/useNotifications'
 import DocumentList from './DocumentList.vue'
 import SearchResults from './SearchResults.vue'
 import DocumentModalVue from './DocumentModal.vue'
-import DocumentUpload from './DocumentUpload.vue' // ✅ USAR COMPONENTE EXISTENTE
+import DocumentUpload from './DocumentUpload.vue'
 
 // ============================================================================
 // PROPS
@@ -290,8 +332,7 @@ const {
   deleteDocument,
   closeModal,
   forceCloseAllModals,
-  
-  // ✅ AGREGAR - Método de estadísticas
+  // ✅ Métodos de estadísticas
   loadDocumentStats,
   documentStats,
   isLoadingStats
@@ -305,51 +346,9 @@ const { showNotification } = useNotifications()
 
 const searchQuery = ref('')
 const searchPerformed = ref(false)
-  
-// ✅ AGREGAR AQUÍ - NUEVO ESTADO PARA ESTADÍSTICAS
+
+// ✅ Estado para estadísticas
 const showStats = ref(false)
-const isLoadingStats = ref(false)
-const documentStats = ref(null)
-
-/**
- * Cargar estadísticas de documentos
- */
-const loadStats = async () => {
-  if (!appStore.currentCompanyId) {
-    showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
-    return
-  }
-  
-  isLoadingStats.value = true
-  
-  try {
-    // Usar composable de documentos
-    const stats = await loadDocumentStats()
-    
-    if (stats) {
-      documentStats.value = stats
-      showNotification('📊 Estadísticas cargadas', 'success', 2000)
-    }
-    
-  } catch (error) {
-    console.error('Error loading stats:', error)
-    showNotification('❌ Error al cargar estadísticas', 'error')
-  } finally {
-    isLoadingStats.value = false
-  }
-}
-
-/**
- * Toggle mostrar/ocultar estadísticas
- */
-const toggleStats = () => {
-  showStats.value = !showStats.value
-  
-  // Si se muestra por primera vez, cargar datos
-  if (showStats.value && !documentStats.value) {
-    loadStats()
-  }
-}
 
 // ============================================================================
 // COMPUTED PROPERTIES
@@ -382,9 +381,6 @@ watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
 // MÉTODOS DE BÚSQUEDA - SIMPLIFICADOS
 // ============================================================================
 
-/**
- * ✅ SIMPLIFICADO - Solo orquestación, lógica en composable
- */
 const handleSearch = async () => {
   if (!searchQuery.value.trim()) {
     showNotification('❌ Ingresa un término de búsqueda', 'error')
@@ -396,15 +392,42 @@ const handleSearch = async () => {
   await searchDocuments(searchQuery.value)
 }
 
-/**
- * ✅ SIMPLIFICADO - Limpiar resultados
- */
 const clearSearchResults = () => {
   searchResults.value = []
   searchPerformed.value = false
   searchQuery.value = ''
   forceCloseModals()
   showNotification('🔍 Resultados de búsqueda limpiados', 'info')
+}
+
+// ============================================================================
+// MÉTODOS DE ESTADÍSTICAS
+// ============================================================================
+
+const loadStats = async () => {
+  if (!appStore.currentCompanyId) {
+    showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
+    return
+  }
+  
+  try {
+    const stats = await loadDocumentStats()
+    
+    if (stats) {
+      showNotification('📊 Estadísticas cargadas', 'success', 2000)
+    }
+  } catch (error) {
+    console.error('Error loading stats:', error)
+    showNotification('❌ Error al cargar estadísticas', 'error')
+  }
+}
+
+const toggleStats = () => {
+  showStats.value = !showStats.value
+  
+  if (showStats.value && !documentStats.value) {
+    loadStats()
+  }
 }
 
 // ============================================================================
@@ -434,14 +457,9 @@ const handleModalRetry = () => {
 // EVENTOS DE COMPONENTES
 // ============================================================================
 
-/**
- * ✅ NUEVO - Manejar evento de DocumentUpload
- */
 const handleDocumentUploaded = async (uploadedDocument) => {
   console.log('[DOCUMENTS-TAB] Document uploaded:', uploadedDocument)
   showNotification('✅ Documento subido exitosamente', 'success')
-  
-  // Recargar lista de documentos
   await loadDocuments()
 }
 
@@ -450,7 +468,6 @@ const handleDocumentUploaded = async (uploadedDocument) => {
 // ============================================================================
 
 const focusUploadArea = () => {
-  // ✅ DELEGAR al componente DocumentUpload
   nextTick(() => {
     const uploadComponent = document.querySelector('.document-upload input[type="text"]')
     if (uploadComponent) {
@@ -475,7 +492,7 @@ const highlightCompanySelector = () => {
 }
 
 // ============================================================================
-// MÉTODOS ADMINISTRATIVOS - SIN CAMBIOS
+// MÉTODOS ADMINISTRATIVOS
 // ============================================================================
 
 const exportDocuments = async () => {
@@ -500,7 +517,6 @@ const exportDocuments = async () => {
     
     showNotification('✅ Documentos exportados correctamente', 'success')
     appStore.addToLog('Documents exported successfully', 'info')
-    
   } catch (error) {
     showNotification('❌ Error al exportar documentos', 'error')
     appStore.addToLog(`Export error: ${error.message}`, 'error')
@@ -516,13 +532,12 @@ const runDocumentMaintenance = () => {
 }
 
 // ============================================================================
-// LIFECYCLE HOOKS - SIMPLIFICADOS
+// LIFECYCLE HOOKS
 // ============================================================================
 
 onMounted(async () => {
   appStore.addToLog('DocumentsTab mounted (Refactored - Modular)', 'info')
   
-  // Load documents if company is selected
   if (appStore.hasCompanySelected) {
     await loadDocuments()
   }
@@ -536,18 +551,32 @@ onMounted(async () => {
       forceCloseModals()
     }
   })
+  
+  // Funciones globales para compatibilidad
+  window.loadDocuments = loadDocuments
+  window.searchDocuments = searchDocuments
+  window.viewDocument = viewDocument
+  window.deleteDocument = deleteDocument
+  window.forceCloseAllDocumentModals = forceCloseModals
 })
 
 onUnmounted(() => {
-  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up (Refactored)')
+  console.log('[DOCUMENTS-TAB] Component unmounting, cleaning up')
   
   forceCloseModals()
   
   window.removeEventListener('loadTabContent', handleLoadTabContent)
   window.removeEventListener('beforeunload', forceCloseModals)
+  
+  if (typeof window !== 'undefined') {
+    delete window.loadDocuments
+    delete window.searchDocuments
+    delete window.viewDocument
+    delete window.deleteDocument
+    delete window.forceCloseAllDocumentModals
+  }
 })
 
-// Handle load tab content event
 const handleLoadTabContent = (event) => {
   if (event.detail.tabName === 'documents' && props.isActive) {
     forceCloseModals()
@@ -555,34 +584,9 @@ const handleLoadTabContent = (event) => {
   }
 }
 
-// Watch for company changes
 watch(() => appStore.currentCompanyId, (newCompanyId) => {
   if (newCompanyId && props.isActive) {
     loadDocuments()
-  }
-})
-
-// ============================================================================
-// ✅ COMPATIBILIDAD GLOBAL SIMPLIFICADA
-// ============================================================================
-
-onMounted(() => {
-  // ✅ Funciones globales simples para mantener compatibilidad
-  window.loadDocuments = loadDocuments
-  window.searchDocuments = searchDocuments  
-  window.viewDocument = viewDocument
-  window.deleteDocument = deleteDocument
-  window.forceCloseAllDocumentModals = forceCloseModals
-})
-
-onUnmounted(() => {
-  // Cleanup global functions
-  if (typeof window !== 'undefined') {
-    delete window.loadDocuments
-    delete window.searchDocuments
-    delete window.viewDocument
-    delete window.deleteDocument
-    delete window.forceCloseAllDocumentModals
   }
 })
 </script>
@@ -596,7 +600,6 @@ onUnmounted(() => {
   display: block;
 }
 
-/* Modal alert styles */
 .modal-alert {
   margin-bottom: 15px;
 }
@@ -884,6 +887,12 @@ onUnmounted(() => {
   color: white;
 }
 
+.btn-outline.active {
+  background: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -894,63 +903,9 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-/* ✅ AGREGAR - Estilo para botón de estadísticas activo */
-.btn-outline.active {
-  background: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-
-/* Responsive */
-@media (max-width: 768px) {
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
-  
-  .card-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .card-actions {
-    justify-content: center;
-  }
-  
-  .document-stats {
-    justify-content: center;
-  }
-  
-  .search-input-group {
-    flex-direction: column;
-  }
-  
-  .admin-actions {
-    flex-direction: column;
-  }
-  
-  .alert {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-  }
-}
-
-/* ============================================================================
-   ESTILOS PARA ESTADÍSTICAS - AGREGAR AL FINAL
-   ============================================================================ */
-
+/* Estilos para estadísticas */
 .document-stats-card {
   margin-top: 20px;
-}
-
-.document-stats-card .card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
 }
 
 .stats-grid {
@@ -1039,6 +994,37 @@ onUnmounted(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+  
+  .card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .card-actions {
+    justify-content: center;
+  }
+  
+  .document-stats {
+    justify-content: center;
+  }
+  
+  .search-input-group {
+    flex-direction: column;
+  }
+  
+  .admin-actions {
+    flex-direction: column;
+  }
+  
+  .alert {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  
   .stats-grid {
     grid-template-columns: 1fr;
     gap: 15px;
@@ -1048,8 +1034,4 @@ onUnmounted(() => {
     font-size: 1.5em;
   }
 }
-
 </style>
-
-
-      
