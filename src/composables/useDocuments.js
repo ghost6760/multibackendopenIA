@@ -23,6 +23,8 @@ export const useDocuments = () => {
   const isSearching = ref(false)
   const currentDocument = ref(null)
   const uploadProgress = ref(0)
+  const documentStats = ref(null)
+  const isLoadingStats = ref(false)
   
   // Modal state - 100% reactivo
   const isModalOpen = ref(false)
@@ -413,6 +415,56 @@ export const useDocuments = () => {
       return false
     }
   }
+
+
+  // ============================================================================
+  // ✅ AGREGAR AQUÍ - NUEVO MÉTODO DE ESTADÍSTICAS
+  // ============================================================================
+  
+  /**
+   * Cargar estadísticas de documentos para la empresa actual
+   */
+  const loadDocumentStats = async () => {
+    if (!appStore.currentCompanyId) {
+      showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
+      return null
+    }
+    
+    isLoadingStats.value = true
+    
+    try {
+      appStore.addToLog(`[${appStore.currentCompanyId}] Loading document statistics`, 'info')
+      
+      const response = await apiRequest('/api/documents/stats', {
+        method: 'GET',
+        headers: {
+          'X-Company-ID': appStore.currentCompanyId
+        }
+      })
+      
+      // Normalizar respuesta
+      const stats = response.stats || response.data || response
+      
+      // Actualizar estado reactivo
+      documentStats.value = stats
+      
+      appStore.addToLog(
+        `[${appStore.currentCompanyId}] Document stats loaded: ${stats.total_documents} docs`,
+        'info'
+      )
+      
+      return stats
+      
+    } catch (error) {
+      console.error('Error loading document stats:', error)
+      notifyApiError('/api/documents/stats', error)
+      appStore.addToLog(`Error loading document stats: ${error.message}`, 'error')
+      return null
+      
+    } finally {
+      isLoadingStats.value = false
+    }
+  }
   
   // ============================================================================
   // MODAL MANAGEMENT - 100% REACTIVO
@@ -573,6 +625,8 @@ export const useDocuments = () => {
     isUploading,
     isSearching,
     uploadProgress,
+    documentStats,
+    isLoadingStats,
     
     // Modal state - 100% reactivo
     isModalOpen,
@@ -594,6 +648,7 @@ export const useDocuments = () => {
     searchDocuments,     // ✅ Puede recibir query o leer DOM (compatible)  
     viewDocument,        // ✅ 100% reactivo
     deleteDocument,      // ✅ Sin cambios
+    loadDocumentStats,
     
     // Modal management - 100% reactivo
     openModal,
