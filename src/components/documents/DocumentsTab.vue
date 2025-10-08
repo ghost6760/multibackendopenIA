@@ -80,6 +80,17 @@
         <div class="card-header">
           <h3>📋 Lista de Documentos</h3>
           <div class="card-actions">
+            <!-- ✅ AGREGAR - BOTÓN DE ESTADÍSTICAS -->
+            <button 
+              @click="toggleStats" 
+              :disabled="isLoading"
+              class="btn btn-outline"
+              :class="{ 'active': showStats }"
+              title="Mostrar/Ocultar estadísticas"
+            >
+              📊 {{ showStats ? 'Ocultar' : 'Ver' }} Estadísticas
+            </button>
+            
             <button 
               @click="loadDocuments" 
               :disabled="isLoading"
@@ -147,48 +158,87 @@
         </div>
       </div>
 
-      <!-- Admin Functions (if API key is configured) -->
-      <div v-if="showAdminFunctions" class="card admin-functions">
-        <div class="api-key-functions">
-          <h4>🔧 Funciones Administrativas</h4>
-          <div class="admin-actions">
-            <button 
-              @click="exportDocuments" 
-              class="btn btn-outline"
-              :disabled="!hasDocuments"
-            >
-              📦 Exportar Documentos
-            </button>
-            <button 
-              @click="importDocuments" 
-              class="btn btn-outline"
-            >
-              📥 Importar Documentos
-            </button>
-            <button 
-              @click="runDocumentMaintenance" 
-              class="btn btn-secondary"
-            >
-              🔧 Mantenimiento
-            </button>
+      <!-- ✅ Document Statistics Card - MOVER AQUÍ DESDE FUERA DEL TEMPLATE -->
+      <div v-if="showStats" class="card document-stats-card">
+        <div class="card-header">
+          <h3>📊 Estadísticas de Documentos</h3>
+          <button 
+            @click="toggleStats" 
+            class="btn btn-secondary"
+            title="Ocultar estadísticas"
+          >
+            ✕ Ocultar
+          </button>
+        </div>
+        
+        <!-- Loading state -->
+        <div v-if="isLoadingStats" class="loading-placeholder">
+          <div class="loading-spinner">⏳</div>
+          <p>Cargando estadísticas...</p>
+        </div>
+        
+        <!-- Stats content -->
+        <div v-else-if="documentStats" class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-value">{{ documentStats.total_documents || 0 }}</span>
+            <span class="stat-label">📄 Total Documentos</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">{{ documentStats.total_chunks || 0 }}</span>
+            <span class="stat-label">🧩 Chunks Procesados</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">{{ documentStats.total_vectors || 0 }}</span>
+            <span class="stat-label">🔢 Vectores</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value">{{ documentStats.storage_used || 'N/A' }}</span>
+            <span class="stat-label">💾 Almacenamiento</span>
+          </div>
+          
+          <!-- Categories breakdown if available -->
+          <div v-if="documentStats.categories" class="stat-item stat-full-width">
+            <span class="stat-label">📂 Categorías</span>
+            <div class="categories-breakdown">
+              <span 
+                v-for="(count, category) in documentStats.categories" 
+                :key="category"
+                class="category-badge"
+              >
+                {{ category }}: {{ count }}
+              </span>
+            </div>
+          </div>
+          
+          <!-- Last updated -->
+          <div v-if="documentStats.last_updated" class="stat-item stat-full-width">
+            <span class="stat-label">🕒 Última actualización</span>
+            <span class="stat-value-small">{{ formatDate(documentStats.last_updated) }}</span>
           </div>
         </div>
+        
+        <!-- Error state -->
+        <div v-else class="stats-error">
+          <p>⚠️ No se pudieron cargar las estadísticas</p>
+          <button @click="loadStats" class="btn btn-outline">
+            🔄 Reintentar
+          </button>
+        </div>
+        
+        <!-- Refresh button -->
+        <div class="stats-actions">
+          <button 
+            @click="loadStats" 
+            :disabled="isLoadingStats"
+            class="btn btn-outline"
+          >
+            <span v-if="isLoadingStats">⏳</span>
+            <span v-else>🔄</span>
+            Actualizar Estadísticas
+          </button>
+        </div>
       </div>
-    </template>
 
-    <!-- ✅ USAR COMPONENTE ESPECIALIZADO - DocumentModal -->
-    <DocumentModalVue
-      :show-modal="showModal"
-      :modal-config="modalConfig"
-      :modal-loading="modalLoading"
-      :modal-error="modalError"
-      @close="closeModal"
-      @delete="handleModalDelete"
-      @download="handleModalDownload"
-      @retry="handleModalRetry"
-    />
-  </div>
-</template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
@@ -239,7 +289,12 @@ const {
   viewDocument,
   deleteDocument,
   closeModal,
-  forceCloseAllModals
+  forceCloseAllModals,
+  
+  // ✅ AGREGAR - Método de estadísticas
+  loadDocumentStats,
+  documentStats,
+  isLoadingStats
 } = useDocuments()
 
 const { showNotification } = useNotifications()
@@ -250,6 +305,51 @@ const { showNotification } = useNotifications()
 
 const searchQuery = ref('')
 const searchPerformed = ref(false)
+  
+// ✅ AGREGAR AQUÍ - NUEVO ESTADO PARA ESTADÍSTICAS
+const showStats = ref(false)
+const isLoadingStats = ref(false)
+const documentStats = ref(null)
+
+/**
+ * Cargar estadísticas de documentos
+ */
+const loadStats = async () => {
+  if (!appStore.currentCompanyId) {
+    showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
+    return
+  }
+  
+  isLoadingStats.value = true
+  
+  try {
+    // Usar composable de documentos
+    const stats = await loadDocumentStats()
+    
+    if (stats) {
+      documentStats.value = stats
+      showNotification('📊 Estadísticas cargadas', 'success', 2000)
+    }
+    
+  } catch (error) {
+    console.error('Error loading stats:', error)
+    showNotification('❌ Error al cargar estadísticas', 'error')
+  } finally {
+    isLoadingStats.value = false
+  }
+}
+
+/**
+ * Toggle mostrar/ocultar estadísticas
+ */
+const toggleStats = () => {
+  showStats.value = !showStats.value
+  
+  // Si se muestra por primera vez, cargar datos
+  if (showStats.value && !documentStats.value) {
+    loadStats()
+  }
+}
 
 // ============================================================================
 // COMPUTED PROPERTIES
@@ -357,6 +457,17 @@ const focusUploadArea = () => {
       uploadComponent.focus()
     }
   })
+}
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'Desconocida'
+  
+  try {
+    const date = new Date(dateString)
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+  } catch {
+    return 'Fecha inválida'
+  }
 }
 
 const highlightCompanySelector = () => {
@@ -783,6 +894,16 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
+/* ✅ AGREGAR - Estilo para botón de estadísticas activo */
+.btn-outline.active {
+  background: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+
 /* Responsive */
 @media (max-width: 768px) {
   .grid-2 {
@@ -816,4 +937,119 @@ onUnmounted(() => {
     gap: 8px;
   }
 }
+
+/* ============================================================================
+   ESTILOS PARA ESTADÍSTICAS - AGREGAR AL FINAL
+   ============================================================================ */
+
+.document-stats-card {
+  margin-top: 20px;
+}
+
+.document-stats-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.stat-item {
+  background: var(--bg-tertiary);
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  border: 1px solid var(--border-color);
+  transition: all 0.3s ease;
+}
+
+.stat-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: var(--primary-color);
+}
+
+.stat-value {
+  display: block;
+  font-size: 2em;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin-bottom: 8px;
+  line-height: 1;
+}
+
+.stat-value-small {
+  display: block;
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  margin-top: 5px;
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.stat-full-width {
+  grid-column: 1 / -1;
+  text-align: left;
+}
+
+.categories-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.category-badge {
+  background: var(--primary-color);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.stats-error {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+}
+
+.stats-error p {
+  margin-bottom: 15px;
+}
+
+.stats-actions {
+  text-align: center;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-color);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  
+  .stat-value {
+    font-size: 1.5em;
+  }
+}
+
 </style>
+
+
+      
