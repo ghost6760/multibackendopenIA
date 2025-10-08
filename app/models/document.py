@@ -340,6 +340,216 @@ class DocumentManager:
             "orphaned_doc_samples": orphaned_docs[:5]
         }
 
+    # ============================================================================
+    # ✅ AGREGAR AQUÍ - NUEVOS MÉTODOS DE ESTADÍSTICAS
+    # ============================================================================
+    
+    def get_document_statistics(self) -> dict:
+        """
+        Obtener estadísticas REALES de documentos para la empresa
+        
+        Returns:
+            dict: Estadísticas completas con datos reales de Redis y vectorstore
+        """
+        try:
+            # Inicializar estadísticas
+            stats = {
+                "total_documents": 0,
+                "total_chunks": 0,
+                "total_vectors": 0,
+                "storage_used": "0 B",
+                "storage_bytes": 0,
+                "categories": {},
+                "file_types": {},
+                "last_updated": None,
+                "documents_by_month": {},
+                "avg_chunks_per_document": 0,
+                "oldest_document": None,
+                "newest_document": None
+            }
+            
+            # Obtener TODOS los documentos de Redis
+            document_pattern = f"{self.redis_prefix}*"
+            all_keys = self.redis_client.keys(document_pattern)
+            
+            # Filtrar solo keys de documentos (no conversations, bot_status, etc)
+            document_keys = [
+                key for key in all_keys 
+                if not any(x in str(key) for x in ['conversation:', 'bot_status:', 'cache:'])
+            ]
+            
+            logger.info(f"[{self.company_id}] Found {len(document_keys)} document keys")
+            
+            total_size_bytes = 0
+            total_chunks = 0
+            documents_processed = 0
+            
+            earliest_date = None
+            latest_date = None
+            
+            # Procesar cada documento
+            for key in document_keys:
+                try:
+                    # Obtener datos del documento
+                    doc_data = self.redis_client.hgetall(key)
+                    
+                    if not doc_data:
+                        continue
+                    
+                    documents_processed += 1
+                    
+                    # Decodificar valores
+                    def decode_value(value, default=''):
+                        if value is None:
+                            return default
+                        if isinstance(value, bytes):
+                            return value.decode('utf-8')
+                        return str(value)
+                    
+                    # Obtener metadata
+                    metadata_str = decode_value(doc_data.get('metadata'), '{}')
+                    try:
+                        metadata = json.loads(metadata_str)
+                    except:
+                        metadata = {}
+                    
+                    # Calcular tamaño del contenido
+                    content = decode_value(doc_data.get('content'), '')
+                    content_size = len(content.encode('utf-8'))
+                    total_size_bytes += content_size
+                    
+                    # Contar chunks (desde metadata o doc_data directamente)
+                    chunk_count_str = decode_value(doc_data.get('chunk_count'), '0')
+                    try:
+                        chunk_count = int(chunk_count_str)
+                    except:
+                        chunk_count = metadata.get('chunk_count', 0)
+                    
+                    if chunk_count:
+                        total_chunks += chunk_count
+                    
+                    # Extraer categorías de metadata
+                    category = metadata.get('category') or metadata.get('type') or 'general'
+                    stats['categories'][category] = stats['categories'].get(category, 0) + 1
+                    
+                    # Tipos de archivo
+                    file_type = metadata.get('file_type') or metadata.get('type') or 'text'
+                    stats['file_types'][file_type] = stats['file_types'].get(file_type, 0) + 1
+                    
+                    # Fecha de creación
+                    created_at = decode_value(doc_data.get('created_at'))
+                    if created_at:
+                        try:
+                            doc_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                            
+                            # Tracking de fechas
+                            if earliest_date is None or doc_date < earliest_date:
+                                earliest_date = doc_date
+                            if latest_date is None or doc_date > latest_date:
+                                latest_date = doc_date
+                            
+                            # Documentos por mes
+                            month_key = doc_date.strftime('%Y-%m')
+                            stats['documents_by_month'][month_key] = stats['documents_by_month'].get(month_key, 0) + 1
+                        except:
+                            pass
+                    
+                except Exception as e:
+                    logger.warning(f"[{self.company_id}] Error processing document key {key}: {e}")
+                    continue
+            
+            # Actualizar stats finales
+            stats['total_documents'] = documents_processed
+            stats['total_chunks'] = total_chunks
+            stats['storage_bytes'] = total_size_bytes
+            stats['storage_used'] = self._format_storage_size(total_size_bytes)
+            
+            # Calcular promedio de chunks por documento
+            if documents_processed > 0:
+                stats['avg_chunks_per_document'] = round(total_chunks / documents_processed, 2)
+            
+            # Fechas
+            if latest_date:
+                stats['last_updated'] = latest_date.isoformat()
+                stats['newest_document'] = latest_date.isoformat()
+            
+            if earliest_date:
+                stats['oldest_document'] = earliest_date.isoformat()
+            
+            # Obtener conteo de vectores desde vectorstore si está disponible
+            try:
+                from app.services.multi_agent_factory import get_multi_agent_factory
+                
+                factory = get_multi_agent_factory()
+                orchestrator = factory.get_orchestrator(self.company_id)
+                
+                if orchestrator and orchestrator.vectorstore_service:
+                    # Intentar obtener conteo de vectores
+                    index = orchestrator.vectorstore_service.redis_client.ft(
+                        orchestrator.vectorstore_service.index_name
+                    )
+                    info = index.info()
+                    
+                    # El conteo total de documentos en el índice
+                    total_vectors = info.get('num_docs', total_chunks)
+                    stats['total_vectors'] = total_vectors
+                else:
+                    # Fallback: asumir 1 vector por chunk
+                    stats['total_vectors'] = total_chunks
+                    
+            except Exception as e:
+                logger.warning(f"[{self.company_id}] Could not get vector count: {e}")
+                stats['total_vectors'] = total_chunks
+            
+            logger.info(f"[{self.company_id}] Statistics calculated successfully: "
+                       f"{stats['total_documents']} docs, {stats['total_chunks']} chunks, "
+                       f"{stats['storage_used']}")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error calculating statistics: {e}")
+            
+            # Retornar estadísticas mínimas en caso de error
+            return {
+                "total_documents": 0,
+                "total_chunks": 0,
+                "total_vectors": 0,
+                "storage_used": "0 B",
+                "storage_bytes": 0,
+                "categories": {},
+                "file_types": {},
+                "last_updated": None,
+                "error": str(e)
+            }
+    
+    def _format_storage_size(self, bytes_size: int) -> str:
+        """
+        Formatear tamaño de almacenamiento de forma legible
+        
+        Args:
+            bytes_size: Tamaño en bytes
+            
+        Returns:
+            str: Tamaño formateado (ej: "24.5 MB")
+        """
+        if bytes_size == 0:
+            return "0 B"
+        
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        unit_index = 0
+        size = float(bytes_size)
+        
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024
+            unit_index += 1
+        
+        # Formatear con 1-2 decimales
+        if size < 10:
+            return f"{size:.2f} {units[unit_index]}"
+        else:
+            return f"{size:.1f} {units[unit_index]}"
+
 
 class DocumentChangeTracker:
     """Track document changes for cache invalidation - Multi-tenant"""
