@@ -611,7 +611,178 @@ export const useDocuments = () => {
     
     console.log('✅ [USE-DOCUMENTS] Cleanup completed')
   }
+
+  // ============================================================================
+  // 🔧 AGREGAR AL FINAL (antes del return) - Método bulkUploadDocuments
+  // ============================================================================
+
+  const bulkUploadDocuments = async (documentsArray, onProgress = null) => {
+    if (!appStore.currentCompanyId) {
+      showNotification('⚠️ Por favor selecciona una empresa primero', 'warning')
+      return null
+    }
   
+    if (!Array.isArray(documentsArray) || documentsArray.length === 0) {
+      showNotification('❌ Debe proporcionar al menos un documento', 'error')
+      return null
+    }
+  
+    // Validar formato de documentos
+    const invalidDocs = documentsArray.filter(doc => {
+      // Verificar que tenga contenido y metadata
+      if (!doc.content && !doc.metadata?.content) return true
+      if (!doc.metadata?.title) return true
+      return false
+    })
+  
+    if (invalidDocs.length > 0) {
+      showNotification(
+        `❌ ${invalidDocs.length} documento(s) tienen formato inválido`,
+        'error'
+      )
+      appStore.addToLog(`Bulk upload validation failed: ${invalidDocs.length} invalid documents`, 'error')
+      return null
+    }
+  
+    isUploading.value = true
+    uploadProgress.value = 0
+  
+    try {
+      appStore.addToLog(
+        `[${appStore.currentCompanyId}] Starting bulk upload: ${documentsArray.length} documents`,
+        'info'
+      )
+  
+      // Simular progreso durante la carga (mejor UX)
+      const progressInterval = setInterval(() => {
+        if (uploadProgress.value < 90) {
+          uploadProgress.value += Math.random() * 15
+        }
+        
+        // Callback de progreso
+        if (onProgress) {
+          onProgress({
+            progress: uploadProgress.value,
+            total: documentsArray.length,
+            status: 'uploading',
+            current: Math.floor((uploadProgress.value / 100) * documentsArray.length)
+          })
+        }
+      }, 300)
+  
+      // Preparar payload para el backend
+      const payload = {
+        documents: documentsArray.map(doc => ({
+          content: doc.content || doc.metadata?.content || '',
+          metadata: {
+            ...doc.metadata,
+            company_id: appStore.currentCompanyId,
+            uploaded_at: new Date().toISOString(),
+            source: 'bulk_upload'
+          }
+        })),
+        company_id: appStore.currentCompanyId
+      }
+  
+      // Realizar petición al endpoint /api/documents/bulk
+      const response = await apiRequest('/api/documents/bulk', {
+        method: 'POST',
+        body: payload,
+        headers: {
+          'X-Company-ID': appStore.currentCompanyId
+        }
+      })
+  
+      clearInterval(progressInterval)
+      uploadProgress.value = 100
+  
+      // Callback final
+      if (onProgress) {
+        onProgress({
+          progress: 100,
+          total: documentsArray.length,
+          status: 'completed',
+          result: response
+        })
+      }
+  
+      // Actualizar lista de documentos
+      await loadDocuments()
+  
+      // Extraer métricas del resultado
+      const successCount = response.documents_added || 0
+      const totalChunks = response.total_chunks || 0
+      const errorCount = response.errors?.length || 0
+  
+      // Notificar resultado
+      if (successCount > 0) {
+        notifyApiSuccess(`${successCount} documentos subidos (${totalChunks} chunks)`)
+      }
+      
+      if (errorCount > 0) {
+        showNotification(
+          `⚠️ ${errorCount} documentos fallaron. Revisa los logs.`,
+          'warning',
+          7000
+        )
+      }
+  
+      appStore.addToLog(
+        `[${appStore.currentCompanyId}] Bulk upload completed: ${successCount} success, ${errorCount} errors, ${totalChunks} total chunks`,
+        successCount > 0 ? 'info' : 'warning'
+      )
+  
+      return response
+  
+    } catch (error) {
+      console.error('Error in bulk upload:', error)
+      notifyApiError('/api/documents/bulk', error)
+      appStore.addToLog(`Bulk upload error: ${error.message}`, 'error')
+      
+      if (onProgress) {
+        onProgress({
+          progress: 0,
+          status: 'error',
+          error: error.message
+        })
+      }
+      
+      return null
+  
+    } finally {
+      isUploading.value = false
+      uploadProgress.value = 0
+    }
+  }
+  
+  /**
+   * 📊 Formatea resultados de bulk upload para mostrar en UI
+   * @param {Object} bulkResult - Resultado del bulk upload
+   * @returns {Object} Resultado formateado para UI
+   */
+  const formatBulkUploadResult = (bulkResult) => {
+    if (!bulkResult) return null
+  
+    const total = (bulkResult.documents_added || 0) + (bulkResult.errors?.length || 0)
+    const success = bulkResult.documents_added || 0
+    const failed = bulkResult.errors?.length || 0
+    const successRate = total > 0 ? ((success / total) * 100).toFixed(1) : '0.0'
+  
+    return {
+      summary: {
+        total: total,
+        success: success,
+        failed: failed,
+        successRate: `${successRate}%`,
+        totalChunks: bulkResult.total_chunks || 0,
+        company_id: bulkResult.company_id || appStore.currentCompanyId
+      },
+      errors: bulkResult.errors || [],
+      details: bulkResult,
+      hasErrors: failed > 0,
+      hasSuccess: success > 0
+    }
+  }
   // ============================================================================
   // RETURN DEL COMPOSABLE - REFACTORIZADO
   // ============================================================================
@@ -664,6 +835,8 @@ export const useDocuments = () => {
     // ✅ NUEVAS FUNCIONES de configuración
     setupGlobalFunctions,
     cleanupGlobalFunctions,
-    cleanup
+    cleanup,
+    bulkUploadDocuments,
+    formatBulkUploadResult
   }
 }
