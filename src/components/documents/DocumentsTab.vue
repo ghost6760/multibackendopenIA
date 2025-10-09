@@ -75,6 +75,12 @@
         </div>
       </div>
 
+      <BulkUpload 
+        @uploaded="handleBulkUploadComplete"
+        @refresh="loadDocuments"
+        @toggle="handleBulkModeToggle"
+      />
+      
       <!-- Document List Card -->
       <div class="card">
         <div class="card-header">
@@ -293,6 +299,7 @@ import DocumentList from './DocumentList.vue'
 import SearchResults from './SearchResults.vue'
 import DocumentModalVue from './DocumentModal.vue'
 import DocumentUpload from './DocumentUpload.vue'
+import BulkUpload from './BulkUpload.vue'
 
 // ============================================================================
 // PROPS
@@ -557,6 +564,71 @@ const importDocuments = () => {
 
 const runDocumentMaintenance = () => {
   showNotification('⚠️ Función de mantenimiento en desarrollo', 'warning')
+}
+
+/**
+ * 🆕 Manejador cuando se completa bulk upload
+ */
+const handleBulkUploadComplete = async (result) => {
+  console.log('[DOCUMENTS-TAB] Bulk upload completed:', result)
+  
+  const successCount = result.documents_added || 0
+  const totalChunks = result.total_chunks || 0
+  const errorCount = result.errors?.length || 0
+  
+  // Notificación personalizada según resultado
+  if (successCount > 0 && errorCount === 0) {
+    showNotification(
+      `✅ ${successCount} documentos subidos exitosamente (${totalChunks} chunks)`,
+      'success',
+      5000
+    )
+  } else if (successCount > 0 && errorCount > 0) {
+    showNotification(
+      `⚠️ ${successCount} documentos subidos, ${errorCount} fallaron`,
+      'warning',
+      6000
+    )
+  } else {
+    showNotification(
+      `❌ Carga masiva falló: ${errorCount} errores`,
+      'error',
+      6000
+    )
+  }
+  
+  // Recargar lista de documentos
+  await loadDocuments()
+  
+  // Si las estadísticas están abiertas, recargarlas
+  if (showStats.value) {
+    await loadStats()
+  }
+  
+  appStore.addToLog(
+    `Bulk upload completed: ${successCount} docs, ${totalChunks} chunks, ${errorCount} errors`,
+    successCount > 0 ? 'info' : 'error'
+  )
+}
+
+/**
+ * 🆕 Manejador cuando se activa/desactiva bulk mode
+ */
+const handleBulkModeToggle = (isActive) => {
+  console.log('[DOCUMENTS-TAB] Bulk mode:', isActive ? 'activated' : 'deactivated')
+  
+  // Opcional: Cerrar otros elementos cuando se activa bulk mode
+  if (isActive) {
+    // Cerrar búsqueda si está activa
+    if (hasSearchResults.value) {
+      clearSearchResults()
+    }
+    
+    // Cerrar modal si está abierto
+    if (isModalOpen.value) {
+      forceCloseModals()
+    }
+  }
 }
 
 // ============================================================================
