@@ -442,6 +442,21 @@ const toggleStats = () => {
     loadStats()
   }
 }
+/**
+ * Cierra el panel de estadísticas y limpia datos
+ */
+const closeStatsPanel = () => {
+  if (showStats.value || documentStats.value) {
+    console.log('[DOCUMENTS-TAB] Closing stats panel')
+    
+    showStats.value = false
+    documentStats.value = null
+    isLoadingStats.value = false
+    
+    // Opcional: Notificar al usuario
+    // showNotification('📊 Estadísticas cerradas (empresa cambiada)', 'info', 2000)
+  }
+}
 
 // ============================================================================
 // MÉTODOS DEL MODAL - SIMPLIFICADOS
