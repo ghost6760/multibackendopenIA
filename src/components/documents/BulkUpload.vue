@@ -630,11 +630,6 @@ const formatFileSize = (bytes) => {
 </script>
 
 <style scoped>
-/* ============================================================================
-   📝 ESTILOS PARA BulkUpload.vue
-   Agregar en la sección <style scoped> del componente
-   ============================================================================ */
-
 .bulk-upload-container {
   margin-bottom: 20px;
 }
