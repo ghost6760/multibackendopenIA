@@ -370,10 +370,23 @@ watch(() => props.isActive, (newActive, oldActive) => {
 })
 
 watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
+  // Solo ejecutar si realmente cambió (evitar trigger inicial)
   if (oldCompanyId && newCompanyId !== oldCompanyId) {
-    console.log('[DOCUMENTS-TAB] Company changed, closing modals and clearing search')
+    console.log(`[DOCUMENTS-TAB] Company changed: ${oldCompanyId} → ${newCompanyId}`)
+    
+    // 1. Cerrar modales
     forceCloseModals()
+    
+    // 2. Limpiar búsqueda
     clearSearchResults()
+    
+    // 3. 🆕 Cerrar panel de estadísticas
+    closeStatsPanel()
+    
+    // 4. Opcional: Recargar documentos de la nueva empresa
+    if (props.isActive && newCompanyId) {
+      loadDocuments()
+    }
   }
 })
 
