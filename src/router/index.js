@@ -1,4 +1,4 @@
-// src/router/index.js - CON NUEVAS RUTAS
+// src/router/index.js - ACTUALIZADO CON TODAS LAS RUTAS
 import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
@@ -40,6 +40,28 @@ const routes = [
       title: 'Multimedia - Benova',
       icon: '🎥',
       label: 'Multimedia',
+      requiresCompany: true
+    }
+  },
+  {
+    path: '/prompts',
+    name: 'Prompts',
+    component: () => import('@/views/PromptsView.vue'),
+    meta: {
+      title: 'Prompts - Benova',
+      icon: '🎭',
+      label: 'Prompts',
+      requiresCompany: true
+    }
+  },
+  {
+    path: '/enterprise',
+    name: 'Enterprise',
+    component: () => import('@/views/EnterpriseView.vue'),
+    meta: {
+      title: 'Enterprise - Benova',
+      icon: '🏢',
+      label: 'Enterprise',
       requiresCompany: true
     }
   },
