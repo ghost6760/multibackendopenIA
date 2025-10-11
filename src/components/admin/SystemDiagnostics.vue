@@ -210,7 +210,7 @@ const runSystemDiagnostics = async () => {
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
     const response = await apiRequest('/api/admin/diagnostics', {
-      method: 'POST',
+      method: 'POST',  // ⭐ AGREGAR ESTO
       headers: {
         'X-API-Key': appStore.adminApiKey
       }
