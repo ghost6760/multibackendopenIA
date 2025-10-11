@@ -477,7 +477,7 @@ const checkServicesStatus = async () => {
     showNotification('Verificando estado de servicios...', 'info')
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/admin/services/status', {
+    const response = await apiRequest('/api/status/services', {
       headers: {
         'X-API-Key': appStore.adminApiKey
       }
