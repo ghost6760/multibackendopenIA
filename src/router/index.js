@@ -1,4 +1,4 @@
-// src/router/index.js - SOLO VISTAS QUE EXISTEN
+// src/router/index.js - CON NUEVAS RUTAS
 import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
@@ -22,11 +22,34 @@ const routes = [
     }
   },
   {
+    path: '/conversaciones',
+    name: 'Conversaciones',
+    component: () => import('@/views/ConversationsView.vue'),
+    meta: {
+      title: 'Conversaciones - Benova',
+      icon: '💬',
+      label: 'Conversaciones',
+      requiresCompany: true
+    }
+  },
+  {
+    path: '/multimedia',
+    name: 'Multimedia',
+    component: () => import('@/views/MultimediaView.vue'),
+    meta: {
+      title: 'Multimedia - Benova',
+      icon: '🎥',
+      label: 'Multimedia',
+      requiresCompany: true
+    }
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/'
   }
 ]
 
+// Exportar rutas de navegación para MainLayout
 export const navigationRoutes = routes.filter(route => 
   route.meta?.icon && route.path !== '/'
 )
@@ -36,8 +59,10 @@ const router = createRouter({
   routes
 })
 
+// Navigation guard
 router.beforeEach((to, from, next) => {
   document.title = to.meta?.title || 'Benova Multi-Tenant Backend'
+  console.log(`📍 Router: ${from.path} → ${to.path}`)
   next()
 })
 
