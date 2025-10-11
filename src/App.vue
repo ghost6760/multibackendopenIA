@@ -1,90 +1,101 @@
+<!-- src/App.vue - CON RUTAS AGREGADAS -->
 <template>
   <div id="app" class="app">
     <!-- Loading Overlay Global -->
     <LoadingOverlay v-if="appStore.isLoadingOverlay" />
     
-    <!-- Container Principal -->
-    <div class="container">
-      <!-- Header -->
-      <div class="header">
-        <h1>🏥 Benova Multi-Tenant Backend</h1>
-        <p class="subtitle">Panel de Administración - Sistema Multi-Agente</p>
+    <!-- 🆕 ROUTER VIEW - Solo se muestra en rutas específicas (no en "/") -->
+    <router-view v-if="route && route.name !== 'Home'" v-slot="{ Component }">
+      <transition name="fade" mode="out-in">
+        <component :is="Component" />
+      </transition>
+    </router-view>
+    
+    <!-- ✅ CONTENIDO ORIGINAL - Se muestra en la ruta "/" -->
+    <template v-else>
+      <!-- Container Principal -->
+      <div class="container">
+        <!-- Header -->
+        <div class="header">
+          <h1>🏥 Benova Multi-Tenant Backend</h1>
+          <p class="subtitle">Panel de Administración - Sistema Multi-Agente</p>
+        </div>
+        
+        <!-- Company Selector y API Key Status -->
+        <div class="company-selector">
+          <CompanySelector />
+          <ApiKeyStatus />
+        </div>
+        
+        <!-- Tab Navigation -->
+        <TabNavigation 
+          :activeTab="appStore.activeTab"
+          @tab-changed="handleTabChange"
+        />
+        
+        <!-- Tab Content -->
+        <div class="tab-contents">
+          <!-- Dashboard Tab -->
+          <DashboardTab 
+            v-if="appStore.activeTab === 'dashboard'"
+            :isActive="appStore.activeTab === 'dashboard'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Documents Tab -->
+          <DocumentsTab 
+            v-if="appStore.activeTab === 'documents'"
+            :isActive="appStore.activeTab === 'documents'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Conversations Tab -->
+          <ConversationsTab 
+            v-if="appStore.activeTab === 'conversations'"
+            :isActive="appStore.activeTab === 'conversations'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Multimedia Tab -->
+          <MultimediaTab 
+            v-if="appStore.activeTab === 'multimedia'"
+            :isActive="appStore.activeTab === 'multimedia'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Prompts Tab -->
+          <PromptsTab 
+            v-if="appStore.activeTab === 'prompts'"
+            :isActive="appStore.activeTab === 'prompts'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Admin Tab -->
+          <AdminTab 
+            v-if="appStore.activeTab === 'admin'"
+            :isActive="appStore.activeTab === 'admin'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Enterprise Tab -->
+          <EnterpriseTab 
+            v-if="appStore.activeTab === 'enterprise'"
+            :isActive="appStore.activeTab === 'enterprise'"
+            @content-loaded="onTabContentLoaded"
+          />
+          
+          <!-- Health Tab -->
+          <HealthTab 
+            v-if="appStore.activeTab === 'health'"
+            :isActive="appStore.activeTab === 'health'"
+            @content-loaded="onTabContentLoaded"
+          />
+        </div>
+        
+        <!-- System Log (Collapsible) -->
+        <SystemLog v-if="showSystemLog" />
       </div>
-      
-      <!-- Company Selector y API Key Status -->
-      <div class="company-selector">
-        <CompanySelector />
-        <ApiKeyStatus />
-      </div>
-      
-      <!-- Tab Navigation -->
-      <TabNavigation 
-        :activeTab="appStore.activeTab"
-        @tab-changed="handleTabChange"
-      />
-      
-      <!-- Tab Content -->
-      <div class="tab-contents">
-        <!-- Dashboard Tab -->
-        <DashboardTab 
-          v-if="appStore.activeTab === 'dashboard'"
-          :isActive="appStore.activeTab === 'dashboard'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Documents Tab -->
-        <DocumentsTab 
-          v-if="appStore.activeTab === 'documents'"
-          :isActive="appStore.activeTab === 'documents'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Conversations Tab -->
-        <ConversationsTab 
-          v-if="appStore.activeTab === 'conversations'"
-          :isActive="appStore.activeTab === 'conversations'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Multimedia Tab -->
-        <MultimediaTab 
-          v-if="appStore.activeTab === 'multimedia'"
-          :isActive="appStore.activeTab === 'multimedia'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Prompts Tab -->
-        <PromptsTab 
-          v-if="appStore.activeTab === 'prompts'"
-          :isActive="appStore.activeTab === 'prompts'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Admin Tab -->
-        <AdminTab 
-          v-if="appStore.activeTab === 'admin'"
-          :isActive="appStore.activeTab === 'admin'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Enterprise Tab -->
-        <EnterpriseTab 
-          v-if="appStore.activeTab === 'enterprise'"
-          :isActive="appStore.activeTab === 'enterprise'"
-          @content-loaded="onTabContentLoaded"
-        />
-        
-        <!-- Health Tab -->
-        <HealthTab 
-          v-if="appStore.activeTab === 'health'"
-          :isActive="appStore.activeTab === 'health'"
-          @content-loaded="onTabContentLoaded"
-        />
-      </div>
-      
-      <!-- System Log (Collapsible) -->
-      <SystemLog v-if="showSystemLog" />
-    </div>
+    </template>
     
     <!-- Notification Container -->
     <AppNotifications />
@@ -98,6 +109,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useNotifications } from '@/composables/useNotifications'
+import { useRoute } from 'vue-router' // 🆕 AGREGADO
 
 // Components - Shared
 import LoadingOverlay from '@/components/shared/LoadingOverlay.vue'
@@ -120,6 +132,7 @@ import HealthTab from '@/components/health/HealthTab.vue'
 // Stores y Composables
 const appStore = useAppStore()
 const { showNotification } = useNotifications()
+const route = useRoute() // 🆕 AGREGADO
 
 // Estado local
 const showSystemLog = ref(false)
@@ -394,6 +407,17 @@ onUnmounted(() => {
 
 .tab-contents {
   margin-top: 20px;
+}
+
+/* 🆕 AGREGADO - Transiciones para router-view */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 /* Responsive */
