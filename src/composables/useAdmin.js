@@ -214,7 +214,7 @@ export const useAdmin = () => {
       }
 
       // PRESERVAR: Request como script.js (endpoint hipotético basado en el patrón)
-      const response = await apiRequest('/api/admin/config/calendar', {
+      const response = await apiRequest('/api/admin/config/google-calendar', {
         method: 'PUT',
         headers: {
           'X-API-Key': appStore.adminApiKey || ''
