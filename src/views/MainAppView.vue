@@ -1,5 +1,4 @@
 <!-- src/views/MainAppView.vue -->
-<!-- ESTE ES TU App.vue ACTUAL, MOVIDO AQUÍ COMPLETO -->
 <template>
   <div id="app" class="app">
     <!-- Loading Overlay Global -->
@@ -127,24 +126,40 @@ const { showNotification } = useNotifications()
 const showSystemLog = ref(false)
 
 // ============================================================================
-// TODA TU LÓGICA ACTUAL AQUÍ - SIN CAMBIOS
+// FUNCIONES PRINCIPALES - MIGRADAS DESDE SCRIPT.JS - NOMBRES EXACTOS
 // ============================================================================
 
+/**
+ * Maneja el cambio de tab
+ * MIGRADO: switchTab() de script.js - PRESERVAR COMPORTAMIENTO EXACTO
+ */
 const handleTabChange = async (tabName) => {
   const success = appStore.setActiveTab(tabName)
   
   if (success) {
+    // Sincronizar variables globales inmediatamente
     appStore.syncToGlobal()
+    
+    // Esperar al siguiente tick para que Vue renderice el componente
     await nextTick()
+    
+    // Los componentes hijos se encargan de cargar su propio contenido
     appStore.addToLog(`Tab changed to: ${tabName}`, 'info')
   }
 }
 
+/**
+ * Maneja cuando un tab termina de cargar su contenido
+ */
 const onTabContentLoaded = (tabName) => {
   appStore.setLoadingOverlay(false)
   appStore.addToLog(`Tab content loaded: ${tabName}`, 'info')
 }
 
+/**
+ * Carga el contenido específico de cada tab
+ * MIGRADO: loadTabContent() de script.js - PRESERVAR NOMBRE Y COMPORTAMIENTO
+ */
 const loadTabContent = async (tabName) => {
   try {
     const shouldShowLoader = ['dashboard', 'prompts', 'documents', 'conversations', 'health'].includes(tabName)
@@ -152,6 +167,9 @@ const loadTabContent = async (tabName) => {
     if (shouldShowLoader) {
       appStore.setLoadingOverlay(true)
     }
+    
+    // Los componentes individuales se encargan de cargar su contenido
+    // cuando son activados a través del prop :isActive
     
     appStore.addToLog(`Loading content for tab: ${tabName}`, 'info')
     
@@ -163,7 +181,11 @@ const loadTabContent = async (tabName) => {
   }
 }
 
+/**
+ * Inicializa los tabs - MIGRADO: initializeTabs() de script.js - EXACTO
+ */
 const initializeTabs = () => {
+  // Verificar si hay un tab por defecto en la URL
   const urlParams = new URLSearchParams(window.location.search)
   const defaultTab = urlParams.get('tab')
   
@@ -172,16 +194,26 @@ const initializeTabs = () => {
   if (defaultTab && validTabs.includes(defaultTab)) {
     appStore.setActiveTab(defaultTab)
   } else {
+    // Cargar dashboard por defecto - EXACTO COMO SCRIPT.JS
     appStore.setActiveTab('dashboard')
   }
   
   appStore.addToLog('Tabs initialized', 'info')
 }
 
+/**
+ * Actualiza el contador de notificaciones en un tab
+ * MIGRADO: updateTabNotificationCount() de script.js - PRESERVAR NOMBRE EXACTO
+ */
 const updateTabNotificationCount = (tabName, count) => {
+  // Esta función se mantiene para compatibilidad
   appStore.addToLog(`Tab notification count: ${tabName} = ${count}`, 'info')
 }
 
+/**
+ * Refresca el tab activo actual
+ * MIGRADO: refreshActiveTab() de script.js - PRESERVAR NOMBRE EXACTO
+ */
 const refreshActiveTab = async () => {
   const activeTab = appStore.activeTab
   if (activeTab) {
@@ -190,33 +222,60 @@ const refreshActiveTab = async () => {
   }
 }
 
+/**
+ * Obtiene el tab activo actual
+ * MIGRADO: getActiveTab() de script.js - PRESERVAR NOMBRE EXACTO
+ */
 const getActiveTab = () => {
   return appStore.activeTab
 }
 
+// ============================================================================
+// FUNCIONES DE UTILIDAD
+// ============================================================================
+
+/**
+ * Toggle del system log
+ */
 const toggleSystemLog = () => {
   showSystemLog.value = !showSystemLog.value
 }
 
+/**
+ * Configuración inicial de drag and drop para archivos
+ * MIGRADO: setupFileUploadHandlers() de script.js - SIMPLIFICADO PARA EVITAR CONFLICTOS
+ */
 const setupFileUploadHandlers = () => {
+  // Prevenir comportamiento por defecto del drag and drop en toda la aplicación
   const preventDefaults = (e) => {
     e.preventDefault()
     e.stopPropagation()
   }
   
+  // Eventos para toda la aplicación
   const events = ['dragenter', 'dragover', 'dragleave', 'drop']
   events.forEach(eventName => {
     document.addEventListener(eventName, preventDefaults, false)
   })
 }
 
+// ============================================================================
+// LIFECYCLE - SIMPLIFICADO PARA EVITAR CONFLICTOS
+// ============================================================================
+
 onMounted(async () => {
   appStore.addToLog('Application initializing...', 'info')
   
   try {
+    // Configurar handlers de archivo
     setupFileUploadHandlers()
+    
+    // Inicializar tabs
     initializeTabs()
+    
+    // Sincronizar variables globales
     appStore.syncToGlobal()
+    
     appStore.addToLog('Application initialized successfully', 'info')
     
   } catch (error) {
@@ -227,34 +286,48 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // Limpiar intervalos y recursos
   appStore.$dispose()
 })
 
+// Watcher para cambios de empresa - SIMPLIFICADO
 watch(() => appStore.currentCompanyId, (newCompanyId, oldCompanyId) => {
   if (newCompanyId !== oldCompanyId) {
+    // Sincronizar inmediatamente
     appStore.syncToGlobal()
     appStore.addToLog(`Company changed: ${oldCompanyId} → ${newCompanyId}`, 'info')
   }
 })
 
-// Exponer funciones globales
+// ============================================================================
+// EXPONER FUNCIONES GLOBALES PARA COMPATIBILIDAD - EXACTAS DE SCRIPT.JS
+// ============================================================================
+
 onMounted(() => {
+  // Exponer funciones principales en window para mantener compatibilidad con script.js
   if (typeof window !== 'undefined') {
+    // Funciones principales - NOMBRES EXACTOS DE SCRIPT.JS
     window.switchTab = (tabName) => handleTabChange(tabName)
     window.loadTabContent = loadTabContent
     window.initializeTabs = initializeTabs
     window.updateTabNotificationCount = updateTabNotificationCount
     window.refreshActiveTab = refreshActiveTab
     window.getActiveTab = getActiveTab
+    
+    // Funciones de utilidad
     window.toggleSystemLog = toggleSystemLog
+    
+    // Funciones del store expuestas globalmente
     window.addToLog = appStore.addToLog
     window.showNotification = showNotification
     
+    // Log de funciones expuestas
     appStore.addToLog('Global functions exposed for compatibility', 'info')
   }
 })
 
 onUnmounted(() => {
+  // Limpiar funciones globales
   if (typeof window !== 'undefined') {
     const functionsToClean = [
       'switchTab', 'loadTabContent', 'initializeTabs', 
@@ -324,6 +397,7 @@ onUnmounted(() => {
   margin-top: 20px;
 }
 
+/* Responsive */
 @media (max-width: 768px) {
   .container {
     padding: 10px;
