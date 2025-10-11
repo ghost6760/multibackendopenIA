@@ -1,4 +1,4 @@
-// src/router/index.js - ACTUALIZADO CON TODAS LAS RUTAS
+// src/router/index.js - VERSIÓN FINAL COMPLETA
 import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
@@ -8,6 +8,17 @@ const routes = [
     component: () => import('@/views/MainAppView.vue'),
     meta: { 
       title: 'Benova Multi-Tenant Backend' 
+    }
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: () => import('@/views/DashboardView.vue'),
+    meta: {
+      title: 'Dashboard - Benova',
+      icon: '📊',
+      label: 'Dashboard',
+      requiresCompany: true
     }
   },
   {
@@ -55,6 +66,17 @@ const routes = [
     }
   },
   {
+    path: '/administracion',
+    name: 'Administracion',
+    component: () => import('@/views/AdministracionView.vue'),
+    meta: {
+      title: 'Administración - Benova',
+      icon: '🔧',
+      label: 'Administración',
+      requiresCompany: true
+    }
+  },
+  {
     path: '/enterprise',
     name: 'Enterprise',
     component: () => import('@/views/EnterpriseView.vue'),
@@ -63,6 +85,17 @@ const routes = [
       icon: '🏢',
       label: 'Enterprise',
       requiresCompany: true
+    }
+  },
+  {
+    path: '/health',
+    name: 'HealthCheck',
+    component: () => import('@/views/HealthCheckView.vue'),
+    meta: {
+      title: 'Health Check - Benova',
+      icon: '💚',
+      label: 'Health Check',
+      requiresCompany: false
     }
   },
   {
