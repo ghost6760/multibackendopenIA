@@ -2,7 +2,11 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
+
 import './styles/main.css'
+import './styles/main.css'
+import './styles/components.css'
+import './styles/tabs.css'
 
 // ============================================================================
 // INICIALIZACIÓN SECUENCIAL SEGURA - CORRIGE "Cannot access 'U' before initialization"
@@ -18,6 +22,7 @@ const initializeApp = async () => {
     // ✅ PASO 2: Crear e instalar Pinia PRIMERO (crítico para evitar errores de inicialización)
     const pinia = createPinia()
     app.use(pinia)
+    app.use(router)
     
     // ✅ PASO 3: Esperar a que Pinia esté completamente instalado
     await new Promise(resolve => setTimeout(resolve, 10))
@@ -431,4 +436,5 @@ if (import.meta.env.DEV) {
   
   console.log('🔧 Development mode: Debug tools will be available after app initialization')
   console.log('🔧 Access via: window.vueApp, window.cleanupDOMErrors')
+  console.log('✅ Benova Multi-Tenant Frontend initialized with Vue Router')
 }
