@@ -20,13 +20,27 @@ const routes = [
   // Más rutas...
 ]
 
+// ============================================================================
+// 🆕 EXPORTAR RUTAS DE NAVEGACIÓN (para MainLayout)
+// ============================================================================
+export const navigationRoutes = routes.filter(route => 
+  route.meta?.icon && route.path !== '/'
+)
+
+// ============================================================================
+// CREAR ROUTER
+// ============================================================================
 const router = createRouter({
   history: createWebHistory(),
   routes
 })
 
+// ============================================================================
+// NAVIGATION GUARDS
+// ============================================================================
 router.beforeEach((to, from, next) => {
-  document.title = to.meta?.title || 'Benova'
+  document.title = to.meta?.title || 'Benova Multi-Tenant Backend'
+  console.log(`📍 Router: ${from.path} → ${to.path}`)
   next()
 })
 
