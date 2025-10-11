@@ -5,18 +5,19 @@ const routes = [
   {
     path: '/',
     name: 'Home',
-    component: () => import('@/views/MainAppView.vue'), // 👈 Usa tu vista
+    component: () => import('@/views/MainAppView.vue'),
     meta: { title: 'Benova Multi-Tenant Backend' }
   },
   {
     path: '/documentos',
     name: 'Documentos',
     component: () => import('@/views/DocumentosView.vue'),
-    meta: { 
+    meta: {
       title: 'Documentos - Benova',
-      layout: 'main' 
+      icon: '📄',
+      label: 'Documentos',
+      requiresCompany: true
     }
-  }
   // Más rutas...
 ]
 
