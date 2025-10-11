@@ -325,7 +325,7 @@ const reloadCompaniesConfig = async () => {
     showNotification('Recargando configuración de empresas...', 'info')
     
     // Llamada a la API - PRESERVAR ENDPOINT EXACTO
-    const response = await apiRequest('/api/admin/reload-config', {
+    const response = await apiRequest('/api/admin/companies/reload-config', {
       method: 'POST',
       headers: {
         'X-API-Key': appStore.adminApiKey
