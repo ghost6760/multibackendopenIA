@@ -4,9 +4,11 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
 import logging
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import os
 
 from app.workflows.workflow_models import WorkflowGraph
-from app.models import db  # SQLAlchemy
 from app.services.redis_service import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -16,7 +18,7 @@ class WorkflowRegistry:
     Registry de workflows con persistencia PostgreSQL + cache Redis.
     
     ✅ Similar a PromptService (misma arquitectura)
-    ✅ PostgreSQL como source of truth
+    ✅ PostgreSQL como source of truth (psycopg2 directo)
     ✅ Redis para cache y performance
     ✅ Multi-tenant (por company_id)
     ✅ Versionado de workflows
@@ -25,8 +27,18 @@ class WorkflowRegistry:
     def __init__(self):
         self.redis_client = get_redis_client()
         self.cache_ttl = 3600  # 1 hora
+        self.db_url = os.getenv('DATABASE_URL')
+        
+        if not self.db_url:
+            logger.warning("DATABASE_URL not configured - WorkflowRegistry will have limited functionality")
         
         logger.info("WorkflowRegistry initialized")
+    
+    def _get_connection(self):
+        """Obtener conexión PostgreSQL"""
+        if not self.db_url:
+            raise ValueError("DATABASE_URL not configured")
+        return psycopg2.connect(self.db_url)
     
     # === WORKFLOW CRUD === #
     
@@ -52,9 +64,16 @@ class WorkflowRegistry:
             workflow_json = workflow.to_json()
             
             # Verificar si ya existe
-            existing = self._get_from_database(workflow.id)
+            conn = self._get_connection()
+            cursor = conn.cursor()
             
-            if existing:
+            cursor.execute("SELECT id FROM workflows WHERE workflow_id = %s", (workflow.id,))
+            exists = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if exists:
                 # Update
                 return self._update_in_database(workflow, workflow_json, created_by)
             else:
@@ -118,27 +137,36 @@ class WorkflowRegistry:
             Lista de WorkflowGraph
         """
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
             query = """
-                SELECT id, workflow_data 
+                SELECT workflow_data 
                 FROM workflows 
                 WHERE company_id = %s
             """
+            
+            params = [company_id]
             
             if enabled_only:
                 query += " AND enabled = true"
             
             query += " ORDER BY created_at DESC"
             
-            result = db.session.execute(query, (company_id,))
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
             
             workflows = []
-            for row in result:
+            for row in rows:
                 try:
-                    workflow_data = json.loads(row[1])
+                    workflow_data = json.loads(row['workflow_data']) if isinstance(row['workflow_data'], str) else row['workflow_data']
                     workflow = WorkflowGraph.from_dict(workflow_data)
                     workflows.append(workflow)
                 except Exception as e:
-                    logger.error(f"Error parsing workflow {row[0]}: {e}")
+                    logger.error(f"Error parsing workflow: {e}")
+            
+            cursor.close()
+            conn.close()
             
             logger.info(f"Loaded {len(workflows)} workflows for company {company_id}")
             return workflows
@@ -159,16 +187,22 @@ class WorkflowRegistry:
             True si éxito
         """
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
             query = """
                 UPDATE workflows 
                 SET enabled = false,
-                    updated_at = NOW(),
-                    updated_by = %s
-                WHERE id = %s
+                    modified_at = NOW(),
+                    modified_by = %s
+                WHERE workflow_id = %s
             """
             
-            db.session.execute(query, (deleted_by, workflow_id))
-            db.session.commit()
+            cursor.execute(query, (deleted_by, workflow_id))
+            conn.commit()
+            
+            cursor.close()
+            conn.close()
             
             # Invalidar cache
             self._invalidate_cache(workflow_id)
@@ -178,7 +212,9 @@ class WorkflowRegistry:
             
         except Exception as e:
             logger.exception(f"Error deleting workflow {workflow_id}: {e}")
-            db.session.rollback()
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
             return False
     
     def find_workflow_by_trigger(self, company_id: str, 
@@ -243,19 +279,20 @@ class WorkflowRegistry:
                            workflow_json: str, created_by: str) -> bool:
         """Insertar workflow en PostgreSQL"""
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
             query = """
                 INSERT INTO workflows (
-                    id, company_id, name, description,
+                    workflow_id, company_id, name, description,
                     workflow_data, version, enabled,
-                    tags, created_by, created_at, updated_at
+                    tags, created_by, modified_by
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """
             
-            tags_json = json.dumps(workflow.tags)
-            
-            db.session.execute(query, (
+            cursor.execute(query, (
                 workflow.id,
                 workflow.company_id,
                 workflow.name,
@@ -263,11 +300,14 @@ class WorkflowRegistry:
                 workflow_json,
                 workflow.version,
                 workflow.enabled,
-                tags_json,
+                workflow.tags,
+                created_by,
                 created_by
             ))
             
-            db.session.commit()
+            conn.commit()
+            cursor.close()
+            conn.close()
             
             # Invalidar cache de empresa
             self._invalidate_company_cache(workflow.company_id)
@@ -277,39 +317,43 @@ class WorkflowRegistry:
             
         except Exception as e:
             logger.exception(f"Error inserting workflow {workflow.id}: {e}")
-            db.session.rollback()
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
             return False
     
     def _update_in_database(self, workflow: WorkflowGraph, 
                            workflow_json: str, updated_by: str) -> bool:
         """Actualizar workflow en PostgreSQL"""
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
             query = """
                 UPDATE workflows 
                 SET name = %s,
                     description = %s,
                     workflow_data = %s,
-                    version = version + 1,
                     enabled = %s,
                     tags = %s,
-                    updated_by = %s,
-                    updated_at = NOW()
-                WHERE id = %s
+                    modified_by = %s,
+                    modified_at = NOW()
+                WHERE workflow_id = %s
             """
             
-            tags_json = json.dumps(workflow.tags)
-            
-            db.session.execute(query, (
+            cursor.execute(query, (
                 workflow.name,
                 workflow.description,
                 workflow_json,
                 workflow.enabled,
-                tags_json,
+                workflow.tags,
                 updated_by,
                 workflow.id
             ))
             
-            db.session.commit()
+            conn.commit()
+            cursor.close()
+            conn.close()
             
             # Invalidar cache
             self._invalidate_cache(workflow.id)
@@ -320,25 +364,33 @@ class WorkflowRegistry:
             
         except Exception as e:
             logger.exception(f"Error updating workflow {workflow.id}: {e}")
-            db.session.rollback()
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
             return False
     
     def _get_from_database(self, workflow_id: str) -> Optional[WorkflowGraph]:
         """Cargar workflow desde PostgreSQL"""
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
             query = """
                 SELECT workflow_data 
                 FROM workflows 
-                WHERE id = %s
+                WHERE workflow_id = %s
             """
             
-            result = db.session.execute(query, (workflow_id,))
-            row = result.fetchone()
+            cursor.execute(query, (workflow_id,))
+            row = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
             
             if not row:
                 return None
             
-            workflow_data = json.loads(row[0])
+            workflow_data = json.loads(row['workflow_data']) if isinstance(row['workflow_data'], str) else row['workflow_data']
             return WorkflowGraph.from_dict(workflow_data)
             
         except Exception as e:
@@ -433,24 +485,32 @@ class WorkflowRegistry:
             True si éxito
         """
         try:
-            query = """
-                INSERT INTO workflow_executions (
-                    workflow_id, company_id, status,
-                    context, execution_history, errors,
-                    started_at, completed_at, duration_ms
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-            """
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Generar execution_id
+            import time
+            execution_id = f"exec_{workflow_id}_{int(time.time())}"
             
             # Calcular duración
             started = datetime.fromisoformat(execution_result["started_at"])
             completed = datetime.fromisoformat(execution_result["completed_at"])
-            duration_ms = (completed - started).total_seconds() * 1000
+            duration_ms = int((completed - started).total_seconds() * 1000)
             
-            db.session.execute(query, (
+            query = """
+                INSERT INTO workflow_executions (
+                    execution_id, workflow_id, company_id, status,
+                    context, execution_history, errors,
+                    started_at, completed_at, duration_ms
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """
+            
+            cursor.execute(query, (
+                execution_id,
                 workflow_id,
-                execution_result["company_id"],
+                execution_result.get("company_id", "unknown"),
                 execution_result["status"],
                 json.dumps(execution_result.get("context", {})),
                 json.dumps(execution_result.get("execution_history", [])),
@@ -460,18 +520,22 @@ class WorkflowRegistry:
                 duration_ms
             ))
             
-            db.session.commit()
+            conn.commit()
+            cursor.close()
+            conn.close()
             
             logger.info(
                 f"Execution logged for workflow {workflow_id}: "
-                f"{execution_result['status']} ({duration_ms:.0f}ms)"
+                f"{execution_result['status']} ({duration_ms}ms)"
             )
             
             return True
             
         except Exception as e:
             logger.exception(f"Error logging workflow execution: {e}")
-            db.session.rollback()
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
             return False
     
     def get_execution_history(self, workflow_id: str, 
@@ -487,6 +551,9 @@ class WorkflowRegistry:
             Lista de ejecuciones
         """
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
             query = """
                 SELECT 
                     id, status, started_at, completed_at, 
@@ -497,18 +564,22 @@ class WorkflowRegistry:
                 LIMIT %s
             """
             
-            result = db.session.execute(query, (workflow_id, limit))
+            cursor.execute(query, (workflow_id, limit))
+            rows = cursor.fetchall()
             
             executions = []
-            for row in result:
+            for row in rows:
                 executions.append({
-                    "id": row[0],
-                    "status": row[1],
-                    "started_at": row[2].isoformat() if row[2] else None,
-                    "completed_at": row[3].isoformat() if row[3] else None,
-                    "duration_ms": row[4],
-                    "errors": json.loads(row[5]) if row[5] else []
+                    "id": row['id'],
+                    "status": row['status'],
+                    "started_at": row['started_at'].isoformat() if row['started_at'] else None,
+                    "completed_at": row['completed_at'].isoformat() if row['completed_at'] else None,
+                    "duration_ms": row['duration_ms'],
+                    "errors": json.loads(row['errors']) if row['errors'] else []
                 })
+            
+            cursor.close()
+            conn.close()
             
             return executions
             
@@ -529,16 +600,18 @@ class WorkflowRegistry:
             Dict con estadísticas
         """
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
             if company_id:
                 query = """
                     SELECT 
                         COUNT(*) as total,
-                        SUM(CASE WHEN enabled = true THEN 1 ELSE 0 END) as enabled,
-                        COUNT(DISTINCT company_id) as companies
+                        SUM(CASE WHEN enabled = true THEN 1 ELSE 0 END) as enabled
                     FROM workflows
                     WHERE company_id = %s
                 """
-                result = db.session.execute(query, (company_id,))
+                cursor.execute(query, (company_id,))
             else:
                 query = """
                     SELECT 
@@ -547,19 +620,22 @@ class WorkflowRegistry:
                         COUNT(DISTINCT company_id) as companies
                     FROM workflows
                 """
-                result = db.session.execute(query)
+                cursor.execute(query)
             
-            row = result.fetchone()
+            row = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
             
             return {
-                "total_workflows": row[0] or 0,
-                "enabled_workflows": row[1] or 0,
-                "companies_with_workflows": row[2] or 0,
+                "total_workflows": row['total'] or 0,
+                "enabled_workflows": row['enabled'] or 0,
+                "companies_with_workflows": row.get('companies', 0),
                 "company_id": company_id
             }
             
         except Exception as e:
-            logger.exception("Error getting workflow stats: {e}")
+            logger.exception(f"Error getting workflow stats: {e}")
             return {
                 "total_workflows": 0,
                 "enabled_workflows": 0,
