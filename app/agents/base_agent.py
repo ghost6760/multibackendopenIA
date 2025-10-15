@@ -39,6 +39,9 @@ class BaseAgent(ABC):
         
         # 🆕 NUEVO: Servicio de prompts para PostgreSQL
         self.prompt_service = get_prompt_service()
+
+        # ✅ AGREGAR - Tools library (opcional)
+        self.tools_library = None  # Se inyecta externamente si se necesita
         
         # 🆕 NUEVO: Cache del prompt actual para rendimiento
         self._current_prompt_template = None
