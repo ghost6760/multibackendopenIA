@@ -1,7 +1,6 @@
 -- ============================================================================
 -- WORKFLOWS SYSTEM - INCREMENTAL SCHEMA
 -- Compatible con postgresql_schema.sql existente
--- Este archivo se ejecuta DESPUÉS de postgresql_schema.sql
 -- ============================================================================
 
 -- Verificar prerequisitos
@@ -14,7 +13,7 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- TABLA PRINCIPAL DE WORKFLOWS
+-- TABLAS
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS workflows (
@@ -113,17 +112,54 @@ CREATE TABLE IF NOT EXISTS workflow_nodes (
     UNIQUE(workflow_id, node_id)
 );
 
--- Índices
+-- ============================================================================
+-- CONSTRAINTS (SAFE METHOD)
+-- ============================================================================
+
+-- Función helper para constraints seguros
+CREATE OR REPLACE FUNCTION add_workflow_constraint_safe(
+    p_table TEXT,
+    p_constraint TEXT,
+    p_definition TEXT
+) RETURNS VOID AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE table_name = p_table AND constraint_name = p_constraint
+    ) THEN
+        EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s', p_table, p_constraint, p_definition);
+        RAISE NOTICE 'Added constraint: %', p_constraint;
+    ELSE
+        RAISE NOTICE 'Constraint already exists: %', p_constraint;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Aplicar constraints
+SELECT add_workflow_constraint_safe('workflows', 'unique_workflow_per_company', 'UNIQUE (company_id, name)');
+SELECT add_workflow_constraint_safe('workflow_versions', 'unique_workflow_version', 'UNIQUE (workflow_id, version)');
+
+-- Limpiar función helper
+DROP FUNCTION IF EXISTS add_workflow_constraint_safe(TEXT, TEXT, TEXT);
+
+-- ============================================================================
+-- ÍNDICES
+-- ============================================================================
+
 CREATE INDEX IF NOT EXISTS idx_workflows_company_id ON workflows(company_id);
 CREATE INDEX IF NOT EXISTS idx_workflows_enabled ON workflows(enabled) WHERE enabled = true;
+CREATE INDEX IF NOT EXISTS idx_workflows_tags ON workflows USING GIN(tags);
 CREATE INDEX IF NOT EXISTS idx_executions_workflow_id ON workflow_executions(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_executions_company_id ON workflow_executions(company_id);
 CREATE INDEX IF NOT EXISTS idx_executions_status ON workflow_executions(status);
+CREATE INDEX IF NOT EXISTS idx_versions_workflow_id ON workflow_versions(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_templates_category ON workflow_templates(category);
+CREATE INDEX IF NOT EXISTS idx_nodes_workflow_id ON workflow_nodes(workflow_id);
 
--- Constraints
-ALTER TABLE workflows ADD CONSTRAINT IF NOT EXISTS unique_workflow_per_company UNIQUE (company_id, name);
-ALTER TABLE workflow_versions ADD CONSTRAINT IF NOT EXISTS unique_workflow_version UNIQUE (workflow_id, version);
+-- ============================================================================
+-- FUNCIONES Y TRIGGERS
+-- ============================================================================
 
--- Funciones
 CREATE OR REPLACE FUNCTION create_workflow_version()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -148,12 +184,30 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION update_workflow_execution_stats(
+    p_workflow_id VARCHAR(150),
+    p_status VARCHAR(50)
+) RETURNS VOID AS $$
+BEGIN
+    UPDATE workflows 
+    SET execution_count = execution_count + 1,
+        success_count = success_count + CASE WHEN p_status = 'success' THEN 1 ELSE 0 END,
+        failure_count = failure_count + CASE WHEN p_status IN ('failed', 'timeout') THEN 1 ELSE 0 END,
+        last_executed_at = CURRENT_TIMESTAMP,
+        modified_at = CURRENT_TIMESTAMP
+    WHERE workflow_id = p_workflow_id;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS trigger_workflow_versioning ON workflows;
 CREATE TRIGGER trigger_workflow_versioning
     AFTER INSERT OR UPDATE OR DELETE ON workflows
     FOR EACH ROW EXECUTE FUNCTION create_workflow_version();
 
--- Template por defecto
+-- ============================================================================
+-- TEMPLATE POR DEFECTO
+-- ============================================================================
+
 INSERT INTO workflow_templates (template_id, name, description, category, template_data, is_public, business_types, required_tools, required_agents)
 VALUES (
     'template_sales_basic',
@@ -167,12 +221,21 @@ VALUES (
     ARRAY['sales', 'schedule']
 ) ON CONFLICT (template_id) DO NOTHING;
 
--- Verificación
+-- ============================================================================
+-- VERIFICACIÓN
+-- ============================================================================
+
 DO $$
+DECLARE
+    table_count INTEGER;
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'workflows') THEN
-        RAISE NOTICE '✅ Workflows tables created successfully';
+    SELECT COUNT(*) INTO table_count
+    FROM information_schema.tables 
+    WHERE table_name IN ('workflows', 'workflow_versions', 'workflow_executions', 'workflow_templates', 'workflow_nodes');
+    
+    IF table_count = 5 THEN
+        RAISE NOTICE '✅ Workflows migration SUCCESS: All 5 tables created';
     ELSE
-        RAISE EXCEPTION '❌ Workflows tables creation failed';
+        RAISE WARNING '⚠️ Expected 5 tables, found %', table_count;
     END IF;
 END $$;
