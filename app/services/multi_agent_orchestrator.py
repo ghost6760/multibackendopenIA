@@ -29,7 +29,7 @@ class MultiAgentOrchestrator:
         self.vectorstore_service = None  # Se inyecta externamente
         
         # ✅ AGREGAR - Tools library (opcional)
-        self.tools_library = None  # Se inyecta externamente si se necesita
+        self.tool_executor = None  # Se inyecta externamente si se necesita
         
         # Agentes
         self.agents = {}
