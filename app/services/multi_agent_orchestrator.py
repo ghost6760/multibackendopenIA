@@ -36,6 +36,14 @@ class MultiAgentOrchestrator:
         self._initialize_agents()
         
         logger.info(f"MultiAgentOrchestrator initialized for company: {company_id}")
+
+    def set_tool_executor(self, tool_executor):
+        """
+        ✅ NUEVO: Inyectar tool executor al orquestador
+        Permite a los agentes ejecutar tools de forma dinámica
+        """
+        self.tool_executor = tool_executor
+        logger.info(f"[{self.company_id}] ToolExecutor configured with tools: {list(tool_executor.get_available_tools().keys())}")
     
     def set_vectorstore_service(self, vectorstore_service: VectorstoreService):
         """Inyectar servicio de vectorstore específico de la empresa - ACTUALIZADO"""
