@@ -106,7 +106,6 @@ def get_company_tools_status(company_id: str):
     """
     try:
         from app.services.multi_agent_factory import get_orchestrator_for_company
-        from app.workflows.tool_executor import ToolExecutor
         
         # Obtener orchestrator de la empresa
         orchestrator = get_orchestrator_for_company(company_id)
@@ -115,14 +114,14 @@ def get_company_tools_status(company_id: str):
                 "error": "Orchestrator not found for company"
             }), 404
         
-        # Crear tool executor temporal para verificar
-        tool_executor = ToolExecutor(company_id)
+        # ✅ Usar tool_executor del orchestrator (ya tiene servicios inyectados)
+        tool_executor = orchestrator.tool_executor
         
-        # Inyectar servicios disponibles
-        if orchestrator.vectorstore_service:
-            tool_executor.set_vectorstore_service(orchestrator.vectorstore_service)
-        
-        # TODO: Inyectar otros servicios cuando estén disponibles en orchestrator
+        if not tool_executor:
+            return jsonify({
+                "error": "Tool executor not configured for company",
+                "company_id": company_id
+            }), 500
         
         # Obtener estado de tools
         tools_status = tool_executor.get_available_tools()
@@ -131,15 +130,16 @@ def get_company_tools_status(company_id: str):
             "company_id": company_id,
             "tools_status": tools_status,
             "services_injected": {
-                "vectorstore": orchestrator.vectorstore_service is not None,
-                "calendar": hasattr(orchestrator, 'calendar_service') and orchestrator.calendar_service is not None,
-                "chatwoot": hasattr(orchestrator, 'chatwoot_service') and orchestrator.chatwoot_service is not None,
-                "multimedia": hasattr(orchestrator, 'multimedia_service') and orchestrator.multimedia_service is not None
+                "vectorstore": tool_executor.vectorstore_service is not None,
+                "chatwoot": tool_executor.chatwoot_service is not None,
+                "multimedia": tool_executor.multimedia_service is not None,
+                "calendar": tool_executor.calendar_service is not None
             }
         }), 200
         
     except Exception as e:
         logger.error(f"Error getting tools status for {company_id}: {e}")
         return jsonify({
-            "error": str(e)
+            "error": str(e),
+            "company_id": company_id
         }), 500
