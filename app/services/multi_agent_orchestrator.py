@@ -28,6 +28,9 @@ class MultiAgentOrchestrator:
         self.openai_service = openai_service or OpenAIService()
         self.vectorstore_service = None  # Se inyecta externamente
         
+        # ✅ AGREGAR - Tools library (opcional)
+        self.tools_library = None  # Se inyecta externamente si se necesita
+        
         # Agentes
         self.agents = {}
         self._initialize_agents()
@@ -45,6 +48,17 @@ class MultiAgentOrchestrator:
             if agent_name in self.agents:
                 self.agents[agent_name].set_vectorstore_service(vectorstore_service)
                 logger.info(f"[{self.company_id}] RAG configured for {agent_name} agent")
+
+    def set_tools_library(self, tools_library):
+        """
+        ✅ NUEVO: Inyectar tools library específico de la empresa
+        Por ahora solo lo guardamos, en el futuro los agentes podrán usarlo
+        """
+        self.tools_library = tools_library
+        logger.info(f"[{self.company_id}] Tools library configured with {len(tools_library.AVAILABLE_TOOLS)} tools")
+        
+        # TODO FUTURO: Propagar a agentes que necesiten tools
+        # Por ahora solo lo guardamos para futura implementación
     
     def _initialize_agents(self):
         """Inicializar todos los agentes especializados"""
