@@ -448,6 +448,16 @@ Ayuda al usuario de manera profesional."""
         except Exception as e:
             logger.error(f"Error restoring default prompt: {e}")
             return False
+
+    def set_tools_library(self, tools_library):
+        """
+        ✅ NUEVO: Inyectar tools library al agente
+        Por ahora solo lo guardamos, en el futuro los agentes podrán ejecutar tools
+        """
+        self.tools_library = tools_library
+        logger.info(f"[{self.company_config.company_id}] {self.agent_name} configured with tools library")
+        
+        # TODO FUTURO: Los agentes podrán ejecutar tools usando este library
     
     def _log_prompt_load(self, prompt_type: str, source: str):
         """Log de carga de prompt con contexto"""
