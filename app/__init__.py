@@ -24,6 +24,9 @@ from app.routes.admin import bp as admin_bp
 from app.routes.companies import bp as companies_bp
 from app.routes.conversations_extended import conversations_extended_bp
 
+# ✅ AGREGAR - Importar blueprint de tools
+from app.routes import tools as tools_bp
+
 import logging
 import sys
 import threading
@@ -209,6 +212,9 @@ def create_app(config_class=Config):
 
     # Registrar blueprint temporal
     app.register_blueprint(diagnostic_bp)  # /api/diagnostic
+
+    # ✅ AGREGAR - Registrar blueprint de tools
+    app.register_blueprint(tools_bp.bp)  # /api/tools
     
     logger.info("✅ All blueprints registered successfully")
     
