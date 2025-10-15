@@ -1,3 +1,5 @@
+# app/services/vectorstore_service.py
+
 from langchain_redis import RedisVectorStore
 from langchain.text_splitter import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 from app.services.redis_service import get_redis_client
