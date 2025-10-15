@@ -32,6 +32,9 @@ class CompanyConfig:
     emergency_keywords: List[str] = None
     sales_keywords: List[str] = None
     business_type: str = "general"
+    
+    # ✅ NUEVO CAMPO - Herramientas habilitadas por empresa
+    enabled_tools: List[str] = None
 
     def __post_init__(self):
         if self.treatment_durations is None:
@@ -42,6 +45,16 @@ class CompanyConfig:
             self.emergency_keywords = []
         if self.sales_keywords is None:
             self.sales_keywords = []
+        
+        # ✅ AGREGAR - Inicializar enabled_tools con defaults
+        if self.enabled_tools is None:
+            self.enabled_tools = [
+                "knowledge_base",      # RAG ya existe
+                "google_calendar",     # Ya existe en schedule_agent
+                "send_whatsapp",       # Ya existe via chatwoot
+                "transcribe_audio",    # Ya existe en multimedia
+                "analyze_image"        # Ya existe en multimedia
+            ]
 
 class CompanyConfigManager:
     """
