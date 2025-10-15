@@ -72,6 +72,7 @@ COPY wsgi.py run.py ./
 COPY companies_config.json extended_companies_config.json custom_prompts.json ./
 COPY migrate_prompts_to_postgresql.py postgresql_schema.sql ./
 COPY migrate_companies_to_postgresql.py ./
+COPY migrate_workflows_to_postgresql.py workflows_schema.sql ./
 
 # Copiar build estático desde el builder
 COPY --from=frontend-builder /frontend/dist ./static
@@ -105,6 +106,8 @@ if [ ! -z "${DATABASE_URL:-}" ]; then
   echo "🔄 DATABASE_URL detectado -> ejecutando migraciones"
   python migrate_prompts_to_postgresql.py --auto || echo "⚠️ Migración de prompts falló (continuando)"
   python migrate_companies_to_postgresql.py --auto || echo "⚠️ Migración de companies falló (continuando)"
+  # ✅ NUEVA MIGRACIÓN - Workflows
+  python migrate_workflows_to_postgresql.py --auto || echo "⚠️ Migración de workflows falló (continuando)"
 else
   echo "⚠️ DATABASE_URL no presente -> saltando migraciones runtime"
 fi
