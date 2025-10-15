@@ -27,6 +27,8 @@ from app.routes.conversations_extended import conversations_extended_bp
 # ✅ AGREGAR - Importar blueprint de tools
 from app.routes import tools as tools_bp
 
+from app.routes.workflows import workflows_bp
+
 import logging
 import sys
 import threading
@@ -215,8 +217,9 @@ def create_app(config_class=Config):
 
     # ✅ AGREGAR - Registrar blueprint de tools
     app.register_blueprint(tools_bp.bp)  # /api/tools
+    app.register_blueprint(workflows_bp)
     
-    logger.info("✅ All blueprints registered successfully")
+    logger.info("✅ All blueprints registered successfully (including workflows)")
     
     # Registrar manejadores de errores
     register_error_handlers(app)
