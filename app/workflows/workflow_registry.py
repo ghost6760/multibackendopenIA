@@ -286,9 +286,10 @@ class WorkflowRegistry:
                 INSERT INTO workflows (
                     workflow_id, company_id, name, description,
                     workflow_data, version, enabled,
-                    tags, created_by, modified_by
+                    tags, total_nodes, total_edges,
+                    created_by, updated_by
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """
             
@@ -301,8 +302,10 @@ class WorkflowRegistry:
                 workflow.version,
                 workflow.enabled,
                 workflow.tags,
+                len(workflow.nodes),      # ← AGREGADO
+                len(workflow.edges),      # ← AGREGADO
                 created_by,
-                created_by
+                created_by                # updated_by = created_by en insert
             ))
             
             conn.commit()
@@ -336,8 +339,11 @@ class WorkflowRegistry:
                     workflow_data = %s,
                     enabled = %s,
                     tags = %s,
-                    modified_by = %s,
-                    modified_at = NOW()
+                    version = %s,
+                    total_nodes = %s,
+                    total_edges = %s,
+                    updated_by = %s,
+                    updated_at = NOW()
                 WHERE workflow_id = %s
             """
             
@@ -347,6 +353,9 @@ class WorkflowRegistry:
                 workflow_json,
                 workflow.enabled,
                 workflow.tags,
+                workflow.version,
+                len(workflow.nodes),      # ← AGREGADO
+                len(workflow.edges),      # ← AGREGADO
                 updated_by,
                 workflow.id
             ))
