@@ -773,7 +773,7 @@ def health_check():
 # CONFIGURATION AGENT - Chat conversacional para crear workflows
 # ═══════════════════════════════════════════════════════════
 
-@bp.route('/config-chat', methods=['POST'])
+@workflows_bp.route('/config-chat', methods=['POST'])
 @handle_errors
 def config_agent_chat():
     """
@@ -853,7 +853,7 @@ def config_agent_chat():
         }), 500
 
 
-@bp.route('/config-chat/reset', methods=['POST'])
+@workflows_bp.route('/config-chat/reset', methods=['POST'])
 @handle_errors
 def reset_config_chat():
     """
@@ -884,7 +884,7 @@ def reset_config_chat():
     })
 
 
-@bp.route('/config-chat/status', methods=['GET'])
+@workflows_bp.route('/config-chat/status', methods=['GET'])
 @handle_errors
 def config_chat_status():
     """
