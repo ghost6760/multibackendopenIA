@@ -1,11 +1,13 @@
 # app/routes/workflows.py
 
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, g
 from functools import wraps
 from typing import Dict, Any, Optional
 import logging
 import asyncio
 from datetime import datetime
+import psycopg2
+import os
 
 from app.workflows.workflow_models import WorkflowGraph, WorkflowNode, WorkflowEdge
 from app.workflows.workflow_executor import WorkflowExecutor
@@ -22,40 +24,67 @@ logger = logging.getLogger(__name__)
 workflows_bp = Blueprint('workflows', __name__, url_prefix='/api/workflows')
 
 # ============================================================================
-# DECORATORS Y HELPERS
+# DECORATORS Y HELPERS - CORREGIDOS
 # ============================================================================
 
 def require_company_context(f):
     """
     Decorator para validar contexto de empresa.
-    Similar a cómo manejan auth en el sistema existente.
+    
+    FIXED: Manejo correcto de query parameters, headers y body JSON.
     """
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Obtener company_id desde header, query param o body
-        company_id = (
-            request.headers.get('X-Company-ID') or
-            request.args.get('company_id') or
-            request.json.get('company_id') if request.is_json else None
-        )
+        company_id = None
         
+        # 1. Intentar desde header
+        company_id = request.headers.get('X-Company-ID')
+        if company_id:
+            logger.debug(f"company_id from header: {company_id}")
+        
+        # 2. Intentar desde query parameter (CRÍTICO PARA GET)
         if not company_id:
+            company_id = request.args.get('company_id')
+            if company_id:
+                logger.debug(f"company_id from query param: {company_id}")
+        
+        # 3. Intentar desde JSON body (solo si es POST/PUT)
+        if not company_id and request.is_json:
+            try:
+                json_data = request.get_json(silent=True)
+                if json_data and 'company_id' in json_data:
+                    company_id = json_data['company_id']
+                    logger.debug(f"company_id from JSON body: {company_id}")
+            except Exception as e:
+                logger.debug(f"Error reading JSON body: {e}")
+        
+        # 4. Validar que se encontró company_id
+        if not company_id:
+            logger.warning("company_id not provided in request")
             return jsonify({
                 "success": False,
                 "error": "company_id is required",
                 "message": "Please provide company_id in header, query param, or body"
             }), 400
         
-        # Validar que la empresa exista
-        company_config = get_company_config(company_id)
-        if not company_config:
+        # 5. Validar que la empresa exista
+        try:
+            company_config = get_company_config(company_id)
+            if not company_config:
+                return jsonify({
+                    "success": False,
+                    "error": "invalid_company",
+                    "message": f"Company '{company_id}' not found"
+                }), 404
+        except Exception as e:
+            logger.error(f"Error validating company {company_id}: {e}")
             return jsonify({
                 "success": False,
-                "error": "invalid_company",
-                "message": f"Company '{company_id}' not found"
-            }), 404
+                "error": "company_validation_failed",
+                "message": "Could not validate company"
+            }), 500
         
-        # Agregar al request context
+        # 6. Agregar al request context
         request.company_id = company_id
         request.company_config = company_config
         
@@ -76,7 +105,15 @@ def validate_json_payload(required_fields: list = None):
                 }), 400
             
             if required_fields:
-                missing = [field for field in required_fields if field not in request.json]
+                json_data = request.get_json(silent=True)
+                if not json_data:
+                    return jsonify({
+                        "success": False,
+                        "error": "invalid_json",
+                        "message": "Invalid JSON body"
+                    }), 400
+                
+                missing = [field for field in required_fields if field not in json_data]
                 if missing:
                     return jsonify({
                         "success": False,
@@ -136,10 +173,10 @@ def list_workflows():
     return jsonify({
         "success": True,
         "company_id": company_id,
-        "total": len(workflows),
+        "count": len(workflows),
         "workflows": [
             {
-                "id": wf.id,
+                "workflow_id": wf.id,
                 "name": wf.name,
                 "description": wf.description,
                 "enabled": wf.enabled,
@@ -236,6 +273,7 @@ def create_workflow():
         workflow = WorkflowGraph.from_dict(workflow_data)
         
     except Exception as e:
+        logger.exception(f"Error parsing workflow data: {e}")
         return jsonify({
             "success": False,
             "error": "invalid_workflow_data",
@@ -279,11 +317,11 @@ def create_workflow():
 @handle_errors
 def update_workflow(workflow_id: str):
     """
-    PUT /api/workflows/{workflow_id}
+    PUT /api/workflows/{workflow_id}?company_id=benova
     Body: {
-        "company_id": "benova",
         "name": "...",
-        "workflow_data": {...}
+        "description": "...",
+        "enabled": true
     }
     
     Actualizar workflow existente.
@@ -422,8 +460,7 @@ def execute_workflow(workflow_id: str):
         "company_id": "benova",
         "context": {
             "user_id": "user_123",
-            "user_message": "Quiero información sobre botox",
-            "trigger_type": "manual"
+            "user_message": "Quiero información sobre botox"
         }
     }
     
@@ -490,24 +527,22 @@ def execute_workflow(workflow_id: str):
         # Log ejecución
         registry.log_execution(workflow_id, result)
         
-        # Actualizar estadísticas
-        from app.workflows.workflow_registry import get_workflow_registry
-        registry = get_workflow_registry()
-        
-        # Actualizar stats mediante query SQL directa
-        from app.models import db
-        db.session.execute(
-            """
-            SELECT update_workflow_execution_stats(%s, %s)
-            """,
-            (workflow_id, result['status'])
-        )
-        db.session.commit()
+        # Actualizar estadísticas usando psycopg2
+        try:
+            conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT update_workflow_execution_stats(%s, %s)",
+                (workflow_id, result['status'])
+            )
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Could not update execution stats: {e}")
         
         logger.info(
-            f"Workflow executed: {workflow_id} - "
-            f"Status: {result['status']} - "
-            f"Duration: {result.get('completed_at', 0) - result.get('started_at', 0)}s"
+            f"Workflow executed: {workflow_id} - Status: {result['status']}"
         )
         
         return jsonify({
@@ -600,14 +635,26 @@ def validate_condition_syntax():
     """
     POST /api/workflows/validate-condition
     Body: {
-        "condition": "{{age}} >= 18 and {{verified}} == true"
+        "condition": "{{age}} >= 18 and {{verified}} == true",
+        "test_context": {"age": 20, "verified": true}
     }
     
     Validar sintaxis de una condición.
     """
     condition = request.json['condition']
+    test_context = request.json.get('test_context', {})
     
+    # Validar sintaxis
     validation = validate_condition(condition)
+    
+    # Si hay contexto de prueba, evaluar también
+    if test_context and validation["valid"]:
+        evaluator = ConditionEvaluator()
+        try:
+            result = evaluator.evaluate(condition, test_context)
+            validation["test_result"] = result
+        except Exception as e:
+            validation["test_error"] = str(e)
     
     return jsonify({
         "success": validation["valid"],
@@ -624,37 +671,51 @@ def list_templates():
     """
     category = request.args.get('category')
     
-    from app.models import db
-    
-    query = "SELECT * FROM workflow_templates WHERE is_public = true"
-    params = []
-    
-    if category:
-        query += " AND category = %s"
-        params.append(category)
-    
-    query += " ORDER BY usage_count DESC, created_at DESC"
-    
-    result = db.session.execute(query, params)
-    
-    templates = []
-    for row in result:
-        templates.append({
-            "template_id": row[1],
-            "name": row[2],
-            "description": row[3],
-            "category": row[4],
-            "business_types": row[6],
-            "required_tools": row[7],
-            "required_agents": row[8],
-            "usage_count": row[9]
-        })
-    
-    return jsonify({
-        "success": True,
-        "total": len(templates),
-        "templates": templates
-    }), 200
+    try:
+        conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        cursor = conn.cursor()
+        
+        query = "SELECT template_id, name, description, category, business_types, required_tools, required_agents, usage_count FROM workflow_templates WHERE is_public = true"
+        params = []
+        
+        if category:
+            query += " AND category = %s"
+            params.append(category)
+        
+        query += " ORDER BY usage_count DESC, created_at DESC"
+        
+        cursor.execute(query, tuple(params) if params else None)
+        rows = cursor.fetchall()
+        
+        templates = []
+        for row in rows:
+            templates.append({
+                "template_id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "category": row[3],
+                "business_types": row[4],
+                "required_tools": row[5],
+                "required_agents": row[6],
+                "usage_count": row[7]
+            })
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "total": len(templates),
+            "templates": templates
+        }), 200
+        
+    except Exception as e:
+        logger.exception(f"Error listing templates: {e}")
+        return jsonify({
+            "success": False,
+            "error": "database_error",
+            "message": "Could not retrieve templates"
+        }), 500
 
 @workflows_bp.route('/stats', methods=['GET'])
 @require_company_context
@@ -672,7 +733,7 @@ def get_workflow_stats():
     
     return jsonify({
         "success": True,
-        "stats": stats
+        **stats
     }), 200
 
 # ============================================================================
