@@ -65,23 +65,6 @@ class ConditionEvaluator:
     def evaluate(self, condition: str, context: Dict[str, Any]) -> bool:
         """
         Evaluar condición de forma segura.
-        
-        Args:
-            condition: Expresión condicional (ej: "{{age}} >= 18")
-            context: Contexto con variables disponibles
-            
-        Returns:
-            Resultado booleano de la evaluación
-            
-        Raises:
-            ValueError: Si la sintaxis es inválida
-            
-        Examples:
-            >>> evaluator = ConditionEvaluator()
-            >>> evaluator.evaluate("{{age}} >= 18", {"age": 25})
-            True
-            >>> evaluator.evaluate("{{status}} in ['active', 'pending']", {"status": "active"})
-            True
         """
         try:
             # Normalizar espacios
@@ -89,6 +72,16 @@ class ConditionEvaluator:
             
             if not condition:
                 raise ValueError("Empty condition")
+            
+            # AGREGAR: Extraer y validar variables
+            variables = self._extract_variables(condition)
+            missing = [var for var in variables if var not in context]
+            
+            if missing:
+                logger.warning(f"Missing variables in context: {missing}")
+                # En vez de fallar, asignar None a las variables faltantes
+                for var in missing:
+                    context[var] = None
             
             # Log para debugging
             logger.debug(f"Evaluating condition: {condition}")
@@ -108,6 +101,13 @@ class ConditionEvaluator:
         except Exception as e:
             logger.error(f"Error evaluating condition '{condition}': {e}")
             raise ValueError(f"Invalid condition: {str(e)}")
+
+    def _extract_variables(self, condition: str) -> list:
+        """Extraer variables de una condición (formato {{variable}})"""
+        import re
+        pattern = r'\{\{([^}]+)\}\}'
+        matches = re.findall(pattern, condition)
+        return [var.strip() for var in matches]
     
     def _evaluate_expression(self, expression: str, context: Dict[str, Any]) -> bool:
         """
