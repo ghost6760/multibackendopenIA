@@ -1,4 +1,4 @@
-# app/workflows/config_agent.py
+# app/workflows/config_agent.py - VERSIÓN COMPLETA
 
 from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
@@ -7,6 +7,8 @@ from app.agents.base_agent import BaseAgent
 from app.config.company_config import CompanyConfig
 from app.services.openai_service import OpenAIService
 import logging
+import time  # ← AGREGADO
+import json  # ← AGREGADO
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ class ConfigAgent(BaseAgent):
         
         # LLM específico para parsing (más potente)
         self.parsing_llm = ChatOpenAI(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",  # Cambiado a modelo disponible
             temperature=0.2  # Bajo para consistencia
         )
         
@@ -69,7 +71,9 @@ AGENTES DISPONIBLES:
 - availability: Verificar disponibilidad
 
 TOOLS DISPONIBLES:
-{available_tools}
+- knowledge_base: Búsqueda en base de conocimiento
+- google_calendar: Integración con calendario
+- send_whatsapp: Enviar mensajes WhatsApp
 
 PROCESO:
 1. Pregunta qué workflow quiere crear
@@ -115,7 +119,7 @@ Sé conversacional y claro."""),
         
         workflow.add_conditional_edges(
             "extract_components",
-            lambda s: "clarify" if s["needs_clarification"] else "generate",
+            lambda s: "clarify" if s.get("needs_clarification") else "generate",
             {
                 "clarify": "ask_clarifications",
                 "generate": "generate_graph"
@@ -128,7 +132,7 @@ Sé conversacional y claro."""),
         
         workflow.add_conditional_edges(
             "confirm",
-            lambda s: "end" if s["approved"] else "extract_components",
+            lambda s: "end" if s.get("approved") else "extract_components",
             {
                 "end": END,
                 "extract_components": "extract_components"
@@ -175,7 +179,7 @@ Sé conversacional y claro."""),
                 return self._continue_conversation(question, state)
             
         except Exception as e:
-            logger.error(f"Error in ConfigAgent.invoke: {e}")
+            logger.exception(f"Error in ConfigAgent.invoke: {e}")
             return f"Disculpa, tuve un problema procesando tu request de workflow. Error: {str(e)}"
     
     def _start_conversation(self, question: str, state: ConfigAgentState) -> str:
@@ -187,14 +191,17 @@ Sé conversacional y claro."""),
         state.extracted_info.update(extracted)
         
         # Determinar qué falta
+        state.clarifications = []
+        
         if not state.extracted_info.get("trigger"):
-            state.clarifications.append("¿Cuándo debe activarse este workflow? (ej: cuando digan 'botox', todos los días a las 9am, etc.)")
+            state.clarifications.append("¿Cuándo debe activarse este workflow? (ej: cuando mencionen 'botox', todos los días a las 9am, etc.)")
         
         if not state.extracted_info.get("agents_needed"):
-            state.clarifications.append("¿Qué agentes deben participar? (sales, support, schedule, etc.)")
+            state.clarifications.append("¿Qué agentes deben participar? (sales, support, schedule, emergency, availability)")
         
         if state.clarifications:
-            return f"Entendido. Para crear tu workflow necesito saber:\n" + "\n".join(f"• {q}" for q in state.clarifications)
+            questions_text = "\n".join(f"• {q}" for q in state.clarifications)
+            return f"Entendido. Para crear tu workflow necesito saber:\n\n{questions_text}"
         else:
             # Tenemos todo, generar
             return self._generate_workflow_response(state)
@@ -223,29 +230,52 @@ Sé conversacional y claro."""),
         prompt = f"""Extrae información de workflow de este texto:
 "{text}"
 
-Retorna JSON con:
-- trigger: ¿Cuándo activar? (keyword/schedule/webhook)
-- agents_needed: Lista de agentes
-- tools_needed: Lista de tools
-- conditions: Lógica if/else
-- description: Resumen
+Retorna SOLO un JSON válido con esta estructura exacta:
+{{
+  "trigger": "keyword" o "schedule" o "webhook",
+  "trigger_value": "palabras clave" o "horario" o "url",
+  "agents_needed": ["sales", "schedule"],
+  "tools_needed": ["knowledge_base"],
+  "conditions": [],
+  "description": "resumen del workflow"
+}}
+
+Si no tienes información para un campo, usa null o [].
 
 JSON:"""
         
-        response = self.parsing_llm.invoke([{"role": "user", "content": prompt}])
-        
         try:
-            import json
-            return json.loads(response.content)
-        except:
+            response = self.parsing_llm.invoke([{"role": "user", "content": prompt}])
+            
+            # Limpiar respuesta (a veces viene con markdown)
+            content = response.content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            
+            parsed = json.loads(content)
+            
+            # Normalizar trigger
+            if parsed.get("trigger_value"):
+                parsed["trigger"] = {
+                    "type": parsed.get("trigger", "keyword"),
+                    "value": parsed["trigger_value"]
+                }
+            
+            return parsed
+            
+        except Exception as e:
+            logger.warning(f"Error parsing with LLM: {e}")
             return {}
     
     def _has_minimum_info(self, state: ConfigAgentState) -> bool:
         """Verificar si tenemos info mínima"""
-        return (
-            state.extracted_info.get("trigger") and
-            state.extracted_info.get("agents_needed")
-        )
+        info = state.extracted_info
+        return bool(info.get("trigger") and info.get("agents_needed"))
     
     def _generate_workflow_response(self, state: ConfigAgentState) -> str:
         """Generar workflow y mostrarlo al usuario"""
@@ -262,45 +292,67 @@ JSON:"""
 
 {description}
 
-¿Te parece correcto? Si quieres hacer cambios, dime qué modificar."""
+**Nombre:** {workflow_graph.name}
+**Total de pasos:** {len(workflow_graph.nodes)}
+
+¿Te parece correcto? Responde:
+- "sí" o "perfecto" para guardarlo
+- "no" o "cambia" para modificarlo
+- Describe cambios específicos que quieras hacer"""
             
         except Exception as e:
-            logger.error(f"Error generating workflow: {e}")
+            logger.exception(f"Error generating workflow: {e}")
             return f"Tuve un problema generando el workflow: {str(e)}"
     
     def _create_workflow_graph_from_info(self, info: Dict) -> 'WorkflowGraph':
         """Crear WorkflowGraph desde información extraída"""
         from app.workflows.workflow_models import WorkflowGraph, WorkflowNode, WorkflowEdge, NodeType, EdgeType
         
+        # Generar nombre descriptivo
+        description = info.get("description", "Workflow generado")
+        workflow_name = description[:50] if description else "Nuevo Workflow"
+        
         workflow = WorkflowGraph(
             id=f"wf_{self.company_config.company_id}_{int(time.time())}",
-            name=info.get("description", "Workflow generado"),
-            description=info.get("description", ""),
+            name=workflow_name,
+            description=description,
             company_id=self.company_config.company_id
         )
         
         # Crear nodos
         node_id_counter = 1
         
-        # Trigger node
+        # 1. Trigger node
+        trigger_config = info.get("trigger", {})
+        if isinstance(trigger_config, dict):
+            trigger_type = trigger_config.get("type", "keyword")
+            trigger_value = trigger_config.get("value", "")
+        else:
+            trigger_type = "keyword"
+            trigger_value = str(trigger_config)
+        
         trigger_node = WorkflowNode(
             id=f"node_{node_id_counter}",
             type=NodeType.TRIGGER,
             name="Trigger",
-            config={"trigger": info.get("trigger")},
+            config={
+                "trigger": trigger_type,
+                "keywords": [trigger_value] if trigger_type == "keyword" else [],
+                "schedule": trigger_value if trigger_type == "schedule" else None
+            },
             position={"x": 100, "y": 100}
         )
         workflow.add_node(trigger_node)
         last_node_id = trigger_node.id
         node_id_counter += 1
         
-        # Agent nodes
+        # 2. Agent nodes
         for agent_name in info.get("agents_needed", []):
             agent_node = WorkflowNode(
                 id=f"node_{node_id_counter}",
                 type=NodeType.AGENT,
                 name=f"{agent_name.title()} Agent",
-                config={"agent_type": agent_name},
+                config={"agent_type": agent_name.lower()},
                 position={"x": 100, "y": 100 + (node_id_counter * 100)}
             )
             workflow.add_node(agent_node)
@@ -316,12 +368,12 @@ JSON:"""
             last_node_id = agent_node.id
             node_id_counter += 1
         
-        # Tool nodes
+        # 3. Tool nodes
         for tool_name in info.get("tools_needed", []):
             tool_node = WorkflowNode(
                 id=f"node_{node_id_counter}",
                 type=NodeType.TOOL,
-                name=tool_name.title(),
+                name=tool_name.replace("_", " ").title(),
                 config={"tool_name": tool_name},
                 position={"x": 100, "y": 100 + (node_id_counter * 100)}
             )
@@ -337,7 +389,7 @@ JSON:"""
             last_node_id = tool_node.id
             node_id_counter += 1
         
-        # End node
+        # 4. End node
         end_node = WorkflowNode(
             id=f"node_{node_id_counter}",
             type=NodeType.END,
@@ -361,13 +413,27 @@ JSON:"""
         lines = []
         for i, node in enumerate(workflow.nodes.values(), 1):
             if node.type.value == "trigger":
-                lines.append(f"{i}. 🎯 Trigger: {node.config.get('trigger')}")
+                trigger_type = node.config.get('trigger', 'keyword')
+                if trigger_type == "keyword":
+                    keywords = node.config.get('keywords', [])
+                    lines.append(f"{i}. 🎯 **Trigger:** Cuando mencionen {', '.join(keywords)}")
+                else:
+                    lines.append(f"{i}. 🎯 **Trigger:** {trigger_type}")
+                    
             elif node.type.value == "agent":
-                lines.append(f"{i}. 🤖 Agente: {node.config.get('agent_type')}")
+                agent_type = node.config.get('agent_type', 'unknown')
+                lines.append(f"{i}. 🤖 **Agente:** {agent_type.title()}")
+                
             elif node.type.value == "tool":
-                lines.append(f"{i}. 🔧 Tool: {node.config.get('tool_name')}")
+                tool_name = node.config.get('tool_name', 'unknown')
+                lines.append(f"{i}. 🔧 **Tool:** {tool_name.replace('_', ' ').title()}")
+                
+            elif node.type.value == "condition":
+                condition = node.config.get('condition', '')
+                lines.append(f"{i}. ❓ **Condición:** {condition}")
+                
             elif node.type.value == "end":
-                lines.append(f"{i}. ✅ Fin")
+                lines.append(f"{i}. ✅ **Fin del workflow**")
         
         return "\n".join(lines)
     
@@ -375,49 +441,140 @@ JSON:"""
         """Finalizar y guardar workflow"""
         try:
             from app.workflows.workflow_registry import WorkflowRegistry
+            from app.workflows.workflow_models import WorkflowGraph
             
             # Crear WorkflowGraph desde draft
-            from app.workflows.workflow_models import WorkflowGraph
             workflow = WorkflowGraph.from_dict(state.workflow_draft)
             
             # Guardar en registry (PostgreSQL)
             registry = WorkflowRegistry()
-            registry.save_workflow(workflow)
+            success = registry.save_workflow(workflow, created_by="config_agent")
             
-            return f"""✅ ¡Workflow creado exitosamente!
+            if success:
+                return f"""✅ **¡Workflow creado exitosamente!**
 
-ID: {workflow.id}
-Nombre: {workflow.name}
+📋 **ID:** `{workflow.id}`
+📝 **Nombre:** {workflow.name}
+🔢 **Nodos:** {len(workflow.nodes)}
+🔗 **Conexiones:** {len(workflow.edges)}
 
-El workflow ya está activo y se ejecutará cuando se cumpla el trigger.
-Puedes verlo en el dashboard de workflows."""
+El workflow ya está guardado y listo para usar.
+Puedes activarlo desde el panel de workflows o ejecutarlo directamente.
+
+¿Quieres crear otro workflow? Solo dime qué necesitas."""
+            else:
+                return "❌ Hubo un problema guardando el workflow. Por favor intenta de nuevo."
             
         except Exception as e:
-            logger.error(f"Error saving workflow: {e}")
-            return f"Error guardando workflow: {str(e)}"
+            logger.exception(f"Error saving workflow: {e}")
+            return f"❌ Error guardando workflow: {str(e)}"
     
-    # Implementaciones de nodos LangGraph (simplificadas)
+    # ═══════════════════════════════════════════════════════════
+    # IMPLEMENTACIONES COMPLETAS DE NODOS LANGGRAPH
+    # ═══════════════════════════════════════════════════════════
+    
     def _parse_request(self, state: Dict) -> Dict:
-        """Nodo LangGraph: parsear request"""
-        # Implementación completa en código final
+        """Nodo LangGraph: parsear request inicial"""
+        messages = state.get("messages", [])
+        if not messages:
+            state["needs_clarification"] = True
+            return state
+        
+        user_message = messages[-1]["content"]
+        
+        # Usar LLM para extraer intención
+        extracted = self._parse_with_llm(user_message)
+        
+        state["extracted_info"] = extracted
+        state["needs_clarification"] = not self._has_minimum_info_dict(extracted)
+        
         return state
     
+    def _has_minimum_info_dict(self, info: Dict) -> bool:
+        """Verificar info mínima desde dict"""
+        return bool(info.get("trigger") and info.get("agents_needed"))
+    
     def _extract_components(self, state: Dict) -> Dict:
-        """Nodo LangGraph: extraer componentes"""
+        """Nodo LangGraph: extraer componentes del workflow"""
+        extracted = state.get("extracted_info", {})
+        
+        # Validar completitud
+        missing = []
+        if not extracted.get("trigger"):
+            missing.append("trigger")
+        if not extracted.get("agents_needed"):
+            missing.append("agents")
+        
+        state["missing_components"] = missing
+        state["needs_clarification"] = len(missing) > 0
+        
         return state
     
     def _ask_clarifications(self, state: Dict) -> Dict:
-        """Nodo LangGraph: hacer preguntas"""
+        """Nodo LangGraph: hacer preguntas sobre componentes faltantes"""
+        missing = state.get("missing_components", [])
+        
+        questions = {
+            "trigger": "¿Cuándo debe activarse este workflow?",
+            "agents": "¿Qué agentes debe usar? (sales, support, schedule, etc.)",
+            "tools": "¿Necesita alguna herramienta especial? (calendar, whatsapp, etc.)"
+        }
+        
+        state["current_question"] = questions.get(missing[0]) if missing else None
+        
         return state
     
     def _generate_workflow_graph(self, state: Dict) -> Dict:
-        """Nodo LangGraph: generar grafo"""
+        """Nodo LangGraph: generar WorkflowGraph"""
+        extracted = state.get("extracted_info", {})
+        
+        # Crear state temporal
+        temp_state = ConfigAgentState()
+        temp_state.extracted_info = extracted
+        
+        # Usar método existente
+        workflow = self._create_workflow_graph_from_info(extracted)
+        
+        state["workflow_graph"] = workflow
+        state["workflow_draft"] = workflow.to_dict()
+        
         return state
     
     def _preview_workflow(self, state: Dict) -> Dict:
-        """Nodo LangGraph: preview"""
+        """Nodo LangGraph: mostrar preview del workflow"""
+        workflow = state.get("workflow_graph")
+        
+        if workflow:
+            # Crear state temporal
+            temp_state = ConfigAgentState()
+            temp_state.extracted_info = state.get("extracted_info", {})
+            
+            description = self._describe_workflow(workflow)
+            state["preview_text"] = description
+        
         return state
     
     def _confirm_workflow(self, state: Dict) -> Dict:
-        """Nodo LangGraph: confirmar"""
+        """Nodo LangGraph: confirmar con usuario"""
+        messages = state.get("messages", [])
+        if not messages:
+            state["approved"] = False
+            return state
+        
+        last_message = messages[-1]["content"].lower()
+        
+        # Detectar confirmación
+        affirmative = ["si", "sí", "yes", "ok", "dale", "perfecto", "correcto", "exacto", "genial"]
+        negative = ["no", "cancel", "cambiar", "modificar", "espera", "cambia"]
+        
+        if any(word in last_message for word in affirmative):
+            state["approved"] = True
+            state["stage"] = "complete"
+        elif any(word in last_message for word in negative):
+            state["approved"] = False
+            state["stage"] = "gathering"  # Volver a recolectar
+        else:
+            state["needs_confirmation"] = True
+            state["approved"] = False
+        
         return state
