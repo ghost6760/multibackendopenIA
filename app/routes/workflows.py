@@ -768,3 +768,148 @@ def health_check():
             "status": "unhealthy",
             "error": str(e)
         }), 500
+
+# ═══════════════════════════════════════════════════════════
+# CONFIGURATION AGENT - Chat conversacional para crear workflows
+# ═══════════════════════════════════════════════════════════
+
+@bp.route('/config-chat', methods=['POST'])
+@handle_errors
+def config_agent_chat():
+    """
+    Chat conversacional para crear workflows mediante lenguaje natural.
+    
+    POST /api/workflows/config-chat
+    Body: {
+        "company_id": "benova",
+        "user_id": "admin_001",  # Opcional, se auto-genera
+        "message": "Quiero crear un workflow para cuando pregunten por botox"
+    }
+    
+    Returns: {
+        "success": true,
+        "response": "¡Perfecto! Para crear tu workflow necesito saber...",
+        "user_id": "admin_001",
+        "stage": "gathering"
+    }
+    """
+    data = request.get_json()
+    company_id = data.get('company_id')
+    user_id = data.get('user_id', f'user_{int(time.time())}')
+    message = data.get('message')
+    
+    if not company_id:
+        return jsonify({
+            "success": False,
+            "error": "company_id is required"
+        }), 400
+    
+    if not message:
+        return jsonify({
+            "success": False,
+            "error": "message is required"
+        }), 400
+    
+    try:
+        # Obtener configuración de empresa
+        company_config = get_company_config(company_id)
+        if not company_config:
+            return jsonify({
+                "success": False,
+                "error": f"Company {company_id} not found"
+            }), 404
+        
+        # Crear ConfigAgent
+        from app.workflows.config_agent import ConfigAgent
+        from app.services.openai_service import OpenAIService
+        
+        openai_service = OpenAIService()
+        config_agent = ConfigAgent(company_config, openai_service)
+        
+        # Procesar mensaje
+        response_text = config_agent.invoke({
+            "user_id": user_id,
+            "question": message,
+            "company_id": company_id
+        })
+        
+        # Obtener estado actual
+        state = config_agent.user_states.get(user_id)
+        current_stage = state.stage if state else "complete"
+        
+        return jsonify({
+            "success": True,
+            "response": response_text,
+            "user_id": user_id,
+            "stage": current_stage
+        })
+        
+    except Exception as e:
+        logger.exception(f"Error in config agent chat: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Error procesando tu mensaje. Por favor intenta de nuevo."
+        }), 500
+
+
+@bp.route('/config-chat/reset', methods=['POST'])
+@handle_errors
+def reset_config_chat():
+    """
+    Resetear conversación del ConfigAgent.
+    
+    POST /api/workflows/config-chat/reset
+    Body: {
+        "company_id": "benova",
+        "user_id": "admin_001"
+    }
+    """
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "error": "user_id is required"
+        }), 400
+    
+    # En producción real, esto debería limpiar estado en Redis
+    # Por ahora, el ConfigAgent maneja estado en memoria
+    
+    return jsonify({
+        "success": True,
+        "message": f"Conversation reset for user {user_id}",
+        "user_id": user_id
+    })
+
+
+@bp.route('/config-chat/status', methods=['GET'])
+@handle_errors
+def config_chat_status():
+    """
+    Obtener estado actual de conversación.
+    
+    GET /api/workflows/config-chat/status?user_id=admin_001&company_id=benova
+    """
+    user_id = request.args.get('user_id')
+    company_id = request.args.get('company_id')
+    
+    if not user_id or not company_id:
+        return jsonify({
+            "success": False,
+            "error": "user_id and company_id are required"
+        }), 400
+    
+    # Retornar info básica
+    return jsonify({
+        "success": True,
+        "user_id": user_id,
+        "company_id": company_id,
+        "has_active_conversation": False,  # Implementar lookup real
+        "endpoints_available": [
+            "/api/workflows/config-chat",
+            "/api/workflows/config-chat/reset",
+            "/api/workflows/config-chat/status"
+        ]
+    })
