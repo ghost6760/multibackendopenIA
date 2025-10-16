@@ -393,12 +393,24 @@ class WorkflowExecutor:
             f"[{self.workflow.company_id}] Executing agent '{agent_type}' "
             f"for user {user_id}"
         )
+
+        conversation_id = (
+            self.state.context.get("conversation_id") or
+            self.state.get_variable("conversation_id") or
+            None
+        )
+        
+        logger.info(
+            f"[{self.workflow.company_id}] Executing agent '{agent_type}' "
+            f"for user {user_id}, conversation: {conversation_id}"
+        )
         
         # ✅ USAR EL ORCHESTRATOR EXISTENTE
         # El orchestrator se encarga de rutear al agente correcto
         response, agent_used = self.orchestrator.get_response(
             question=user_message,
             user_id=user_id,
+            conversation_id=conversation_id,
             conversation_manager=self.conversation_manager or ConversationManager(),
             media_type="text",
             media_context=None
