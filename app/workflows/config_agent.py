@@ -99,12 +99,24 @@ Sé conversacional y claro."""),
         return self.prompt_template
     
     def _build_state_machine(self) -> StateGraph:
-        """
-        Construir state machine con LangGraph para conversación multi-step.
-        """
+        """Construir state machine con LangGraph"""
         from langgraph.graph import StateGraph, END
+        from typing import TypedDict
         
-        workflow = StateGraph()
+        # Definir schema del estado
+        class WorkflowState(TypedDict):
+            messages: list
+            extracted_info: dict
+            needs_clarification: bool
+            missing_components: list
+            current_question: str
+            workflow_graph: dict
+            workflow_draft: dict
+            preview_text: str
+            approved: bool
+            stage: str
+        
+        workflow = StateGraph(WorkflowState)
         
         # Nodos
         workflow.add_node("parse_request", self._parse_request)
