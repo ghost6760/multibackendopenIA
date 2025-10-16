@@ -331,6 +331,7 @@ class WorkflowExecutor:
         Delega a métodos específicos.
         """
         node_type_executors = {
+            NodeType.TRIGGER: self._execute_trigger_node,  # ← AGREGAR ESTA LÍNEA
             NodeType.AGENT: self._execute_agent_node,
             NodeType.TOOL: self._execute_tool_node,
             NodeType.CONDITION: self._execute_condition_node,
@@ -348,7 +349,23 @@ class WorkflowExecutor:
             raise ValueError(f"No executor for node type: {node.type}")
         
         return await executor(node)
-    
+
+    async def _execute_trigger_node(self, node: WorkflowNode) -> Any:
+        """
+        Ejecutar nodo trigger.
+        Los triggers simplemente pasan el contexto inicial.
+        """
+        logger.debug(f"Executing trigger node: {node.name}")
+        
+        # Los triggers no modifican el contexto, solo lo activan
+        return {
+            "status": "success",
+            "triggered": True,
+            "trigger_type": node.config.get("trigger", "manual"),
+            "trigger_keywords": node.config.get("keywords", []),
+            "message": f"Workflow triggered by {node.name}"
+        }
+        
     async def _execute_agent_node(self, node: WorkflowNode) -> str:
         """
         Ejecutar nodo de agente.
