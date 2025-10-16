@@ -393,10 +393,15 @@ class WorkflowGraph:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowGraph":
         """Deserializar desde dict"""
+        
+        # CAMBIAR ESTA LÍNEA: Hacer id opcional con auto-generación
+        import time
+        workflow_id = data.get("id") or f"wf_{data.get('company_id', 'unknown')}_{int(time.time())}"
+        
         workflow = cls(
-            id=data["id"],
+            id=workflow_id,  # Usar el id generado o proporcionado
             name=data["name"],
-            description=data["description"],
+            description=data.get("description", ""),  # También hacer opcional
             company_id=data["company_id"],
             start_node_id=data.get("start_node_id"),
             variables=data.get("variables", {}),
