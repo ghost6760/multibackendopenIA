@@ -277,7 +277,7 @@ class WorkflowRegistry:
     
     def _insert_in_database(self, workflow: WorkflowGraph, 
                            workflow_json: str, created_by: str) -> bool:
-        """Insertar workflow en PostgreSQL"""
+        """Insertar workflow en PostgreSQL - CORREGIDO"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -285,13 +285,18 @@ class WorkflowRegistry:
             query = """
                 INSERT INTO workflows (
                     workflow_id, company_id, name, description,
-                    workflow_data, version, enabled,
-                    tags, total_nodes, total_edges,
-                    created_by, updated_by
+                    workflow_data, enabled, version,
+                    tags, triggers, variables, start_node_id,
+                    total_nodes, total_edges,
+                    execution_count, success_count, failure_count,
+                    created_by, modified_by
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """
+            
+            # Convertir tags de lista Python a array PostgreSQL
+            tags_array = workflow.tags if workflow.tags else []
             
             cursor.execute(query, (
                 workflow.id,
@@ -299,63 +304,77 @@ class WorkflowRegistry:
                 workflow.name,
                 workflow.description,
                 workflow_json,
-                workflow.version,
                 workflow.enabled,
-                workflow.tags,
-                len(workflow.nodes),      # ← AGREGADO
-                len(workflow.edges),      # ← AGREGADO
+                workflow.version,
+                tags_array,  # PostgreSQL acepta lista Python para text[]
+                '[]',  # triggers (JSONB vacío por ahora)
+                '{}',  # variables (JSONB vacío por ahora)
+                workflow.start_node_id,
+                len(workflow.nodes),
+                len(workflow.edges),
+                0,  # execution_count
+                0,  # success_count
+                0,  # failure_count
                 created_by,
-                created_by                # updated_by = created_by en insert
+                created_by  # modified_by = created_by en INSERT
             ))
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            # Invalidar cache de empresa
+            # Invalidar cache
             self._invalidate_company_cache(workflow.company_id)
             
-            logger.info(f"Workflow {workflow.id} inserted in database")
+            logger.info(f"✅ Workflow {workflow.id} inserted successfully")
             return True
             
         except Exception as e:
-            logger.exception(f"Error inserting workflow {workflow.id}: {e}")
+            logger.exception(f"❌ Error inserting workflow {workflow.id}: {e}")
             if 'conn' in locals():
-                conn.rollback()
-                conn.close()
+                try:
+                    conn.rollback()
+                    conn.close()
+                except:
+                    pass
             return False
     
     def _update_in_database(self, workflow: WorkflowGraph, 
                            workflow_json: str, updated_by: str) -> bool:
-        """Actualizar workflow en PostgreSQL"""
+        """Actualizar workflow en PostgreSQL - CORREGIDO"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
             
             query = """
-                UPDATE workflows 
-                SET name = %s,
+                UPDATE workflows SET
+                    name = %s,
                     description = %s,
                     workflow_data = %s,
                     enabled = %s,
-                    tags = %s,
                     version = %s,
+                    tags = %s,
+                    start_node_id = %s,
                     total_nodes = %s,
                     total_edges = %s,
-                    updated_by = %s,
-                    updated_at = NOW()
+                    modified_by = %s,
+                    modified_at = CURRENT_TIMESTAMP
                 WHERE workflow_id = %s
             """
+            
+            # Convertir tags de lista Python a array PostgreSQL
+            tags_array = workflow.tags if workflow.tags else []
             
             cursor.execute(query, (
                 workflow.name,
                 workflow.description,
                 workflow_json,
                 workflow.enabled,
-                workflow.tags,
                 workflow.version,
-                len(workflow.nodes),      # ← AGREGADO
-                len(workflow.edges),      # ← AGREGADO
+                tags_array,  # PostgreSQL acepta lista Python para text[]
+                workflow.start_node_id,
+                len(workflow.nodes),
+                len(workflow.edges),
                 updated_by,
                 workflow.id
             ))
@@ -368,14 +387,17 @@ class WorkflowRegistry:
             self._invalidate_cache(workflow.id)
             self._invalidate_company_cache(workflow.company_id)
             
-            logger.info(f"Workflow {workflow.id} updated in database")
+            logger.info(f"✅ Workflow {workflow.id} updated successfully")
             return True
             
         except Exception as e:
-            logger.exception(f"Error updating workflow {workflow.id}: {e}")
+            logger.exception(f"❌ Error updating workflow {workflow.id}: {e}")
             if 'conn' in locals():
-                conn.rollback()
-                conn.close()
+                try:
+                    conn.rollback()
+                    conn.close()
+                except:
+                    pass
             return False
     
     def _get_from_database(self, workflow_id: str) -> Optional[WorkflowGraph]:
