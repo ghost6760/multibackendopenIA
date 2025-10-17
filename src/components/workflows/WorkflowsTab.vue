@@ -1,4 +1,9 @@
-<template>
+const activeSection = ref('chat')
+const showEnabledOnly = ref(false)
+const showDetailModal = ref(false)
+const selectedWorkflow = ref(null)
+const showExecutorModal = ref(false)
+const workflowToExecute = ref(null)<template>
   <div class="tab-content" :class="{ 'active': isActive }" id="workflows">
     <!-- Company validation -->
     <div v-if="!appStore.hasCompanySelected" class="warning-message">
@@ -283,6 +288,25 @@
       @edit="handleEditFromModal"
       @delete="handleDeleteFromModal"
     />
+    
+    <!-- Workflow Executor Modal -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div 
+          v-if="showExecutorModal" 
+          class="modal-overlay"
+          @click="handleExecutorOverlayClick"
+        >
+          <div class="modal-container" @click.stop>
+            <WorkflowExecutor
+              :workflow="workflowToExecute"
+              @close="closeExecutorModal"
+              @executed="handleExecutionComplete"
+            />
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -297,6 +321,7 @@ import { useNotifications } from '@/composables/useNotifications'
 import ConfigAgentChat from './ConfigAgentChat.vue'
 import WorkflowList from './WorkflowList.vue'
 import WorkflowDetailModal from './WorkflowDetailModal.vue'
+import WorkflowExecutor from './WorkflowExecutor.vue'
 
 // ============================================================================
 // PROPS
@@ -402,17 +427,33 @@ const handleExecuteWorkflow = async (workflowId) => {
     return
   }
   
-  const context = {
-    user_id: 'web_ui_user',
-    user_message: 'Ejecutado desde interfaz web',
-    executed_from: 'workflows_tab'
+  // Abrir modal de executor
+  workflowToExecute.value = workflow
+  showExecutorModal.value = true
+}
+
+const closeExecutorModal = () => {
+  showExecutorModal.value = false
+  workflowToExecute.value = null
+}
+
+const handleExecutorOverlayClick = (event) => {
+  if (event.target.classList.contains('modal-overlay')) {
+    closeExecutorModal()
+  }
+}
+
+const handleExecutionComplete = (result) => {
+  console.log('[WORKFLOWS-TAB] Execution completed:', result)
+  
+  if (result.status === 'success') {
+    showNotification('✅ Workflow ejecutado exitosamente', 'success', 5000)
   }
   
-  const result = await executeWorkflow(workflowId, context)
-  
-  if (result) {
-    console.log('[WORKFLOWS-TAB] Execution result:', result)
-  }
+  // Opcional: cerrar modal después de ejecución exitosa
+  // setTimeout(() => {
+  //   closeExecutorModal()
+  // }, 3000)
 }
 
 const handleEditWorkflow = (workflowId) => {
@@ -856,5 +897,56 @@ watch(() => props.isActive, async (isActive) => {
   .stats-grid {
     grid-template-columns: 1fr;
   }
+  
+  .modal-container {
+    width: 95vw;
+    max-height: 90vh;
+  }
+}
+
+/* Modal Overlay para Executor */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.modal-container {
+  max-width: 800px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+/* Modal Transitions */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-container,
+.modal-leave-active .modal-container {
+  transition: transform 0.3s ease;
+}
+
+.modal-enter-from .modal-container,
+.modal-leave-to .modal-container {
+  transform: scale(0.95) translateY(-30px);
 }
 </style>
