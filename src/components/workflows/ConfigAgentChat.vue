@@ -179,7 +179,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useChatConversation } from '@/composables/useChatConversation'
 import { useNotifications } from '@/composables/useNotifications'
-import WorkflowPreviewCard from './WorkflowPreviewCard.vue'
+import WorkflowPreview from './WorkflowPreview.vue'
 
 // ============================================================================
 // PROPS & EMITS
