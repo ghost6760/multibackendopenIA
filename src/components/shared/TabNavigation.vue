@@ -118,6 +118,14 @@ const tabs = ref([
     notificationCount: 0
   },
   {
+    id: 'workflows',
+    name: 'Workflows',
+    icon: '⚙️',
+    requiresCompany: true,
+    disabled: false,
+    notificationCount: 0
+  },
+  {
     id: 'conversations',
     name: 'Conversaciones',
     icon: '💬',
