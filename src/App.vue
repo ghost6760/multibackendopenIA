@@ -61,7 +61,7 @@ const onTabContentLoaded = (tabName) => {
  */
 const loadTabContent = async (tabName) => {
   try {
-    const shouldShowLoader = ['dashboard', 'prompts', 'documents', 'conversations', 'health'].includes(tabName)
+    const shouldShowLoader = ['dashboard', 'prompts', 'documents', 'workflows', 'conversations', 'health'].includes(tabName)
     
     if (shouldShowLoader) {
       appStore.setLoadingOverlay(true)
@@ -84,7 +84,7 @@ const initializeTabs = () => {
   const urlParams = new URLSearchParams(window.location.search)
   const defaultTab = urlParams.get('tab')
   
-  const validTabs = ['dashboard', 'documents', 'conversations', 'multimedia', 'prompts', 'admin', 'enterprise', 'health']
+  const validTabs = ['dashboard', 'documents', 'workflows', 'conversations', 'multimedia', 'prompts', 'admin', 'enterprise', 'health']
   
   if (defaultTab && validTabs.includes(defaultTab)) {
     appStore.setActiveTab(defaultTab)
