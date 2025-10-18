@@ -22,6 +22,13 @@
         :isActive="appStore.activeTab === 'documents'"
         @content-loaded="onTabContentLoaded"
       />
+
+      <!-- Workflows Tab -->
+      <WorkflowsTab 
+        v-if="appStore.activeTab === 'workflows'"
+        :isActive="appStore.activeTab === 'workflows'"
+        @content-loaded="onTabContentLoaded"
+      />
       
       <!-- Conversations Tab -->
       <ConversationsTab 
@@ -79,6 +86,7 @@ import TabNavigation from '@/components/shared/TabNavigation.vue'
 // Components - Tab Content
 import DashboardTab from '@/components/dashboard/DashboardTab.vue'
 import DocumentsTab from '@/components/documents/DocumentsTab.vue'
+import WorkflowsTab from '@/components/workflows/WorkflowsTab.vue'
 import ConversationsTab from '@/components/conversations/ConversationsTab.vue'
 import MultimediaTab from '@/components/multimedia/MultimediaTab.vue'
 import PromptsTab from '@/components/prompts/PromptsTab.vue'
