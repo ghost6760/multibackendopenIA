@@ -32,6 +32,18 @@ const routes = [
       requiresCompany: true
     }
   },
+
+  {
+    path: '/workflows',
+    name: 'Workflows',
+    component: () => import('@/views/WorkflowsView.vue'),
+    meta: {
+      title: 'Workflows - Benova',
+      icon: '⚙️',
+      label: 'Workflows',
+      requiresCompany: true
+    }
+  },
   {
     path: '/conversaciones',
     name: 'Conversaciones',
