@@ -36,7 +36,7 @@ class MultiAgentOrchestrator:
         company_config: CompanyConfig = None,
         agents: Dict[str, Any] = None,
         conversation_manager: Optional[ConversationManager] = None,
-        **kwargs  # ← NUEVO: Captura argumentos legacy
+        **kwargs  # ← Captura argumentos legacy
     ):
         """
         Inicializar orquestador con LangGraph.
@@ -47,7 +47,7 @@ class MultiAgentOrchestrator:
             company_config: Configuración de la empresa
             agents: Diccionario de agentes {nombre: instancia}
             conversation_manager: Manager de conversaciones
-            **kwargs: Captura argumentos legacy (company_id, config, etc)
+            **kwargs: Captura argumentos legacy (company_id, openai_service, etc)
         """
         
         # ===== COMPATIBILIDAD BACKWARD =====
@@ -61,15 +61,16 @@ class MultiAgentOrchestrator:
                     f"Update caller to pass company_config object."
                 )
                 
-                # Buscar company_config en otros argumentos posibles
-                if 'config' in kwargs:
-                    company_config = kwargs['config']
-                else:
-                    # Fallback: crear CompanyConfig básico
-                    company_config = CompanyConfig(
-                        company_id=company_id,
-                        company_name=kwargs.get('company_name', company_id),
-                        services=kwargs.get('services', 'services')
+                # ✅ OBTENER CompanyConfig COMPLETO del manager
+                try:
+                    from app.config.company_config import get_company_config
+                    company_config = get_company_config(company_id)
+                    logger.info(f"✅ Retrieved full CompanyConfig for {company_id}")
+                except Exception as e:
+                    logger.error(f"Failed to get CompanyConfig for {company_id}: {e}")
+                    raise ValueError(
+                        f"Cannot initialize MultiAgentOrchestrator: "
+                        f"company_id '{company_id}' not found in config manager"
                     )
             else:
                 raise ValueError("Either company_config or company_id must be provided")
@@ -87,13 +88,23 @@ class MultiAgentOrchestrator:
         if not agents:
             logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
         
+        # ===== IGNORAR openai_service de kwargs (legacy) =====
+        # El orchestrator no necesita openai_service directamente,
+        # los agentes ya lo tienen inyectado
+        if 'openai_service' in kwargs:
+            logger.debug(f"[{company_config.company_id}] Ignoring openai_service from kwargs (legacy)")
+        
         # ===== INICIALIZACIÓN NORMAL =====
         self.company_config = company_config
         self.agents = agents
         self.conversation_manager = conversation_manager or ConversationManager()
         
         # Construir grafo
-        self.graph = self._build_orchestrator_graph()
+        try:
+            self.graph = self._build_orchestrator_graph()
+        except Exception as e:
+            logger.exception(f"Error building orchestrator graph for {company_config.company_id}: {e}")
+            raise
         
         logger.info(
             f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
