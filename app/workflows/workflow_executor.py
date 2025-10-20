@@ -366,16 +366,25 @@ class WorkflowExecutor:
             "message": f"Workflow triggered by {node.name}"
         }
         
+    """
+    Agregar estos métodos a la clase WorkflowExecutor para mejorar
+    el contexto entre nodos
+    """
+    
     async def _execute_agent_node(self, node: WorkflowNode) -> str:
         """
-        Ejecutar nodo de agente.
-        ✅ USA orchestrator.get_response() del sistema existente
+        Ejecutar nodo de agente CON contexto enriquecido.
+        
+        MEJORAS vs versión actual:
+        ✅ Incluye contexto de nodos anteriores
+        ✅ Mantiene coherencia en conversaciones multi-paso
+        ✅ Permite que agentes "vean" lo que pasó antes
         """
         agent_type = node.config.get("agent_type")
         if not agent_type:
             raise ValueError(f"Node {node.id}: agent_type not specified")
         
-        # Obtener mensaje del contexto o variable
+        # Obtener datos del contexto
         user_message = (
             self.state.context.get("user_message") or 
             self.state.context.get("question") or
@@ -389,15 +398,16 @@ class WorkflowExecutor:
             "workflow_execution"
         )
         
-        logger.info(
-            f"[{self.workflow.company_id}] Executing agent '{agent_type}' "
-            f"for user {user_id}"
-        )
-
         conversation_id = (
             self.state.context.get("conversation_id") or
             self.state.get_variable("conversation_id") or
             None
+        )
+        
+        # ✅ NUEVO: Enriquecer mensaje con contexto de workflow
+        enriched_message = self._enrich_message_with_workflow_context(
+            user_message=user_message,
+            node=node
         )
         
         logger.info(
@@ -405,10 +415,9 @@ class WorkflowExecutor:
             f"for user {user_id}, conversation: {conversation_id}"
         )
         
-        # ✅ USAR EL ORCHESTRATOR EXISTENTE
-        # El orchestrator se encarga de rutear al agente correcto
+        # Ejecutar con orchestrator (YA incluye RAG, prompts, historial)
         response, agent_used = self.orchestrator.get_response(
-            question=user_message,
+            question=enriched_message,  # ← Mensaje enriquecido con contexto
             user_id=user_id,
             conversation_id=conversation_id,
             conversation_manager=self.conversation_manager or ConversationManager(),
@@ -416,12 +425,11 @@ class WorkflowExecutor:
             media_context=None
         )
         
-        # Guardar respuesta en variable si está configurado
+        # Guardar respuesta en variables
         output_var = node.config.get("output_variable")
         if output_var:
             self.state.set_variable(output_var, response)
         
-        # También guardar en variable estándar del agente
         self.state.set_variable(f"{agent_type}_response", response)
         
         logger.info(
@@ -430,6 +438,183 @@ class WorkflowExecutor:
         )
         
         return response
+    
+    
+    def _enrich_message_with_workflow_context(
+        self, 
+        user_message: str, 
+        node: WorkflowNode
+    ) -> str:
+        """
+        Enriquecer mensaje del usuario con contexto del workflow.
+        
+        Incluye:
+        - Respuestas de agentes anteriores
+        - Variables relevantes del workflow
+        - Outputs de tools ejecutados
+        
+        Args:
+            user_message: Mensaje original del usuario
+            node: Nodo actual que se va a ejecutar
+            
+        Returns:
+            Mensaje enriquecido con contexto
+        """
+        # Si no hay historial, retornar mensaje original
+        if not self.state.execution_history:
+            return user_message
+        
+        # Configuración: ¿Este nodo necesita contexto?
+        include_context = node.config.get("include_workflow_context", True)
+        if not include_context:
+            return user_message
+        
+        # Construir contexto
+        context_parts = []
+        
+        # 1. Contexto de agentes anteriores (últimos 3)
+        agent_contexts = self._extract_agent_contexts()
+        if agent_contexts:
+            context_parts.append("**Contexto de agentes anteriores:**")
+            context_parts.extend(agent_contexts)
+        
+        # 2. Contexto de tools ejecutados
+        tool_contexts = self._extract_tool_contexts()
+        if tool_contexts:
+            context_parts.append("\n**Resultados de herramientas:**")
+            context_parts.extend(tool_contexts)
+        
+        # 3. Variables importantes del workflow
+        important_vars = self._extract_important_variables()
+        if important_vars:
+            context_parts.append("\n**Información relevante:**")
+            context_parts.extend(important_vars)
+        
+        # Construir mensaje final
+        if context_parts:
+            workflow_context = "\n".join(context_parts)
+            enriched = f"""[CONTEXTO DEL WORKFLOW]
+    {workflow_context}
+    
+    [MENSAJE DEL USUARIO]
+    {user_message}
+    
+    Por favor, considera el contexto anterior al responder."""
+            return enriched
+        
+        return user_message
+    
+    
+    def _extract_agent_contexts(self, max_agents: int = 3) -> List[str]:
+        """
+        Extraer contexto de agentes ejecutados previamente.
+        
+        Returns:
+            Lista de strings con contexto de agentes
+        """
+        contexts = []
+        agent_count = 0
+        
+        # Recorrer historial en orden inverso (más recientes primero)
+        for record in reversed(self.state.execution_history):
+            if agent_count >= max_agents:
+                break
+            
+            # Solo nodos de tipo agente con output exitoso
+            if "agent" not in record.get("node_name", "").lower():
+                continue
+            
+            if record["status"] != "success" or not record.get("output"):
+                continue
+            
+            output = record["output"]
+            
+            # Truncar si es muy largo
+            if len(output) > 300:
+                output = output[:300] + "..."
+            
+            contexts.append(
+                f"- {record['node_name']}: {output}"
+            )
+            agent_count += 1
+        
+        return list(reversed(contexts))  # Orden cronológico
+    
+    
+    def _extract_tool_contexts(self, max_tools: int = 3) -> List[str]:
+        """
+        Extraer resultados de tools ejecutados.
+        
+        Returns:
+            Lista de strings con resultados de tools
+        """
+        contexts = []
+        tool_count = 0
+        
+        for record in reversed(self.state.execution_history):
+            if tool_count >= max_tools:
+                break
+            
+            # Solo nodos de tipo tool
+            if "tool" not in record.get("node_name", "").lower():
+                continue
+            
+            if record["status"] != "success" or not record.get("output"):
+                continue
+            
+            output = record["output"]
+            
+            # Si es dict, extraer info relevante
+            if isinstance(output, dict):
+                if output.get("success"):
+                    data = output.get("data", {})
+                    contexts.append(
+                        f"- {record['node_name']}: {data}"
+                    )
+                else:
+                    contexts.append(
+                        f"- {record['node_name']}: Error - {output.get('error')}"
+                    )
+            else:
+                contexts.append(
+                    f"- {record['node_name']}: {str(output)[:200]}"
+                )
+            
+            tool_count += 1
+        
+        return list(reversed(contexts))
+    
+    
+    def _extract_important_variables(self) -> List[str]:
+        """
+        Extraer variables importantes del workflow.
+        
+        Variables importantes son aquellas que:
+        - Tienen prefijo 'important_' o 'user_'
+        - Son strings o números (no objetos complejos)
+        
+        Returns:
+            Lista de strings con variables
+        """
+        important = []
+        
+        for key, value in self.state.variables.items():
+            # Ignorar variables internas
+            if key.endswith("_response") or key.endswith("_result"):
+                continue
+            
+            # Solo variables marcadas como importantes o de usuario
+            if not (key.startswith("important_") or key.startswith("user_")):
+                continue
+            
+            # Solo tipos simples
+            if not isinstance(value, (str, int, float, bool)):
+                continue
+            
+            important.append(f"- {key}: {value}")
+        
+        return important
+
     
     async def _execute_tool_node(self, node: WorkflowNode) -> Dict[str, Any]:
         """
