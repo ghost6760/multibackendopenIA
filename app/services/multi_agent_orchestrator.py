@@ -678,33 +678,94 @@ class MultiAgentOrchestrator:
     
     def set_vectorstore_service(self, vectorstore_service: Any):
         """
-        Compatibilidad con MultiAgentFactory.
+        Inyectar vectorstore service al orchestrator.
         
-        En el nuevo orchestrator, el vectorstore ya está en los agentes,
-        por lo que este método no hace nada. Se mantiene para no romper
-        el código del factory.
+        ✅ CORREGIDO: Ahora SÍ guarda la referencia y propaga al tool_executor
         """
-        logger.debug(
-            f"[{self.company_config.company_id}] set_vectorstore_service called "
-            f"(ignored - agents already have vectorstore)"
+        self.vectorstore_service = vectorstore_service
+        
+        logger.info(
+            f"[{self.company_config.company_id}] Vectorstore service configured",
+            extra={"service_type": type(vectorstore_service).__name__}
         )
-        # No hacer nada - los agentes ya tienen vectorstore configurado
-        pass
+        
+        # Si ya tenemos tool_executor, inyectarle el vectorstore
+        if hasattr(self, 'tool_executor') and self.tool_executor:
+            self.tool_executor.set_vectorstore_service(vectorstore_service)
+            logger.debug(f"[{self.company_config.company_id}] Vectorstore injected to ToolExecutor")
     
     def set_tool_executor(self, tool_executor: Any):
         """
-        Compatibilidad con MultiAgentFactory.
+        Inyectar tool executor al orchestrator.
         
-        En el nuevo orchestrator, los tools ya están en los agentes,
-        por lo que este método no hace nada. Se mantiene para no romper
-        el código del factory.
+        ✅ CORREGIDO: Ahora SÍ guarda la referencia
         """
-        logger.debug(
-            f"[{self.company_config.company_id}] set_tool_executor called "
-            f"(ignored - agents already have tools)"
+        self.tool_executor = tool_executor
+        
+        # Si ya tenemos vectorstore, inyectarlo al executor
+        if hasattr(self, 'vectorstore_service') and self.vectorstore_service:
+            tool_executor.set_vectorstore_service(self.vectorstore_service)
+            logger.debug(f"[{self.company_config.company_id}] Vectorstore injected to ToolExecutor")
+        
+        # Log de tools disponibles
+        available_tools = tool_executor.get_available_tools()
+        tools_ready = [name for name, available in available_tools.items() if available]
+        
+        logger.info(
+            f"[{self.company_config.company_id}] ToolExecutor configured",
+            extra={
+                "total_tools": len(available_tools),
+                "ready_tools": len(tools_ready),
+                "tools": tools_ready
+            }
         )
-        # No hacer nada - los agentes ya tienen tools configurados
-        pass
+    
+    def execute_tool(self, tool_name: str, parameters: dict) -> dict:
+        """
+        ✅ NUEVO: Ejecutar una tool desde el orchestrator.
+        
+        Este método es llamado por workflows para ejecutar tools.
+        
+        Args:
+            tool_name: Nombre de la tool (ej: "knowledge_base", "google_calendar")
+            parameters: Parámetros para la tool
+        
+        Returns:
+            Dict con resultado de la tool: {"success": bool, "data": Any, "message": str}
+        """
+        if not hasattr(self, 'tool_executor') or not self.tool_executor:
+            logger.error(f"[{self.company_config.company_id}] ToolExecutor not configured")
+            return {
+                "success": False,
+                "error": "ToolExecutor not configured",
+                "message": "Sistema de herramientas no disponible"
+            }
+        
+        logger.debug(
+            f"[{self.company_config.company_id}] Executing tool: {tool_name}",
+            extra={"parameters": parameters}
+        )
+        
+        try:
+            result = self.tool_executor.execute_tool(tool_name, parameters)
+            
+            logger.info(
+                f"[{self.company_config.company_id}] Tool executed: {tool_name}",
+                extra={
+                    "success": result.get("success"),
+                    "has_data": "data" in result
+                }
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.exception(f"[{self.company_config.company_id}] Error executing tool {tool_name}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Error ejecutando herramienta: {tool_name}"
+            }
     
     def health_check(self) -> Dict[str, Any]:
         """
@@ -712,13 +773,34 @@ class MultiAgentOrchestrator:
         Compatibilidad con código existente.
         """
         try:
-            return {
+            # Check básico
+            health = {
                 "system_healthy": True,
                 "company_id": self.company_config.company_id,
                 "agents_count": len(self.agents),
                 "graph_initialized": self.graph is not None,
                 "conversation_manager": self.conversation_manager is not None
             }
+            
+            # Check de tool_executor
+            if hasattr(self, 'tool_executor') and self.tool_executor:
+                available_tools = self.tool_executor.get_available_tools()
+                health["tool_executor"] = {
+                    "configured": True,
+                    "available_tools": len(available_tools),
+                    "ready_tools": sum(1 for v in available_tools.values() if v)
+                }
+            else:
+                health["tool_executor"] = {"configured": False}
+            
+            # Check de vectorstore
+            if hasattr(self, 'vectorstore_service') and self.vectorstore_service:
+                health["vectorstore"] = {"configured": True}
+            else:
+                health["vectorstore"] = {"configured": False}
+            
+            return health
+            
         except Exception as e:
             return {
                 "system_healthy": False,
