@@ -133,17 +133,17 @@ class WorkflowExecutor:
     
     async def execute(self, initial_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Ejecutar workflow completo.
-        
-        Args:
-            initial_context: Contexto inicial (ej: user_message, user_id, etc.)
-            
-        Returns:
-            Resultado de ejecución con status, historial, outputs, etc.
+        Ejecutar workflow completo CON verificación de integración.
         """
-        logger.info(f"🚀 [{self.workflow.company_id}] Starting workflow execution: {self.workflow.name}")
+        logger.info(
+            f"🚀 [{self.workflow.company_id}] Starting workflow execution: "
+            f"{self.workflow.name}"
+        )
         
-        # Validar workflow antes de ejecutar
+        # ✅ NUEVO: Verificar integración
+        self.log_integration_status()
+        
+        # Validar workflow
         validation = self.workflow.validate()
         if validation["errors"]:
             return {
@@ -166,14 +166,14 @@ class WorkflowExecutor:
             "completed_at": None,
             "execution_history": [],
             "final_output": None,
-            "errors": []
+            "errors": [],
+            "integration_status": self.verify_workflow_integration()  # ✅ NUEVO
         }
         
         try:
             # Ejecutar desde start node
             await self._execute_from_node(self.workflow.start_node_id)
             
-            # Completado exitosamente
             result["status"] = ExecutionStatus.SUCCESS.value
             result["final_output"] = self.state.variables
             
@@ -183,7 +183,9 @@ class WorkflowExecutor:
             result["errors"].append("Workflow execution timeout")
             
         except Exception as e:
-            logger.exception(f"[{self.workflow.company_id}] Workflow execution failed: {e}")
+            logger.exception(
+                f"[{self.workflow.company_id}] Workflow execution failed: {e}"
+            )
             result["status"] = ExecutionStatus.FAILED.value
             result["errors"].append(str(e))
         
@@ -837,3 +839,82 @@ class WorkflowExecutor:
         
         else:
             return value
+
+# ============================================================================
+# MEJORA ADICIONAL: Método para verificar integración completa
+# ============================================================================
+    
+    def verify_workflow_integration(self) -> Dict[str, bool]:
+        """
+        Verificar que el workflow tiene toda la integración necesaria.
+        
+        Útil para debugging y validación.
+        
+        Returns:
+            Dict con status de cada integración
+        """
+        integration_status = {
+            "orchestrator_available": self.orchestrator is not None,
+            "conversation_manager_available": self.conversation_manager is not None,
+            "company_id_match": False,
+            "agents_have_rag": False,
+            "agents_have_prompts": False,
+            "tools_available": False
+        }
+        
+        if self.orchestrator:
+            # Verificar company_id
+            integration_status["company_id_match"] = (
+                self.orchestrator.company_id == self.workflow.company_id
+            )
+            
+            # Verificar que agentes tienen RAG
+            if hasattr(self.orchestrator, 'agents'):
+                for agent_name, agent in self.orchestrator.agents.items():
+                    if hasattr(agent, 'vectorstore_service'):
+                        if agent.vectorstore_service is not None:
+                            integration_status["agents_have_rag"] = True
+                            break
+            
+            # Verificar prompts
+            if hasattr(self.orchestrator, 'agents'):
+                for agent_name, agent in self.orchestrator.agents.items():
+                    if hasattr(agent, '_prompt_source'):
+                        if agent._prompt_source == "postgresql":
+                            integration_status["agents_have_prompts"] = True
+                            break
+            
+            # Verificar tools
+            if hasattr(self.orchestrator, 'execute_tool'):
+                integration_status["tools_available"] = True
+        
+        return integration_status
+    
+    
+    def log_integration_status(self):
+        """Log del status de integración (útil para debugging)"""
+        status = self.verify_workflow_integration()
+        
+        logger.info(
+            f"[{self.workflow.company_id}] Workflow Integration Status:",
+            extra=status
+        )
+        
+        # Warnings si falta algo
+        if not status["conversation_manager_available"]:
+            logger.warning(
+                f"[{self.workflow.company_id}] ConversationManager not provided - "
+                "workflow won't have conversation history"
+            )
+        
+        if not status["agents_have_rag"]:
+            logger.warning(
+                f"[{self.workflow.company_id}] Agents don't have RAG - "
+                "responses won't use vectorstore"
+            )
+        
+        if not status["agents_have_prompts"]:
+            logger.info(
+                f"[{self.workflow.company_id}] Using default prompts - "
+                "consider adding custom prompts in PostgreSQL"
+            )
