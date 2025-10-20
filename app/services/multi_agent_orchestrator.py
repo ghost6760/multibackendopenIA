@@ -33,18 +33,61 @@ class MultiAgentOrchestrator:
     
     def __init__(
         self, 
-        company_config: CompanyConfig,
-        agents: Dict[str, Any],
-        conversation_manager: Optional[ConversationManager] = None
+        company_config: CompanyConfig = None,
+        agents: Dict[str, Any] = None,
+        conversation_manager: Optional[ConversationManager] = None,
+        **kwargs  # ← NUEVO: Captura argumentos legacy
     ):
         """
         Inicializar orquestador con LangGraph.
+        
+        ✅ BACKWARD COMPATIBLE con llamadas legacy
         
         Args:
             company_config: Configuración de la empresa
             agents: Diccionario de agentes {nombre: instancia}
             conversation_manager: Manager de conversaciones
+            **kwargs: Captura argumentos legacy (company_id, config, etc)
         """
+        
+        # ===== COMPATIBILIDAD BACKWARD =====
+        # Manejo de llamadas legacy con company_id
+        if company_config is None:
+            if 'company_id' in kwargs:
+                # Legacy call: MultiAgentOrchestrator(company_id="benova", ...)
+                company_id = kwargs['company_id']
+                logger.warning(
+                    f"⚠️ Legacy call detected with company_id={company_id}. "
+                    f"Update caller to pass company_config object."
+                )
+                
+                # Buscar company_config en otros argumentos posibles
+                if 'config' in kwargs:
+                    company_config = kwargs['config']
+                else:
+                    # Fallback: crear CompanyConfig básico
+                    company_config = CompanyConfig(
+                        company_id=company_id,
+                        company_name=kwargs.get('company_name', company_id),
+                        services=kwargs.get('services', 'services')
+                    )
+            else:
+                raise ValueError("Either company_config or company_id must be provided")
+        
+        # Si agents no se pasó, intentar obtenerlo de kwargs
+        if agents is None:
+            agents = kwargs.get('agents', {})
+        
+        # ===== VALIDACIÓN =====
+        if not isinstance(company_config, CompanyConfig):
+            raise TypeError(
+                f"company_config must be CompanyConfig instance, got {type(company_config)}"
+            )
+        
+        if not agents:
+            logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
+        
+        # ===== INICIALIZACIÓN NORMAL =====
         self.company_config = company_config
         self.agents = agents
         self.conversation_manager = conversation_manager or ConversationManager()
@@ -56,7 +99,8 @@ class MultiAgentOrchestrator:
             f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
             extra={
                 "available_agents": list(agents.keys()),
-                "has_conversation_manager": conversation_manager is not None
+                "has_conversation_manager": conversation_manager is not None,
+                "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
             }
         )
     
