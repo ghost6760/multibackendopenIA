@@ -75,9 +75,9 @@ class MultiAgentOrchestrator:
             else:
                 raise ValueError("Either company_config or company_id must be provided")
         
-        # Si agents no se pasó, intentar obtenerlo de kwargs
+        # Si agents no se pasó, intentar obtenerlo de kwargs o crearlos
         if agents is None:
-            agents = kwargs.get('agents', {})
+            agents = kwargs.get('agents', None)
         
         # ===== VALIDACIÓN =====
         if not isinstance(company_config, CompanyConfig):
@@ -85,8 +85,10 @@ class MultiAgentOrchestrator:
                 f"company_config must be CompanyConfig instance, got {type(company_config)}"
             )
         
-        if not agents:
-            logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
+        # ===== AUTO-INICIALIZACIÓN DE AGENTES SI NO SE PROPORCIONAN =====
+        if not agents or len(agents) == 0:
+            logger.info(f"[{company_config.company_id}] No agents provided, auto-initializing...")
+            agents = self._auto_initialize_agents(company_config, kwargs.get('openai_service'))
         
         # ===== IGNORAR openai_service de kwargs (legacy) =====
         # El orchestrator no necesita openai_service directamente,
@@ -114,6 +116,70 @@ class MultiAgentOrchestrator:
                 "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
             }
         )
+    
+    def _auto_initialize_agents(self, company_config, openai_service):
+        """
+        Auto-inicializar agentes si no fueron proporcionados.
+        Mantiene compatibilidad con factory legacy.
+        """
+        # ✅ USAR AGENTES EXISTENTES (no crear nuevos)
+        from app.agents.router_agent import RouterAgent
+        from app.agents.emergency_agent import EmergencyAgent
+        from app.agents.sales_agent import SalesAgent
+        from app.agents.schedule_agent import ScheduleAgent
+        from app.agents.support_agent import SupportAgent
+        from app.agents.availability_agent import AvailabilityAgent
+        
+        agents = {}
+        
+        try:
+            # RouterAgent (el que ya existe, que hereda de BaseAgent)
+            # Nota: RouterAgent espera (company_config, openai_service)
+            agents["router"] = RouterAgent(
+                company_config=company_config,
+                openai_service=openai_service
+            )
+            
+            # Emergency Agent
+            agents["emergency"] = EmergencyAgent(
+                company_config=company_config,
+                openai_service=openai_service
+            )
+            
+            # Sales Agent
+            agents["sales"] = SalesAgent(
+                company_config=company_config,
+                openai_service=openai_service
+            )
+            
+            # Schedule Agent
+            agents["schedule"] = ScheduleAgent(
+                company_config=company_config,
+                openai_service=openai_service
+            )
+            
+            # Support Agent
+            agents["support"] = SupportAgent(
+                company_config=company_config,
+                openai_service=openai_service
+            )
+            
+            # Availability Agent
+            agents["availability"] = AvailabilityAgent(
+                company_config=company_config,
+                openai_service=openai_service
+            )
+            
+            logger.info(
+                f"[{company_config.company_id}] Agents auto-initialized: {list(agents.keys())}"
+            )
+            
+            return agents
+            
+        except Exception as e:
+            logger.error(f"Error auto-initializing agents: {e}")
+            # Retornar dict vacío y dejar que falle más adelante con mensaje claro
+            return {}
     
     def _build_orchestrator_graph(self) -> StateGraph:
         """
@@ -188,26 +254,29 @@ class MultiAgentOrchestrator:
     
     def _load_history_node(self, state: OrchestratorState) -> OrchestratorState:
         """Cargar historial conversacional desde DB"""
-        conversation_id = state.get("conversation_id")
+        user_id = state.get("user_id")
         
         try:
-            if conversation_id:
-                # ✅ CORREGIDO: Usar get_history en lugar de get_conversation_history
-                history = self.conversation_manager.get_history(
-                    conversation_id=conversation_id,
-                    limit=10
-                )
-                
-                # ✅ ALTERNATIVA: Si get_history tampoco existe, probar get_messages
-                # history = self.conversation_manager.get_messages(
-                #     conversation_id=conversation_id,
-                #     limit=10
-                # )
+            if user_id:
+                # ✅ CORREGIDO: Usar get_chat_history (método real de ConversationManager)
+                try:
+                    history = self.conversation_manager.get_chat_history(
+                        user_id=user_id,
+                        format_type="messages"
+                    )
+                except AttributeError:
+                    # Fallback si get_chat_history no existe
+                    logger.warning("get_chat_history not found, trying get_history")
+                    try:
+                        history = self.conversation_manager.get_history(user_id=user_id)
+                    except AttributeError:
+                        logger.warning("get_history not found either, using empty history")
+                        history = []
                 
                 logger.debug(
                     f"[{self.company_config.company_id}] History loaded",
                     extra={
-                        "conversation_id": conversation_id,
+                        "user_id": user_id,
                         "history_length": len(history)
                     }
                 )
@@ -487,35 +556,29 @@ class MultiAgentOrchestrator:
     
     def _save_history_node(self, state: OrchestratorState) -> OrchestratorState:
         """Guardar conversación en historial"""
-        conversation_id = state.get("conversation_id")
+        user_id = state.get("user_id")
         
-        if not conversation_id:
-            logger.debug("No conversation_id, skipping history save")
+        if not user_id:
+            logger.debug("No user_id, skipping history save")
             return state
         
         try:
             # Guardar pregunta del usuario
             self.conversation_manager.add_message(
-                conversation_id=conversation_id,
+                user_id=user_id,
                 role="user",
                 content=state["question"]
             )
             
             # Guardar respuesta del agente
             self.conversation_manager.add_message(
-                conversation_id=conversation_id,
+                user_id=user_id,
                 role="assistant",
-                content=state["final_response"],
-                metadata={
-                    "agent": state.get("current_agent"),
-                    "intent": state.get("intent"),
-                    "confidence": state.get("confidence"),
-                    "execution_time": state.get("execution_time")
-                }
+                content=state["final_response"]
             )
             
             logger.info(
-                f"History saved to conversation {conversation_id}",
+                f"History saved for user {user_id}",
                 extra={"agent": state.get("current_agent")}
             )
             
