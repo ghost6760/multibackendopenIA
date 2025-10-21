@@ -192,10 +192,17 @@ class MultiAgentOrchestrator:
         
         try:
             if conversation_id:
-                history = self.conversation_manager.get_conversation_history(
+                # ✅ CORREGIDO: Usar get_history en lugar de get_conversation_history
+                history = self.conversation_manager.get_history(
                     conversation_id=conversation_id,
                     limit=10
                 )
+                
+                # ✅ ALTERNATIVA: Si get_history tampoco existe, probar get_messages
+                # history = self.conversation_manager.get_messages(
+                #     conversation_id=conversation_id,
+                #     limit=10
+                # )
                 
                 logger.debug(
                     f"[{self.company_config.company_id}] History loaded",
