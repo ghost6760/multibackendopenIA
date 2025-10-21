@@ -1,3 +1,5 @@
+# app/agents/emergency_agent.py
+
 EmergencyAgent Cognitivo con LangGraph
 Toma decisiones sobre severidad y escalación
 """
