@@ -1,1243 +1,1137 @@
 # app/agents/schedule_agent.py
+# 🧠 VERSIÓN COGNITIVA con LangGraph - Fase 2 Migración
 
-from app.agents.base_agent import BaseAgent
-from langchain.schema.runnable import RunnableLambda
-from langchain.prompts import ChatPromptTemplate
+"""
+ScheduleAgent - Versión Cognitiva (LangGraph)
+
+CAMBIOS PRINCIPALES:
+- Hereda de CognitiveAgentBase en lugar de BaseAgent
+- Usa LangGraph para grafo de decisión multi-paso
+- Razonamiento explícito antes de ejecutar herramientas
+- Integración con AgentToolsService para ejecución uniforme
+- Mantiene MISMA firma pública: invoke(inputs: dict) -> str
+
+MANTIENE COMPATIBILIDAD:
+- Mismo nombre de clase: ScheduleAgent
+- Misma firma pública: invoke(), set_vectorstore_service()
+- Mismo formato entrada/salida
+"""
+
 from typing import Dict, Any, List, Optional, Tuple
-import requests
+from datetime import datetime
 import logging
 import re
-from datetime import datetime, timedelta
-import json
+
+# Imports de base cognitiva
+from app.agents._cognitive_base import (
+    CognitiveAgentBase,
+    AgentType,
+    AgentState,
+    AgentManifest,
+    AgentCapabilityDef,
+    CognitiveConfig,
+    NodeType,
+    ExecutionStatus,
+    create_reasoning_node,
+    create_tool_node
+)
+
+from app.agents._agent_tools import (
+    get_agent_tools_registry,
+    get_tools_for_agent
+)
+
+# LangGraph imports
+from langgraph.graph import StateGraph, END
+from langchain.prompts import ChatPromptTemplate
+
+# Services
+from app.config.company_config import CompanyConfig
+from app.services.openai_service import OpenAIService
 
 logger = logging.getLogger(__name__)
 
 
-class ScheduleAgent(BaseAgent):
-    """Agente de agendamiento multi-tenant con integración de calendarios y RAG"""
+# ============================================================================
+# MANIFEST DE CAPACIDADES
+# ============================================================================
+
+SCHEDULE_AGENT_MANIFEST = AgentManifest(
+    agent_type="schedule",
+    display_name="Schedule Agent",
+    description="Agente cognitivo para agendamiento de citas con razonamiento multi-paso",
+    capabilities=[
+        AgentCapabilityDef(
+            name="check_availability",
+            description="Verificar disponibilidad de horarios",
+            tools_required=["get_available_slots", "check_availability"],
+            priority=1
+        ),
+        AgentCapabilityDef(
+            name="create_appointment",
+            description="Crear nueva cita",
+            tools_required=[
+                "create_appointment",
+                "validate_appointment_data",
+                "send_confirmation"
+            ],
+            priority=2
+        ),
+        AgentCapabilityDef(
+            name="retrieve_context",
+            description="Buscar información sobre tratamientos y preparaciones",
+            tools_required=["knowledge_base_search"],
+            priority=0
+        )
+    ],
+    required_tools=[
+        "knowledge_base_search",
+        "get_available_slots",
+        "create_appointment",
+        "validate_appointment_data"
+    ],
+    optional_tools=[
+        "check_availability",
+        "get_calendar_events",
+        "send_confirmation"
+    ],
+    tags=["scheduling", "calendar", "appointments", "rag"],
+    priority=1,
+    max_retries=3,
+    timeout_seconds=60,
+    metadata={
+        "version": "2.0-cognitive",
+        "migration_date": "2024",
+        "supports_reasoning": True
+    }
+)
+
+
+# ============================================================================
+# SCHEDULE AGENT COGNITIVO
+# ============================================================================
+
+class ScheduleAgent(CognitiveAgentBase):
+    """
+    Agente de agendamiento con base cognitiva (LangGraph).
     
-    def _initialize_agent(self):
-        """Inicializar agente de agendamiento"""
-        self.prompt_template = self._create_prompt_template()
-        self.schedule_service_available = False
-        self.schedule_status_last_check = 0
-        self.schedule_status_cache_duration = 30
-        self.vectorstore_service = None  # Se inyecta externamente
+    IMPORTANTE: Mantiene la misma interfaz pública que la versión anterior
+    pero usa razonamiento multi-paso y ejecución dinámica de tools.
+    """
+    
+    def __init__(self, company_config: CompanyConfig, openai_service: OpenAIService):
+        """
+        Args:
+            company_config: Configuración de la empresa
+            openai_service: Servicio de OpenAI
+        """
+        self.company_config = company_config
+        self.openai_service = openai_service
+        self.chat_model = openai_service.get_chat_model()
         
-        # Configuración de integraciones de calendario
+        # Configuración cognitiva
+        cognitive_config = CognitiveConfig(
+            enable_reasoning_traces=True,
+            enable_tool_validation=True,
+            enable_guardrails=True,
+            max_reasoning_steps=15,  # Más pasos para agendamiento complejo
+            require_confirmation_for_critical_actions=True,
+            safe_fail_on_tool_error=True,
+            persist_state=True
+        )
+        
+        # Inicializar base cognitiva
+        super().__init__(
+            agent_type=AgentType.SCHEDULE,
+            manifest=SCHEDULE_AGENT_MANIFEST,
+            config=cognitive_config
+        )
+        
+        # Grafo de LangGraph (se construye después)
+        self.graph = None
+        self.compiled_graph = None
+        
+        # Configuración específica de scheduling
         self.integration_type = self._detect_integration_type()
+        self.schedule_service_available = False
         
-        # Verificar conexión inicial con servicio de agendamiento
-        self._verify_schedule_service()
-        
-        # Crear cadena
-        self._create_chain()
+        logger.info(
+            f"🧠 [{company_config.company_id}] ScheduleAgent initialized "
+            f"(cognitive mode, integration={self.integration_type})"
+        )
     
-    def set_vectorstore_service(self, vectorstore_service):
-        """Inyectar servicio de vectorstore específico de la empresa"""
-        self.vectorstore_service = vectorstore_service
-        # Recrear cadena con RAG
-        self._create_chain()
+    # ========================================================================
+    # INTERFAZ PÚBLICA (MANTENER COMPATIBILIDAD)
+    # ========================================================================
     
-    def _detect_integration_type(self) -> str:
-        """Detectar tipo de integración basado en configuración"""
-        schedule_url = self.company_config.schedule_service_url.lower()
+    def invoke(self, inputs: dict) -> str:
+        """
+        Punto de entrada principal (mantener firma).
         
-        if 'googleapis.com' in schedule_url or 'google' in schedule_url:
-            return 'google_calendar'
-        elif 'calendly.com' in schedule_url or 'calendly' in schedule_url:
-            return 'calendly'
-        elif 'cal.com' in schedule_url or 'cal.' in schedule_url:
-            return 'cal_com'
-        elif 'zapier.com' in schedule_url or 'integromat' in schedule_url or 'make.com' in schedule_url:
-            return 'webhook'
-        else:
-            return 'generic_rest'
-    ###
-    def _create_chain(self):
-        """Crear cadena híbrida: RAG + LLM + Herramientas opcionales"""
+        Args:
+            inputs: Dict con keys: question, chat_history, user_id, company_id
         
-        def hybrid_schedule_processor(inputs):
-            """Procesa: RAG → LLM → Herramientas"""
-            question = inputs.get("question", "")
-            chat_history = inputs.get("chat_history", [])
-            user_id = inputs.get("user_id", "default_user")
+        Returns:
+            str: Respuesta generada
+        """
+        try:
+            # Validar inputs
+            self._validate_inputs(inputs)
             
-            # ✅ PASO 1: Preparar contexto (incluyendo RAG)
-            llm_inputs = {
-                "schedule_status": inputs.get("schedule_status"),      # Ya procesado
-                "schedule_context": inputs.get("schedule_context"),    # Ya incluye RAG
-                "required_fields": inputs.get("required_fields"),      # Ya procesado
-                "question": question,
-                "chat_history": chat_history,
-                "company_name": inputs.get("company_name"),
-                "services": inputs.get("services")
+            # Construir grafo si no existe
+            if not self.compiled_graph:
+                self.graph = self.build_graph()
+                self.compiled_graph = self.graph.compile()
+            
+            # Crear estado inicial
+            initial_state = self._create_initial_state(inputs)
+            
+            # Log inicio
+            logger.info(
+                f"🔍 [{self.company_config.company_id}] ScheduleAgent.invoke() "
+                f"- Question: {inputs.get('question', '')[:100]}..."
+            )
+            
+            # Ejecutar grafo de LangGraph
+            final_state = self.compiled_graph.invoke(initial_state)
+            
+            # Extraer respuesta final
+            response = self._build_response_from_state(final_state)
+            
+            # Log telemetría
+            telemetry = self._get_telemetry(final_state)
+            logger.info(
+                f"✅ [{self.company_config.company_id}] ScheduleAgent completed "
+                f"- Steps: {telemetry['reasoning_steps']}, "
+                f"Tools: {len(telemetry['tools_used'])}, "
+                f"Latency: {telemetry['total_latency_ms']:.2f}ms"
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.exception(
+                f"💥 [{self.company_config.company_id}] Error in ScheduleAgent.invoke()"
+            )
+            return self._generate_error_response(str(e))
+    
+    def set_vectorstore_service(self, service):
+        """Inyectar servicio de vectorstore (mantener firma)"""
+        self._vectorstore_service = service
+        logger.debug(
+            f"[{self.company_config.company_id}] VectorstoreService injected to ScheduleAgent"
+        )
+    
+    # ========================================================================
+    # CONSTRUCCIÓN DEL GRAFO LANGGRAPH
+    # ========================================================================
+    
+    def build_graph(self) -> StateGraph:
+        """
+        Construir grafo de decisión con LangGraph.
+        
+        FLUJO:
+        1. Analyze Intent → Determinar qué quiere el usuario
+        2. Retrieve Context → Buscar info en RAG si es necesario
+        3. Decide Action → Determinar qué herramientas usar
+        4. Execute Tools → Ejecutar herramientas seleccionadas
+        5. Generate Response → Generar respuesta final
+        
+        Returns:
+            StateGraph de LangGraph
+        """
+        # Crear grafo
+        workflow = StateGraph(AgentState)
+        
+        # Añadir nodos
+        workflow.add_node("analyze_intent", self._analyze_intent_node)
+        workflow.add_node("retrieve_context", self._retrieve_context_node)
+        workflow.add_node("decide_action", self._decide_action_node)
+        workflow.add_node("execute_tools", self._execute_tools_node)
+        workflow.add_node("generate_response", self._generate_response_node)
+        
+        # Definir edges
+        workflow.set_entry_point("analyze_intent")
+        
+        workflow.add_edge("analyze_intent", "retrieve_context")
+        workflow.add_edge("retrieve_context", "decide_action")
+        
+        # Condicional: ejecutar tools o ir directo a respuesta
+        workflow.add_conditional_edges(
+            "decide_action",
+            self._should_execute_tools,
+            {
+                "execute": "execute_tools",
+                "skip": "generate_response"
             }
+        )
+        
+        workflow.add_edge("execute_tools", "generate_response")
+        workflow.add_edge("generate_response", END)
+        
+        logger.info(
+            f"[{self.company_config.company_id}] LangGraph built for ScheduleAgent "
+            f"(5 nodes)"
+        )
+        
+        return workflow
+    
+    # ========================================================================
+    # NODOS DEL GRAFO
+    # ========================================================================
+    
+    def _analyze_intent_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 1: Analizar intención del usuario.
+        
+        Determina si el usuario quiere:
+        - Consultar disponibilidad
+        - Agendar una cita
+        - Obtener información sobre tratamientos
+        """
+        state["current_node"] = "analyze_intent"
+        
+        question = state["question"].lower()
+        
+        # Analizar intención
+        intent = self._detect_scheduling_intent(question)
+        confidence = self._calculate_intent_confidence(question, intent)
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.REASONING,
+            "Analyzing user intent for scheduling query",
+            thought=f"User asks: '{question[:100]}'",
+            decision=f"Detected intent: {intent} (confidence: {confidence:.2f})",
+            confidence=confidence
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
+        
+        # Guardar decisión
+        state["decisions"].append({
+            "type": "intent_detection",
+            "intent": intent,
+            "confidence": confidence,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        state["confidence_scores"]["intent"] = confidence
+        
+        # Extraer entidades (fechas, tratamientos)
+        entities = self._extract_scheduling_entities(question, state["chat_history"])
+        state["context"]["entities"] = entities
+        state["context"]["intent"] = intent
+        
+        logger.debug(
+            f"[{self.company_config.company_id}] Intent: {intent}, "
+            f"Entities: {entities}"
+        )
+        
+        return state
+    
+    def _retrieve_context_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 2: Recuperar contexto desde RAG si es necesario.
+        """
+        state["current_node"] = "retrieve_context"
+        
+        question = state["question"]
+        intent = state["context"].get("intent", "unknown")
+        
+        # Determinar si necesita RAG
+        needs_rag = self._needs_rag_context(intent, question)
+        
+        if needs_rag and self._vectorstore_service:
+            # Construir query de RAG
+            rag_query = self._build_rag_query(question, intent)
             
-            self._log_agent_activity("processing_schedule", {
-                "question": question[:50],
-                "rag_enabled": self.vectorstore_service is not None,
-                "integration_type": self.integration_type
-            })
-            
-            # ✅ PASO 2: LLM genera respuesta (usa prompt_template con RAG)
+            # Buscar en vectorstore
             try:
-                llm_response = (self.prompt_template | self.chat_model).invoke(llm_inputs)
-                base_response = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+                docs = self._vectorstore_service.search_by_company(
+                    rag_query,
+                    self.company_config.company_id,
+                    k=3
+                )
+                
+                # Extraer contenido relevante
+                rag_context = self._extract_rag_content(docs, intent)
+                
+                state["vectorstore_context"] = rag_context
+                
+                # Registrar razonamiento
+                reasoning_step = self._add_reasoning_step(
+                    state,
+                    NodeType.REASONING,
+                    "Retrieved context from knowledge base",
+                    thought=f"Query: '{rag_query}'",
+                    observation=f"Found {len(docs)} relevant documents",
+                    confidence=0.9 if rag_context else 0.3
+                )
+                
+                state["reasoning_steps"].append(reasoning_step)
+                
+                logger.debug(
+                    f"[{self.company_config.company_id}] RAG context retrieved "
+                    f"({len(docs)} docs)"
+                )
+                
             except Exception as e:
-                logger.error(f"Error invoking LLM: {e}")
-                # Fallback a respuesta base
-                return self._generate_base_schedule_response(question, inputs, 
-                                                             inputs.get("schedule_context", ""),
-                                                             inputs.get("required_fields", []))
+                logger.error(f"Error retrieving RAG context: {e}")
+                state["warnings"].append(f"RAG retrieval failed: {str(e)}")
+        
+        else:
+            # No necesita RAG o no está disponible
+            state["vectorstore_context"] = self._get_basic_schedule_info()
             
-            # ✅ PASO 3: Complementar con herramientas programáticas si es necesario
+            reasoning_step = self._add_reasoning_step(
+                state,
+                NodeType.REASONING,
+                "Using basic schedule information",
+                thought="RAG not needed or not available",
+                observation="Using company config defaults"
+            )
             
-            # Caso 1: Consulta de disponibilidad
-            if self._is_availability_check(question):
-                date = self._extract_date_from_question(question, chat_history)
-                treatment = self._extract_treatment_from_question(question)
+            state["reasoning_steps"].append(reasoning_step)
+        
+        return state
+    
+    def _decide_action_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 3: Decidir qué herramientas usar.
+        """
+        state["current_node"] = "decide_action"
+        
+        intent = state["context"].get("intent", "unknown")
+        entities = state["context"].get("entities", {})
+        
+        # Decidir herramientas basado en intención
+        tools_to_use = self._select_tools_for_intent(intent, entities, state)
+        
+        state["context"]["selected_tools"] = tools_to_use
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.DECISION,
+            "Deciding which tools to execute",
+            thought=f"Intent: {intent}, Entities: {list(entities.keys())}",
+            decision=f"Selected tools: {[t['tool_name'] for t in tools_to_use]}",
+            confidence=0.8
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
+        
+        logger.debug(
+            f"[{self.company_config.company_id}] Selected {len(tools_to_use)} tools"
+        )
+        
+        return state
+    
+    def _execute_tools_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 4: Ejecutar herramientas seleccionadas.
+        """
+        state["current_node"] = "execute_tools"
+        
+        selected_tools = state["context"].get("selected_tools", [])
+        
+        if not selected_tools:
+            logger.debug("No tools to execute")
+            return state
+        
+        # Ejecutar cada tool
+        for tool_config in selected_tools:
+            tool_name = tool_config["tool_name"]
+            tool_params = tool_config["params"]
+            
+            # Registrar inicio
+            reasoning_step = self._add_reasoning_step(
+                state,
+                NodeType.TOOL_EXECUTION,
+                f"Executing tool: {tool_name}",
+                action=f"Tool: {tool_name}",
+                observation="Waiting for result..."
+            )
+            state["reasoning_steps"].append(reasoning_step)
+            
+            # Ejecutar tool (con retry y manejo de errores)
+            result = self._execute_single_tool(tool_name, tool_params, state)
+            
+            # Guardar resultado
+            if result["success"]:
+                state["intermediate_results"][tool_name] = result["data"]
+                state["context"][f"{tool_name}_result"] = result["data"]
                 
-                if date and treatment:
-                    try:
-                        treatment_config = self._get_treatment_configuration(treatment)
-                        availability = self._call_check_availability(date, treatment)
-                        
-                        if availability and availability.get("available_slots"):
-                            filtered_slots = self._filter_slots_by_configuration(
-                                availability["available_slots"],
-                                treatment_config
-                            )
-                            
-                            if filtered_slots:
-                                slots_formatted = self._format_slots_response(
-                                    filtered_slots, date, treatment_config
-                                )
-                                # Combinar respuesta del LLM con datos reales
-                                return f"{base_response}\n\n{slots_formatted}"
-                    except Exception as e:
-                        logger.error(f"Error checking availability: {e}")
-            
-            # Caso 2: Agendamiento completo con API
-            elif self._should_use_schedule_api(question, chat_history):
-                try:
-                    patient_info = self._validate_required_information(
-                        chat_history, 
-                        inputs.get("required_fields", [])
+                # Actualizar observación
+                reasoning_step["observation"] = f"Success: {result['data']}"
+                
+            else:
+                error_msg = result.get("error", "Unknown error")
+                state["errors"].append(f"Tool {tool_name} failed: {error_msg}")
+                
+                # Safe-fail: continuar con otros tools
+                if self.config.safe_fail_on_tool_error:
+                    logger.warning(
+                        f"Tool {tool_name} failed, continuing with safe-fail"
                     )
-                    
-                    if patient_info['complete']:
-                        booking_result = self._call_booking_api(
-                            question, user_id, chat_history, patient_info['data']
-                        )
-                        
-                        if booking_result.get('success'):
-                            success_msg = self._format_booking_success(booking_result)
-                            return f"{base_response}\n\n{success_msg}"
-                        elif booking_result.get('requires_more_info'):
-                            return f"{base_response}\n\n{booking_result.get('response', '')}"
-                except Exception as e:
-                    logger.error(f"Error in API scheduling: {e}")
-            
-            # Caso 3: Solo respuesta del LLM (con RAG incluido en el contexto)
-            return base_response
+                    reasoning_step["observation"] = f"Failed: {error_msg} (safe-fail)"
+                else:
+                    # Detener ejecución
+                    state["should_continue"] = False
+                    break
         
-        # ✅ Mantener la preparación de inputs (incluyendo RAG)
-        self.chain = (
-            {
-                "schedule_status": self._get_schedule_status,      # Prepara estado
-                "schedule_context": self._get_schedule_context,    # Prepara RAG
-                "required_fields": self._get_required_booking_fields,
-                "question": lambda x: x.get("question", ""),
-                "chat_history": lambda x: x.get("chat_history", []),
-                "user_id": lambda x: x.get("user_id", "default_user"),
-                "company_name": lambda x: self.company_config.company_name,
-                "services": lambda x: self.company_config.services
-            }
-            | RunnableLambda(hybrid_schedule_processor)  # Ahora SÍ usa LLM
+        return state
+    
+    def _generate_response_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 5: Generar respuesta final.
+        """
+        state["current_node"] = "generate_response"
+        
+        intent = state["context"].get("intent", "unknown")
+        entities = state["context"].get("entities", {})
+        tool_results = state["intermediate_results"]
+        rag_context = state.get("vectorstore_context", "")
+        
+        # Construir prompt para generación de respuesta
+        response = self._build_final_response(
+            intent=intent,
+            entities=entities,
+            tool_results=tool_results,
+            rag_context=rag_context,
+            state=state
         )
-    ###
-    def _format_required_fields(self, inputs):
-        """Formatear campos como texto"""
-        fields = self._get_required_booking_fields(inputs)
-        if isinstance(fields, list):
-            return "\n".join([f"• {field}" for field in fields])
-        return str(fields)
-    ###
-    def _create_default_prompt_template(self):
+        
+        state["response"] = response
+        state["status"] = ExecutionStatus.SUCCESS.value
+        state["completed_at"] = datetime.utcnow().isoformat()
+        
+        # Registrar razonamiento final
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.RESPONSE_GENERATION,
+            "Generated final response",
+            thought=f"Synthesizing response for intent: {intent}",
+            observation=f"Response length: {len(response)} chars",
+            confidence=0.9
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
+        
+        logger.info(
+            f"[{self.company_config.company_id}] Response generated "
+            f"({len(response)} chars)"
+        )
+        
+        return state
+    
+    # ========================================================================
+    # DECISIONES CONDICIONALES
+    # ========================================================================
+    
+    def _should_execute_tools(self, state: AgentState) -> str:
         """
-        Template por defecto para agendamiento.
+        Determinar si ejecutar tools o ir directo a respuesta.
         
-        NOTA: Este prompt se guarda en default_prompts pero el ScheduleAgent
-        actualmente usa _process_schedule_request() para su lógica.
-        Se mantiene este formato para compatibilidad con el sistema.
+        Returns:
+            "execute" o "skip"
         """
-        template = f"""Especialista en agendamiento de {self.company_config.company_name}.
-    
-    OBJETIVO: Ayudar a los usuarios a programar, consultar y gestionar citas para los servicios de la empresa.
-    
-    SERVICIOS DISPONIBLES: {self.company_config.services}
-    
-    INFORMACIÓN DEL SISTEMA:
-    {{schedule_status}}
-    
-    CONTEXTO DE AGENDAMIENTO:
-    {{schedule_context}}
-    
-    CAMPOS REQUERIDOS PARA AGENDAR:
-    {{required_fields}}
-    
-    INSTRUCCIONES:
-    1. Si el usuario consulta disponibilidad, proporciona horarios disponibles
-    2. Si el usuario quiere agendar, solicita la información requerida de forma amigable
-    3. Usa el contexto de agendamiento para proporcionar información específica sobre duraciones, preparaciones y requisitos
-    4. Sé profesional pero cálido en tus respuestas
-    5. Si hay información adicional en el contexto (abonos, recomendaciones), menciónala apropiadamente
-    
-    TONO: Profesional, organizado, servicial y claro.
-    LONGITUD: Máximo 4-5 oraciones, a menos que se requiera información detallada.
-    
-    HISTORIAL DE CONVERSACIÓN:
-    {{chat_history}}
-    
-    CONSULTA DEL USUARIO: {{question}}
-    
-    Responde de manera clara y organizada, priorizando la experiencia del usuario."""
-    
-        return ChatPromptTemplate.from_messages([
-            ("system", template),
-            ("human", "{question}")
-        ])
-
-    
-    def _get_schedule_status(self, inputs):
-        """Obtener estado del servicio de agendamiento específico de la empresa"""
-        integration_name = self.integration_type.replace('_', ' ').title()
+        selected_tools = state["context"].get("selected_tools", [])
         
-        if self.schedule_service_available:
-            return f"✅ Sistema de agendamiento ACTIVO para {self.company_config.company_name} ({integration_name})"
-        else:
-            return f"⚠️ Sistema de agendamiento NO DISPONIBLE para {self.company_config.company_name} (Verificar: {self.company_config.schedule_service_url})"
-    
-    def _get_schedule_context(self, inputs):
-        """Obtener contexto de agendamiento desde documentos RAG"""
-        try:
-            question = inputs.get("question", "")
-            
-            if not self.vectorstore_service:
-                return self._get_basic_schedule_info()
-            
-            # Buscar información relacionada con agendamiento
-            schedule_query = f"cita agenda horario duración preparación requisitos abono {question}"
-            docs = self.vectorstore_service.search_by_company(
-                schedule_query,
-                self.company_config.company_id,
-                k=3
-            )
-            
-            if not docs:
-                return self._get_basic_schedule_info()
-            
-            # Extraer información relevante para agendamiento
-            context_parts = []
-            for doc in docs:
-                if hasattr(doc, 'page_content') and doc.page_content:
-                    content = doc.page_content.lower()
-                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos', 'abono', 'valoración']):
-                        context_parts.append(doc.page_content)
-                elif isinstance(doc, dict) and 'content' in doc:
-                    content = doc['content'].lower()
-                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos', 'abono', 'valoración']):
-                        context_parts.append(doc['content'])
-            
-            if context_parts:
-                basic_info = self._get_basic_schedule_info()
-                rag_info = "\n\nInformación adicional específica:\n" + "\n".join(context_parts)
-                return basic_info + rag_info
-            else:
-                return self._get_basic_schedule_info()
-                
-        except Exception as e:
-            logger.error(f"Error retrieving schedule context: {e}")
-            return self._get_basic_schedule_info()
-    
-    def _get_basic_schedule_info(self):
-        """Información básica de agendamiento desde configuración"""
-        # Obtener configuración de agendas múltiples si existe
-        schedules_info = self._get_schedules_configuration()
+        if not selected_tools:
+            return "skip"
         
-        treatment_info = []
-        for treatment, config in schedules_info.items():
-            duration = config.get('duration', 60)
-            sessions = config.get('sessions', 1)
-            deposit = config.get('deposit', 0)
-            
-            info_line = f"- {treatment}: {duration} min"
-            if sessions > 1:
-                info_line += f" ({sessions} sesiones)"
-            if deposit > 0:
-                info_line += f" - Abono: ${deposit:,}"
-            
-            treatment_info.append(info_line)
+        # Si no hay tool_executor, skip
+        if not self._tool_executor:
+            logger.warning("ToolExecutor not available, skipping tools")
+            state["warnings"].append("ToolExecutor not configured")
+            return "skip"
         
-        return f"""Información de agendamiento de {self.company_config.company_name}:
-
-Duraciones y configuraciones:
-{chr(10).join(treatment_info)}
-
-Servicios: {self.company_config.services}
-Sistema: {self.integration_type.replace('_', ' ').title()}"""
+        return "execute"
     
-    def _get_schedules_configuration(self) -> Dict[str, Any]:
-        """Obtener configuración de múltiples agendas por empresa"""
-        # Configuración extendida que puede venir del company_config
-        if hasattr(self.company_config, 'schedules_config'):
-            return self.company_config.schedules_config
-        
-        # Convertir treatment_durations básico a configuración extendida
-        extended_config = {}
-        for treatment, duration in self.company_config.treatment_durations.items():
-            extended_config[treatment] = {
-                'duration': duration,
-                'sessions': 1,
-                'deposit': 0,
-                'category': 'general',
-                'agenda_id': 'default'
-            }
-        
-        return extended_config
+    # ========================================================================
+    # HELPERS DE INTENCIÓN Y ENTIDADES
+    # ========================================================================
     
-    def _get_required_booking_fields(self, inputs):
-        """Obtener campos requeridos configurables por empresa"""
-        # Campos por defecto
-        default_fields = [
-            "nombre completo",
-            "número de cédula", 
-            "fecha de nacimiento",
-            "correo electrónico",
-            "motivo"
-        ]
+    def _detect_scheduling_intent(self, question: str) -> str:
+        """
+        Detectar intención específica de scheduling.
         
-        # Verificar si la empresa tiene campos personalizados
-        if hasattr(self.company_config, 'required_booking_fields'):
-            return self.company_config.required_booking_fields
-        
-        return default_fields
-    
-    def _verify_schedule_service(self, force_check: bool = False) -> bool:
-        """Verificar servicio de agendamiento específico de la empresa"""
-        import time
-        current_time = time.time()
-        
-        if not force_check and (current_time - self.schedule_status_last_check) < self.schedule_status_cache_duration:
-            return self.schedule_service_available
-        
-        try:
-            # Diferentes endpoints según el tipo de integración
-            health_endpoint = self._get_health_endpoint()
-            
-            response = requests.get(health_endpoint, timeout=5)
-            
-            if response.status_code == 200:
-                self.schedule_service_available = True
-                self.schedule_status_last_check = current_time
-                logger.info(f"Schedule service ({self.integration_type}) available for {self.company_config.company_name}")
-                return True
-            else:
-                self.schedule_service_available = False
-                self.schedule_status_last_check = current_time
-                return False
-                
-        except Exception as e:
-            logger.warning(f"Schedule service verification failed for {self.company_config.company_name}: {e}")
-            self.schedule_service_available = False
-            self.schedule_status_last_check = current_time
-            return False
-    
-    def _get_health_endpoint(self) -> str:
-        """Obtener endpoint de health según tipo de integración"""
-        base_url = self.company_config.schedule_service_url
-        
-        if self.integration_type == 'google_calendar':
-            return f"{base_url}/health"  # Nuestro microservicio de Google Calendar
-        elif self.integration_type == 'calendly':
-            return f"{base_url}/health"  # Proxy a Calendly API
-        elif self.integration_type == 'webhook':
-            return f"{base_url}/ping"    # Webhook endpoint básico
-        else:
-            return f"{base_url}/health"  # Generic REST
-    
-    
-    def _is_availability_check(self, question: str) -> bool:
-        """Verificar si solo consulta disponibilidad"""
-        availability_keywords = [
-            "disponibilidad para", "horarios disponibles", "qué horarios",
-            "cuándo hay", "hay disponibilidad", "ver horarios", "agenda libre"
-        ]
-        return any(keyword in question.lower() for keyword in availability_keywords)
-    
-    def _should_use_schedule_api(self, question: str, chat_history: list) -> bool:
-        """Determinar si usar API de agendamiento para reservar"""
+        Returns:
+            "check_availability", "create_appointment", "get_info", "unknown"
+        """
         question_lower = question.lower()
         
-        # Verificar keywords de agendamiento
-        has_schedule_intent = any(keyword in question_lower for keyword in self.company_config.schedule_keywords)
-        
-        # Verificar información disponible del paciente
-        has_patient_info = self._extract_patient_info_from_history(chat_history)
-        
-        return has_schedule_intent and self.schedule_service_available and has_patient_info
-    
-    def _handle_availability_check(self, question: str, chat_history: list, schedule_context: str):
-        """Manejar consulta de disponibilidad con contexto RAG"""
-        try:
-            date = self._extract_date_from_question(question, chat_history)
-            treatment = self._extract_treatment_from_question(question)
-            
-            if not date:
-                context_info = ""
-                if schedule_context and "duración" in schedule_context.lower():
-                    context_info = f"\n\nInformación sobre tratamientos:\n{schedule_context}"
-                
-                return f"""Para consultar disponibilidad en {self.company_config.company_name}, necesito:
-
-📅 Fecha específica (DD-MM-YYYY)
-🩺 Tipo de {self.company_config.services.lower()} que te interesa{context_info}
-
-¿Puedes proporcionarme estos datos?"""
-            
-            # Obtener configuración del tratamiento
-            treatment_config = self._get_treatment_configuration(treatment)
-            availability_data = self._call_check_availability(date, treatment)
-            
-            if not availability_data or not availability_data.get("available_slots"):
-                return f"No hay horarios disponibles para {date} en {self.company_config.company_name}."
-            
-            filtered_slots = self._filter_slots_by_configuration(
-                availability_data["available_slots"], 
-                treatment_config
-            )
-            
-            return self._format_slots_response(filtered_slots, date, treatment_config)
-            
-        except Exception as e:
-            logger.error(f"Error checking availability for {self.company_config.company_name}: {e}")
-            return f"Error consultando disponibilidad en {self.company_config.company_name}. Te conectaré con un especialista."
-    
-    def _handle_api_scheduling(self, question: str, user_id: str, chat_history: list, required_fields: list):
-        """Manejar agendamiento con API de calendario"""
-        try:
-            # Validar información requerida
-            patient_info = self._validate_required_information(chat_history, required_fields)
-            
-            if not patient_info['complete']:
-                missing_fields = patient_info['missing_fields']
-                return f"""Para completar tu reserva en {self.company_config.company_name}, necesito:
-
-{chr(10).join([f'• {field}' for field in missing_fields])}
-
-¿Puedes proporcionarme esta información?"""
-            
-            # Procesar reserva según tipo de integración
-            booking_result = self._call_booking_api(question, user_id, chat_history, patient_info['data'])
-            
-            if booking_result.get('success'):
-                return self._format_booking_success(booking_result)
-            elif booking_result.get('requires_more_info'):
-                return booking_result.get('response', f"Necesito más información para agendar tu cita en {self.company_config.company_name}.")
-            else:
-                return f"No pude completar el agendamiento automático en {self.company_config.company_name}. Te conectaré con un especialista para completar tu cita."
-                
-        except Exception as e:
-            logger.error(f"Error in API scheduling for {self.company_config.company_name}: {e}")
-            return f"Error en el agendamiento automático. Te conectaré con un especialista de {self.company_config.company_name}."
-    
-    def _validate_required_information(self, chat_history: list, required_fields: list) -> Dict[str, Any]:
-        """Validar que se tenga toda la información requerida para reservar"""
-        history_text = " ".join([
-            msg.content if hasattr(msg, 'content') else str(msg) 
-            for msg in chat_history
-        ]).lower()
-        
-        extracted_info = {}
-        missing_fields = []
-        
-        # Validar cada campo requerido
-        for field in required_fields:
-            field_lower = field.lower()
-            value = None
-            
-            if 'nombre' in field_lower:
-                value = self._extract_name(history_text)
-            elif 'cédula' in field_lower or 'cedula' in field_lower:
-                value = self._extract_cedula(history_text)
-            elif 'fecha de nacimiento' in field_lower or 'nacimiento' in field_lower:
-                value = self._extract_birth_date(history_text)
-            elif 'correo' in field_lower or 'email' in field_lower:
-                value = self._extract_email(history_text)
-            elif 'teléfono' in field_lower or 'telefono' in field_lower:
-                value = self._extract_phone(history_text)
-            elif 'motivo' in field_lower:
-                value = self._extract_reason(history_text)
-            
-            if value:
-                extracted_info[field] = value
-            else:
-                missing_fields.append(field)
-        
-        return {
-            'complete': len(missing_fields) == 0,
-            'missing_fields': missing_fields,
-            'data': extracted_info
-        }
-    
-    def _extract_name(self, text: str) -> Optional[str]:
-        """Extraer nombre del texto"""
-        patterns = [
-            r'mi nombre es ([a-záéíóúñ\s]+)',
-            r'me llamo ([a-záéíóúñ\s]+)',
-            r'soy ([a-záéíóúñ\s]+)',
-            r'nombre:?\s*([a-záéíóúñ\s]+)'
+        # Patrones de intención
+        availability_patterns = [
+            r"disponibilidad|disponible|horarios?|cuando.*atender|hay.*espacio",
+            r"libre|puede.*atender|primer.*cita"
         ]
         
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                name = match.group(1).strip().title()
-                if len(name.split()) >= 2:  # Al menos nombre y apellido
-                    return name
-        
-        return None
-    
-    def _extract_cedula(self, text: str) -> Optional[str]:
-        """Extraer número de cédula del texto"""
-        patterns = [
-            r'cédula:?\s*(\d{7,10})',
-            r'cedula:?\s*(\d{7,10})',
-            r'documento:?\s*(\d{7,10})',
-            r'cc:?\s*(\d{7,10})'
+        booking_patterns = [
+            r"agendar|reservar|cita|turno|programar|quiero.*cita",
+            r"necesito.*cita|solicitar.*cita"
         ]
         
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return match.group(1)
-        
-        return None
-    
-    def _extract_birth_date(self, text: str) -> Optional[str]:
-        """Extraer fecha de nacimiento"""
-        patterns = [
-            r'nací el (\d{1,2}[-/]\d{1,2}[-/]\d{4})',
-            r'fecha de nacimiento:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})',
-            r'nacimiento:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})'
+        info_patterns = [
+            r"duracion|tiempo|cuanto.*dura|preparacion|requisitos",
+            r"antes.*de|informacion.*sobre|que.*necesito"
         ]
         
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return match.group(1).replace('/', '-')
+        # Evaluar patrones
+        for pattern in availability_patterns:
+            if re.search(pattern, question_lower):
+                return "check_availability"
         
-        return None
+        for pattern in booking_patterns:
+            if re.search(pattern, question_lower):
+                return "create_appointment"
+        
+        for pattern in info_patterns:
+            if re.search(pattern, question_lower):
+                return "get_info"
+        
+        return "unknown"
     
-    def _extract_email(self, text: str) -> Optional[str]:
-        """Extraer correo electrónico"""
-        pattern = r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1)
-        return None
-    
-    def _extract_phone(self, text: str) -> Optional[str]:
-        """Extraer teléfono"""
-        patterns = [
-            r'teléfono:?\s*(\+?\d{10,})',
-            r'celular:?\s*(\+?\d{10,})',
-            r'móvil:?\s*(\+?\d{10,})'
-        ]
+    def _calculate_intent_confidence(self, question: str, intent: str) -> float:
+        """Calcular score de confianza para la intención detectada"""
+        # Implementación simple - puede mejorarse con ML
+        if intent == "unknown":
+            return 0.3
         
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return match.group(1)
-        
-        return None
-    
-    def _extract_reason(self, text: str) -> Optional[str]:
-        """Extraer motivo de la consulta"""
-        # Buscar en el contexto general de la conversación
-        treatments = list(self.company_config.treatment_durations.keys())
-        
-        for treatment in treatments:
-            if treatment.lower() in text:
-                return treatment
-        
-        # Buscar palabras clave genéricas
-        reasons = ['consulta', 'valoración', 'revisión', 'tratamiento', 'procedimiento']
-        for reason in reasons:
-            if reason in text:
-                return reason.title()
-        
-        return None
-    
-    def _get_treatment_configuration(self, treatment: str) -> Dict[str, Any]:
-        """Obtener configuración completa del tratamiento"""
-        schedules_config = self._get_schedules_configuration()
-        
-        # Buscar configuración específica
-        for treatment_name, config in schedules_config.items():
-            if treatment_name.lower() == treatment.lower():
-                return config
-        
-        # Configuración por defecto
-        return {
-            'duration': self.company_config.treatment_durations.get(treatment, 60),
-            'sessions': 1,
-            'deposit': 0,
-            'category': 'general',
-            'agenda_id': 'default'
-        }
-    
-    def _call_check_availability(self, date: str, treatment: str = "general") -> Dict[str, Any]:
-        """Llamar al endpoint de disponibilidad según tipo de integración"""
-        try:
-            treatment_config = self._get_treatment_configuration(treatment)
-            
-            if self.integration_type == 'google_calendar':
-                return self._check_google_calendar_availability(date, treatment_config)
-            elif self.integration_type == 'calendly':
-                return self._check_calendly_availability(date, treatment_config)
-            elif self.integration_type == 'webhook':
-                return self._check_webhook_availability(date, treatment_config)
-            else:
-                return self._check_generic_availability(date, treatment_config)
-                
-        except Exception as e:
-            logger.error(f"Error calling availability endpoint: {e}")
-            return None
-    
-    def _check_google_calendar_availability(self, date: str, treatment_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Verificar disponibilidad en Google Calendar"""
-        try:
-            response = requests.post(
-                f"{self.company_config.schedule_service_url}/calendar/availability",
-                json={
-                    "date": date,
-                    "duration": treatment_config['duration'],
-                    "calendar_id": treatment_config.get('agenda_id', 'primary'),
-                    "company_id": self.company_config.company_id
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                return response.json().get("data", {})
-            else:
-                logger.warning(f"Google Calendar API returned {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error with Google Calendar API: {e}")
-            return None
-    
-    def _check_generic_availability(self, date: str, treatment_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Verificar disponibilidad con API genérica"""
-        try:
-            response = requests.post(
-                f"{self.company_config.schedule_service_url}/check-availability",
-                json={
-                    "date": date,
-                    "treatment": treatment_config,
-                    "company_id": self.company_config.company_id
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                return response.json().get("data", {})
-            else:
-                logger.warning(f"Availability endpoint returned {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error calling generic availability endpoint: {e}")
-            return None
-    
-    def _call_booking_api(self, question: str, user_id: str, chat_history: list, patient_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Llamar a la API de reserva según tipo de integración"""
-        try:
-            booking_data = {
-                "message": question,
-                "user_id": user_id,
-                "company_id": self.company_config.company_id,
-                "company_name": self.company_config.company_name,
-                "patient_info": patient_info,
-                "chat_history": self._format_chat_history(chat_history),
-                "integration_type": self.integration_type
-            }
-            
-            if self.integration_type == 'google_calendar':
-                return self._book_google_calendar(booking_data)
-            elif self.integration_type == 'calendly':
-                return self._book_calendly(booking_data)
-            elif self.integration_type == 'webhook':
-                return self._book_webhook(booking_data)
-            else:
-                return self._book_generic_api(booking_data)
-                
-        except Exception as e:
-            logger.error(f"Error calling booking API: {e}")
-            return {"success": False, "message": "Error del servicio"}
-    
-    def _book_google_calendar(self, booking_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Crear evento en Google Calendar"""
-        try:
-            response = requests.post(
-                f"{self.company_config.schedule_service_url}/calendar/book",
-                json=booking_data,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "booking_id": result.get("event_id"),
-                    "calendar_link": result.get("calendar_link"),
-                    "response": result.get("message", "Cita agendada exitosamente")
-                }
-            else:
-                logger.warning(f"Google Calendar booking returned {response.status_code}")
-                return {"success": False, "message": "Error creando evento"}
-                
-        except Exception as e:
-            logger.error(f"Error booking Google Calendar: {e}")
-            return {"success": False, "message": "Error del servicio"}
-    
-    def _book_generic_api(self, booking_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Reservar con API genérica"""
-        try:
-            response = requests.post(
-                f"{self.company_config.schedule_service_url}/schedule-request",
-                json=booking_data,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.warning(f"Generic booking API returned {response.status_code}")
-                return {"success": False, "message": "Servicio no disponible"}
-                
-        except Exception as e:
-            logger.error(f"Error with generic booking API: {e}")
-            return {"success": False, "message": "Error del servicio"}
-    
-    def _format_booking_success(self, booking_result: Dict[str, Any]) -> str:
-        """Formatear mensaje de éxito de reserva"""
-        base_message = f"✅ ¡Cita agendada exitosamente en {self.company_config.company_name}!"
-        
-        details = []
-        if booking_result.get('booking_id'):
-            details.append(f"📋 ID de reserva: {booking_result['booking_id']}")
-        
-        if booking_result.get('calendar_link'):
-            details.append(f"📅 Enlace al calendario: {booking_result['calendar_link']}")
-        
-        if booking_result.get('confirmation_email'):
-            details.append("📧 Recibirás confirmación por email")
-        
-        if details:
-            base_message += "\n\n" + "\n".join(details)
-        
-        return base_message + f"\n\n{booking_result.get('response', '')}"
-    
-    def _format_chat_history(self, chat_history: list) -> List[Dict[str, str]]:
-        """Formatear historial de chat para APIs"""
-        return [
-            {
-                "content": msg.content if hasattr(msg, 'content') else str(msg),
-                "type": getattr(msg, 'type', 'user')
-            } for msg in chat_history
-        ]
-    
-    def _generate_base_schedule_response(self, question: str, inputs: Dict[str, Any], 
-                                       schedule_context: str, required_fields: List[str]) -> str:
-        """Generar respuesta base para agendamiento con contexto RAG"""
-        fields_text = "\n".join([f"- {field.title()}" for field in required_fields])
-        
-        basic_response = f"""Perfecto, te ayudo con tu cita en {self.company_config.company_name}.
-
-Para agendar necesito:
-{fields_text}
-
-¿Puedes proporcionarme esta información? 📅"""
-
-        # Agregar información específica del RAG si está disponible
-        if schedule_context and len(schedule_context) > 100:
-            context_lines = schedule_context.split('\n')
-            relevant_info = []
-            for line in context_lines:
-                if any(word in line.lower() for word in ['preparación', 'requisitos', 'recomendación', 'antes', 'abono', 'valoración']):
-                    relevant_info.append(line.strip())
-            
-            if relevant_info:
-                basic_response += f"\n\nInformación adicional:\n" + "\n".join(relevant_info[:3])
-        
-        return basic_response
-    
-    # Métodos auxiliares mantenidos del código original
-    def _extract_date_from_question(self, question, chat_history=None):
-        """Extraer fecha de la pregunta o historial"""
-        import re
-        from datetime import datetime, timedelta
-        
-        # Buscar formato DD-MM-YYYY
-        match = re.search(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b', question)
-        if match:
-            return match.group(0).replace('/', '-')
-        
-        # Palabras relativas
-        text_lower = question.lower()
-        today = datetime.now()
-        
-        if "hoy" in text_lower:
-            return today.strftime("%d-%m-%Y")
-        elif "mañana" in text_lower:
-            tomorrow = today + timedelta(days=1)
-            return tomorrow.strftime("%d-%m-%Y")
-        elif "pasado mañana" in text_lower:
-            day_after = today + timedelta(days=2)
-            return day_after.strftime("%d-%m-%Y")
-        
-        return None
-    
-    def _extract_treatment_from_question(self, question):
-        """Extraer tratamiento específico de la empresa"""
+        # Contar keywords relacionadas
         question_lower = question.lower()
         
-        # Buscar en las configuraciones de tratamientos
-        schedules_config = self._get_schedules_configuration()
-        for treatment in schedules_config.keys():
-            if treatment.lower() in question_lower:
-                return treatment
-        
-        return "tratamiento general"
-    
-    def _extract_patient_info_from_history(self, chat_history: list) -> bool:
-        """Extraer información del paciente del historial"""
-        if not chat_history:
-            return False
-            
-        history_text = " ".join([msg.content if hasattr(msg, 'content') else str(msg) for msg in chat_history])
-        
-        # Verificar presencia de información clave
-        has_name = any(word in history_text.lower() for word in ["nombre", "llamo", "soy"])
-        has_contact = any(char.isdigit() for char in history_text) and len([c for c in history_text if c.isdigit()]) >= 7
-        has_date_or_time = any(word in history_text.lower() for word in ["fecha", "día", "mañana", "hoy", "hora"])
-        
-        return has_name and (has_contact or has_date_or_time)
-    
-    def _filter_slots_by_configuration(self, available_slots, treatment_config):
-        """Filtrar slots por configuración del tratamiento"""
-        try:
-            if not available_slots:
-                return []
-            
-            required_duration = treatment_config['duration']
-            sessions = treatment_config.get('sessions', 1)
-            
-            # Para múltiples sesiones, necesitamos más tiempo o slots consecutivos
-            if sessions > 1:
-                required_duration = required_duration * sessions
-            
-            required_slots = max(1, required_duration // 30)
-            
-            times = []
-            for slot in available_slots:
-                if isinstance(slot, dict) and "time" in slot:
-                    times.append(slot["time"])
-                elif isinstance(slot, str):
-                    times.append(slot)
-            
-            times.sort()
-            filtered = []
-            
-            if required_slots == 1:
-                return [f"{time} - {self._add_minutes_to_time(time, required_duration)}" for time in times]
-            
-            # Para tratamientos que requieren múltiples slots
-            for i in range(len(times) - required_slots + 1):
-                consecutive_times = times[i:i + required_slots]
-                if self._are_consecutive_times(consecutive_times):
-                    start_time = consecutive_times[0]
-                    end_time = self._add_minutes_to_time(start_time, required_duration)
-                    filtered.append(f"{start_time} - {end_time}")
-            
-            return filtered
-            
-        except Exception as e:
-            logger.error(f"Error filtering slots: {e}")
-            return []
-    
-    def _are_consecutive_times(self, times):
-        """Verificar tiempos consecutivos"""
-        for i in range(len(times) - 1):
-            current_minutes = self._time_to_minutes(times[i])
-            next_minutes = self._time_to_minutes(times[i + 1])
-            if next_minutes - current_minutes != 30:
-                return False
-        return True
-    
-    def _time_to_minutes(self, time_str):
-        """Convertir hora a minutos"""
-        try:
-            time_clean = time_str.strip()
-            if ':' in time_clean:
-                parts = time_clean.split(':')
-                hours = int(parts[0])
-                minutes = int(parts[1])
-                return hours * 60 + minutes
-            return 0
-        except (ValueError, IndexError):
-            return 0
-    
-    def _add_minutes_to_time(self, time_str, minutes_to_add):
-        """Sumar minutos a hora"""
-        try:
-            total_minutes = self._time_to_minutes(time_str) + minutes_to_add
-            hours = (total_minutes // 60) % 24
-            minutes = total_minutes % 60
-            return f"{hours:02d}:{minutes:02d}"
-        except:
-            return time_str
-    
-    def _format_slots_response(self, slots, date, treatment_config):
-        """Formatear respuesta de horarios con información del tratamiento"""
-        if not slots:
-            treatment_name = "tratamiento"
-            duration = treatment_config.get('duration', 60)
-            return f"No hay horarios disponibles para {date} en {self.company_config.company_name} (tratamiento de {duration} min)."
-        
-        # Información adicional del tratamiento
-        duration = treatment_config.get('duration', 60)
-        sessions = treatment_config.get('sessions', 1)
-        deposit = treatment_config.get('deposit', 0)
-        
-        slots_text = "\n".join(f"- {slot}" for slot in slots)
-        
-        response = f"Horarios disponibles para {date} en {self.company_config.company_name}:\n{slots_text}"
-        
-        # Agregar información adicional si es relevante
-        if sessions > 1:
-            response += f"\n\n⏱️ Duración: {duration} min ({sessions} sesiones)"
-        else:
-            response += f"\n\n⏱️ Duración: {duration} minutos"
-        
-        if deposit > 0:
-            response += f"\n💰 Abono requerido: ${deposit:,}"
-        
-        return response
-    
-    # Métodos específicos para integraciones que no se implementaron en _call_check_availability
-    def _check_calendly_availability(self, date: str, treatment_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Verificar disponibilidad en Calendly"""
-        try:
-            # Implementar integración con Calendly API
-            response = requests.get(
-                f"{self.company_config.schedule_service_url}/calendly/availability",
-                params={
-                    "date": date,
-                    "duration": treatment_config['duration'],
-                    "event_type": treatment_config.get('calendly_event_type', 'default')
-                },
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                return response.json().get("data", {})
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error with Calendly API: {e}")
-            return None
-    
-    def _check_webhook_availability(self, date: str, treatment_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Verificar disponibilidad vía webhook"""
-        try:
-            # Enviar webhook para consultar disponibilidad
-            webhook_data = {
-                "action": "check_availability",
-                "date": date,
-                "treatment": treatment_config,
-                "company_id": self.company_config.company_id,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            response = requests.post(
-                self.company_config.schedule_service_url,
-                json=webhook_data,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                return response.json().get("data", {})
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error with webhook availability: {e}")
-            return None
-    
-    def _book_calendly(self, booking_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Reservar cita en Calendly"""
-        try:
-            # Implementar booking con Calendly
-            response = requests.post(
-                f"{self.company_config.schedule_service_url}/calendly/book",
-                json=booking_data,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "booking_url": result.get("booking_url"),
-                    "response": "Cita programada en Calendly. Revisa tu email para confirmar."
-                }
-            return {"success": False, "message": "Error con Calendly"}
-            
-        except Exception as e:
-            logger.error(f"Error booking Calendly: {e}")
-            return {"success": False, "message": "Error del servicio"}
-    
-    def _book_webhook(self, booking_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Reservar cita vía webhook"""
-        try:
-            webhook_data = {
-                "action": "create_booking",
-                **booking_data,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            response = requests.post(
-                self.company_config.schedule_service_url,
-                json=webhook_data,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "webhook_response": result,
-                    "response": "Solicitud de cita enviada exitosamente"
-                }
-            return {"success": False, "message": "Error procesando webhook"}
-            
-        except Exception as e:
-            logger.error(f"Error with webhook booking: {e}")
-            return {"success": False, "message": "Error del servicio"}
-    
-    def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
-        """Ejecutar cadena del agente"""
-        return self.chain.invoke(inputs)
-
-    
-    def check_availability(self, question: str, chat_history: list, schedule_context: Dict[str, Any]) -> str:
-        """
-        Verifica disponibilidad basándose en la lógica actual o devuelve un mensaje por defecto.
-        """
-        try:
-            company_name = schedule_context.get("company_name", "la empresa")
-            services = schedule_context.get("services", [])
-            formatted_services = self._format_services(services)
-    
-            # Lógica simple: responder con instrucciones
-            return (
-                f"Actualmente no tengo acceso a la agenda en tiempo real para {company_name}, "
-                f"pero puedo ayudarte a programar una cita.\n\n"
-                f"Por favor indícame:\n"
-                f"📅 Fecha deseada (DD-MM-YYYY)\n"
-                f"🩺 Tipo de servicio ({formatted_services})"
-            )
-        except Exception as e:
-            logger.error(f"Error en check_availability para {company_name}: {e}")
-            return f"❌ No pude verificar disponibilidad en {company_name}. ¿Deseas que te conecte con un asesor?"
-
-
-    def get_integration_status(self) -> Dict[str, Any]:
-        """Obtener estado de la integración de agendamiento"""
-        return {
-            "integration_type": self.integration_type,
-            "service_available": self.schedule_service_available,
-            "service_url": self.company_config.schedule_service_url,
-            "last_check": self.schedule_status_last_check,
-            "company_id": self.company_config.company_id,
-            "schedules_configured": len(self._get_schedules_configuration())
+        intent_keywords = {
+            "check_availability": ["disponibilidad", "horario", "cuando", "libre"],
+            "create_appointment": ["agendar", "cita", "reservar", "turno"],
+            "get_info": ["información", "duración", "preparación", "requisitos"]
         }
-
-    # Agregar este método al ScheduleAgent (app/agents/schedule_agent.py)
-    
-    def _format_services(self, services) -> str:
-        """Convierte services en un string legible, sin errores - Método requerido por AvailabilityAgent"""
-        try:
-            if isinstance(services, dict):
-                return ", ".join(services.keys())
-            elif isinstance(services, list):
-                return ", ".join(str(s) for s in services)
-            elif isinstance(services, str):
-                return services
-            else:
-                return "servicios disponibles"  # Fallback seguro
-        except Exception as e:
-            logger.warning(f"Error formatting services for {self.company_config.company_id}: {e}")
-            return "servicios disponibles"
-    
-    def check_availability(self, question: str, chat_history: list, schedule_context: Dict[str, Any]) -> str:
-        """
-        Método mejorado para verificar disponibilidad - llamado por AvailabilityAgent
-        """
-        try:
-            company_name = schedule_context.get("company_name", self.company_config.company_name)
-            services = schedule_context.get("services", self.company_config.services)
-            
-            # Usar el método _format_services local
-            formatted_services = self._format_services(services)
-            
-            # Extraer fecha de la pregunta
-            date = self._extract_date_from_question(question, chat_history)
-            treatment = self._extract_treatment_from_question(question)
-            
-            if date and treatment:
-                # Intentar verificar disponibilidad real si tenemos API
-                try:
-                    availability_data = self._call_check_availability(date, treatment)
-                    if availability_data and availability_data.get("available_slots"):
-                        slots = availability_data["available_slots"]
-                        return self._format_availability_response(slots, date, treatment, company_name)
-                except Exception as api_error:
-                    logger.warning(f"API availability check failed: {api_error}")
-            
-            # Respuesta por defecto con servicios formateados
-            return (
-                f"Para consultar disponibilidad en {company_name}, necesito:\n\n"
-                f"📅 Fecha específica (DD-MM-YYYY)\n"
-                f"🩺 Tipo de servicio ({formatted_services})\n\n"
-                f"¿Puedes proporcionarme estos datos?"
-            )
-            
-        except Exception as e:
-            logger.error(f"Error en check_availability para {schedule_context.get('company_name', 'empresa')}: {e}")
-            return f"❌ No pude verificar disponibilidad. Te conectaré con un asesor."
-    
-    def _format_availability_response(self, slots: list, date: str, treatment: str, company_name: str) -> str:
-        """Formatea la respuesta de disponibilidad"""
-        if not slots:
-            return f"No hay horarios disponibles para {treatment} el {date} en {company_name}."
         
-        slots_text = "\n".join([f"• {slot}" for slot in slots[:5]])  # Máximo 5 slots
+        keywords = intent_keywords.get(intent, [])
+        matches = sum(1 for kw in keywords if kw in question_lower)
         
-        return (
-            f"✅ Horarios disponibles para {treatment} el {date} en {company_name}:\n\n"
-            f"{slots_text}\n\n"
-            f"¿Te gustaría reservar alguno de estos horarios?"
-        )
+        # Normalizar
+        confidence = min(0.5 + (matches * 0.15), 1.0)
+        return confidence
     
-    def _extract_date_from_question(self, question: str, chat_history: list) -> str:
-        """Extrae fecha de la pregunta con patrones mejorados"""
-        import re
-        from datetime import datetime, timedelta
+    def _extract_scheduling_entities(
+        self,
+        question: str,
+        chat_history: List
+    ) -> Dict[str, Any]:
+        """
+        Extraer entidades relevantes para scheduling.
+        
+        Returns:
+            Dict con: date, time, treatment, patient_info
+        """
+        entities = {
+            "date": None,
+            "time": None,
+            "treatment": None,
+            "patient_name": None
+        }
+        
+        # Extraer fecha
+        date_match = self._extract_date_from_text(question)
+        if date_match:
+            entities["date"] = date_match
+        
+        # Extraer hora
+        time_match = self._extract_time_from_text(question)
+        if time_match:
+            entities["time"] = time_match
+        
+        # Extraer tratamiento
+        treatment = self._extract_treatment_from_text(question)
+        if treatment:
+            entities["treatment"] = treatment
+        
+        # Buscar nombre en historial
+        if chat_history:
+            name = self._extract_name_from_history(chat_history)
+            if name:
+                entities["patient_name"] = name
+        
+        return entities
+    
+    def _extract_date_from_text(self, text: str) -> Optional[str]:
+        """Extraer fecha del texto"""
+        text_lower = text.lower()
         
         # Patrones de fecha
         date_patterns = [
-            r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b',  # DD/MM/YYYY o DD-MM-YYYY
-            r'\b(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})\b',  # YYYY/MM/DD o YYYY-MM-DD
+            r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b',
+            r'\b(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})\b'
         ]
         
-        # Buscar en la pregunta actual
-        text_to_search = question.lower()
-        
         for pattern in date_patterns:
-            match = re.search(pattern, text_to_search)
+            match = re.search(pattern, text)
             if match:
-                try:
-                    # Intentar parsear la fecha
-                    groups = match.groups()
-                    if len(groups[0]) == 4:  # YYYY-MM-DD
-                        year, month, day = groups
-                    else:  # DD-MM-YYYY
-                        day, month, year = groups
-                    
-                    # Crear fecha válida
-                    if len(year) == 2:
-                        year = f"20{year}"
-                    
-                    parsed_date = datetime(int(year), int(month), int(day))
-                    return parsed_date.strftime("%d-%m-%Y")
-                except (ValueError, TypeError):
-                    continue
+                return match.group(0)
         
-        # Palabras relativas comunes
+        # Fechas relativas
+        from datetime import datetime, timedelta
         today = datetime.now()
+        
         relative_dates = {
             'hoy': today,
             'mañana': today + timedelta(days=1),
-            'pasado mañana': today + timedelta(days=2),
-            'lunes': today + timedelta(days=(7-today.weekday()) % 7),
-            'martes': today + timedelta(days=(8-today.weekday()) % 7),
-            'miércoles': today + timedelta(days=(9-today.weekday()) % 7),
-            'jueves': today + timedelta(days=(10-today.weekday()) % 7),
-            'viernes': today + timedelta(days=(11-today.weekday()) % 7),
+            'pasado mañana': today + timedelta(days=2)
         }
         
         for word, date_obj in relative_dates.items():
-            if word in text_to_search:
+            if word in text_lower:
                 return date_obj.strftime("%d-%m-%Y")
         
         return None
     
-    def _extract_treatment_from_question(self, question: str) -> str:
-        """Extrae el tipo de tratamiento de la pregunta"""
-        question_lower = question.lower()
+    def _extract_time_from_text(self, text: str) -> Optional[str]:
+        """Extraer hora del texto"""
+        time_patterns = [
+            r'\b(\d{1,2}):(\d{2})\s*(am|pm)?\b',
+            r'\b(\d{1,2})\s*(am|pm|horas)\b'
+        ]
+        
+        for pattern in time_patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                return match.group(0)
+        
+        return None
+    
+    def _extract_treatment_from_text(self, text: str) -> Optional[str]:
+        """Extraer tratamiento del texto"""
+        text_lower = text.lower()
         
         # Obtener tratamientos de la configuración
-        if hasattr(self.company_config, 'treatment_durations') and self.company_config.treatment_durations:
+        if hasattr(self.company_config, 'treatment_durations'):
             for treatment in self.company_config.treatment_durations.keys():
-                if treatment.lower() in question_lower:
+                if treatment.lower() in text_lower:
                     return treatment
         
-        # Palabras clave genéricas de tratamientos
+        # Palabras clave genéricas
         treatment_keywords = [
-            'limpieza', 'consulta', 'revisión', 'tratamiento', 'terapia',
-            'botox', 'relleno', 'facial', 'dental', 'implante', 'ortodoncia'
+            'limpieza', 'consulta', 'valoración', 'tratamiento',
+            'procedimiento', 'botox', 'relleno', 'facial'
         ]
         
         for keyword in treatment_keywords:
-            if keyword in question_lower:
+            if keyword in text_lower:
                 return keyword
         
-        return "consulta general"
+        return None
     
-    def _call_check_availability(self, date: str, treatment: str) -> Dict[str, Any]:
-        """Llama al API de disponibilidad si está configurado"""
-        if not self.schedule_service_available:
-            return None
+    def _extract_name_from_history(self, chat_history: List) -> Optional[str]:
+        """Extraer nombre del paciente del historial"""
+        history_text = " ".join([
+            msg.content if hasattr(msg, 'content') else str(msg)
+            for msg in chat_history
+        ]).lower()
+        
+        patterns = [
+            r'mi nombre es ([a-záéíóúñ\s]+)',
+            r'me llamo ([a-záéíóúñ\s]+)',
+            r'soy ([a-záéíóúñ\s]+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, history_text)
+            if match:
+                name = match.group(1).strip().title()
+                if len(name.split()) >= 2:
+                    return name
+        
+        return None
+    
+    # ========================================================================
+    # HELPERS DE RAG
+    # ========================================================================
+    
+    def _needs_rag_context(self, intent: str, question: str) -> bool:
+        """Determinar si necesita contexto de RAG"""
+        # Siempre usar RAG para info y disponibilidad
+        if intent in ["get_info", "check_availability"]:
+            return True
+        
+        # Verificar keywords que sugieren necesidad de info
+        rag_keywords = [
+            "duración", "tiempo", "preparación", "requisitos",
+            "antes", "después", "información", "abono", "costo"
+        ]
+        
+        return any(kw in question.lower() for kw in rag_keywords)
+    
+    def _build_rag_query(self, question: str, intent: str) -> str:
+        """Construir query optimizada para RAG"""
+        base_keywords = "cita agenda horario duración preparación requisitos"
+        
+        if intent == "get_info":
+            return f"{base_keywords} información tratamiento {question}"
+        elif intent == "check_availability":
+            return f"{base_keywords} disponibilidad {question}"
+        elif intent == "create_appointment":
+            return f"{base_keywords} agendar reservar {question}"
+        else:
+            return f"{base_keywords} {question}"
+    
+    def _extract_rag_content(self, docs: List, intent: str) -> str:
+        """Extraer contenido relevante de documentos RAG"""
+        if not docs:
+            return ""
+        
+        relevant_content = []
+        
+        # Keywords por intención
+        intent_keywords = {
+            "get_info": ["duración", "tiempo", "preparación", "requisitos", "abono"],
+            "check_availability": ["horario", "disponibilidad", "agenda"],
+            "create_appointment": ["agendar", "cita", "reservar", "requisitos"]
+        }
+        
+        keywords = intent_keywords.get(intent, [])
+        
+        for doc in docs[:3]:  # Max 3 docs
+            content = ""
+            
+            if hasattr(doc, 'page_content'):
+                content = doc.page_content
+            elif isinstance(doc, dict) and 'content' in doc:
+                content = doc['content']
+            
+            if content:
+                content_lower = content.lower()
+                
+                # Solo incluir si es relevante
+                if any(kw in content_lower for kw in keywords):
+                    relevant_content.append(content)
+        
+        return "\n\n".join(relevant_content) if relevant_content else ""
+    
+    def _get_basic_schedule_info(self) -> str:
+        """Info básica de scheduling desde config"""
+        info_parts = [
+            f"Información de {self.company_config.company_name}:",
+            f"Servicios: {self.company_config.services}"
+        ]
+        
+        # Añadir duraciones si existen
+        if hasattr(self.company_config, 'treatment_durations'):
+            info_parts.append("\nDuraciones de tratamientos:")
+            for treatment, duration in self.company_config.treatment_durations.items():
+                info_parts.append(f"- {treatment}: {duration} minutos")
+        
+        return "\n".join(info_parts)
+    
+    # ========================================================================
+    # SELECCIÓN Y EJECUCIÓN DE TOOLS
+    # ========================================================================
+    
+    def _select_tools_for_intent(
+        self,
+        intent: str,
+        entities: Dict[str, Any],
+        state: AgentState
+    ) -> List[Dict[str, Any]]:
+        """
+        Seleccionar herramientas basado en intención y entidades disponibles.
+        
+        Returns:
+            Lista de configs de tools: [{"tool_name": str, "params": dict}, ...]
+        """
+        tools = []
+        
+        if intent == "check_availability":
+            # Verificar disponibilidad
+            if entities.get("date") and entities.get("treatment"):
+                tools.append({
+                    "tool_name": "get_available_slots",
+                    "params": {
+                        "date": entities["date"],
+                        "treatment": entities["treatment"],
+                        "company_id": self.company_config.company_id
+                    }
+                })
+            else:
+                # Necesita más info, no ejecutar tools aún
+                pass
+        
+        elif intent == "create_appointment":
+            # Validar datos primero
+            if self._has_complete_booking_info(entities, state):
+                tools.append({
+                    "tool_name": "validate_appointment_data",
+                    "params": {
+                        "appointment_data": self._build_appointment_data(entities, state),
+                        "company_id": self.company_config.company_id
+                    }
+                })
+                
+                # Luego crear cita
+                tools.append({
+                    "tool_name": "create_appointment",
+                    "params": {
+                        "datetime": f"{entities['date']} {entities.get('time', '10:00')}",
+                        "patient_info": {
+                            "name": entities.get("patient_name", "Pendiente"),
+                            "treatment": entities.get("treatment", "Consulta general")
+                        },
+                        "service": entities.get("treatment", "Consulta general"),
+                        "company_id": self.company_config.company_id
+                    }
+                })
+        
+        elif intent == "get_info":
+            # Ya tenemos RAG context, no necesitamos tools adicionales
+            pass
+        
+        return tools
+    
+    def _has_complete_booking_info(
+        self,
+        entities: Dict[str, Any],
+        state: AgentState
+    ) -> bool:
+        """Verificar si tenemos info completa para booking"""
+        required = ["date", "treatment"]
+        return all(entities.get(field) for field in required)
+    
+    def _build_appointment_data(
+        self,
+        entities: Dict[str, Any],
+        state: AgentState
+    ) -> Dict[str, Any]:
+        """Construir datos de cita"""
+        return {
+            "date": entities.get("date"),
+            "time": entities.get("time", "10:00"),
+            "treatment": entities.get("treatment"),
+            "patient_name": entities.get("patient_name"),
+            "company_id": self.company_config.company_id
+        }
+    
+    def _execute_single_tool(
+        self,
+        tool_name: str,
+        params: Dict[str, Any],
+        state: AgentState
+    ) -> Dict[str, Any]:
+        """
+        Ejecutar una herramienta individual.
+        
+        Usa AgentToolsService si está disponible, sino fallback a lógica directa.
+        """
+        if not self._tool_executor:
+            return {
+                "success": False,
+                "error": "ToolExecutor not configured"
+            }
         
         try:
-            treatment_config = self._get_treatment_configuration(treatment)
+            # Ejecutar con tool executor
+            result = self._tool_executor.execute(
+                tool_name=tool_name,
+                params=params,
+                company_id=self.company_config.company_id,
+                user_id=state.get("user_id", "unknown")
+            )
             
-            if self.integration_type == 'google_calendar':
-                return self._check_google_calendar_availability(date, treatment_config)
-            elif self.integration_type == 'calendly':
-                return self._check_calendly_availability(date, treatment_config)
-            elif self.integration_type == 'webhook':
-                return self._check_webhook_availability(date, treatment_config)
-            else:
-                return self._check_generic_availability(date, treatment_config)
-                
+            return result
+            
         except Exception as e:
-            logger.error(f"Error calling availability endpoint: {e}")
-            return None
+            logger.error(f"Error executing tool {tool_name}: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    # ========================================================================
+    # GENERACIÓN DE RESPUESTA FINAL
+    # ========================================================================
+    
+    def _build_final_response(
+        self,
+        intent: str,
+        entities: Dict[str, Any],
+        tool_results: Dict[str, Any],
+        rag_context: str,
+        state: AgentState
+    ) -> str:
+        """
+        Construir respuesta final sintetizando toda la información.
+        """
+        # Usar LLM para generar respuesta natural
+        try:
+            response_prompt = self._create_response_prompt()
+            
+            prompt_inputs = {
+                "intent": intent,
+                "entities": entities,
+                "tool_results": tool_results,
+                "rag_context": rag_context,
+                "question": state["question"],
+                "company_name": self.company_config.company_name,
+                "services": self.company_config.services
+            }
+            
+            # Generar con LLM
+            response = (response_prompt | self.chat_model).invoke(prompt_inputs)
+            
+            if hasattr(response, 'content'):
+                return response.content
+            else:
+                return str(response)
+            
+        except Exception as e:
+            logger.error(f"Error generating response with LLM: {e}")
+            
+            # Fallback: generar respuesta programática
+            return self._build_programmatic_response(
+                intent, entities, tool_results, rag_context
+            )
+    
+    def _create_response_prompt(self) -> ChatPromptTemplate:
+        """Crear prompt para generación de respuesta"""
+        template = """Eres un asistente de agendamiento para {company_name}.
+
+INTENCIÓN DEL USUARIO: {intent}
+ENTIDADES DETECTADAS: {entities}
+RESULTADOS DE HERRAMIENTAS: {tool_results}
+CONTEXTO ADICIONAL:
+{rag_context}
+
+PREGUNTA DEL USUARIO: {question}
+
+SERVICIOS DISPONIBLES: {services}
+
+INSTRUCCIONES:
+1. Genera una respuesta clara y profesional
+2. Si hay resultados de herramientas, úsalos en la respuesta
+3. Si hay contexto adicional relevante, menciónalo apropiadamente
+4. Sé conciso pero completo
+5. Mantén un tono cálido y profesional
+
+RESPUESTA:"""
+        
+        return ChatPromptTemplate.from_template(template)
+    
+    def _build_programmatic_response(
+        self,
+        intent: str,
+        entities: Dict[str, Any],
+        tool_results: Dict[str, Any],
+        rag_context: str
+    ) -> str:
+        """Generar respuesta programática (fallback)"""
+        if intent == "check_availability":
+            if "get_available_slots" in tool_results:
+                slots = tool_results["get_available_slots"]
+                if slots:
+                    return self._format_availability_response(slots, entities)
+                else:
+                    return f"No hay horarios disponibles para la fecha solicitada en {self.company_config.company_name}."
+            else:
+                return self._generate_availability_request_response(entities)
+        
+        elif intent == "create_appointment":
+            if "create_appointment" in tool_results:
+                booking_result = tool_results["create_appointment"]
+                return self._format_booking_confirmation(booking_result)
+            else:
+                return self._generate_booking_request_response(entities)
+        
+        elif intent == "get_info":
+            if rag_context:
+                return f"Información sobre tratamientos en {self.company_config.company_name}:\n\n{rag_context[:500]}"
+            else:
+                return self._get_basic_schedule_info()
+        
+        else:
+            return f"¿En qué puedo ayudarte con tu cita en {self.company_config.company_name}?"
+    
+    def _format_availability_response(
+        self,
+        slots: List,
+        entities: Dict[str, Any]
+    ) -> str:
+        """Formatear respuesta de disponibilidad"""
+        date = entities.get("date", "la fecha solicitada")
+        treatment = entities.get("treatment", "el tratamiento")
+        
+        slots_text = "\n".join([f"- {slot}" for slot in slots[:5]])
+        
+        return (
+            f"✅ Horarios disponibles para {treatment} el {date} "
+            f"en {self.company_config.company_name}:\n\n"
+            f"{slots_text}\n\n"
+            f"¿Te gustaría reservar alguno de estos horarios?"
+        )
+    
+    def _generate_availability_request_response(self, entities: Dict[str, Any]) -> str:
+        """Generar respuesta solicitando más info para disponibilidad"""
+        missing = []
+        
+        if not entities.get("date"):
+            missing.append("📅 Fecha específica (DD-MM-YYYY)")
+        
+        if not entities.get("treatment"):
+            missing.append(f"🩺 Tipo de servicio ({self.company_config.services})")
+        
+        if missing:
+            return (
+                f"Para consultar disponibilidad en {self.company_config.company_name}, "
+                f"necesito:\n\n" + "\n".join(missing)
+            )
+        
+        return "Consultando disponibilidad..."
+    
+    def _format_booking_confirmation(self, booking_result: Dict[str, Any]) -> str:
+        """Formatear confirmación de booking"""
+        if booking_result.get("success"):
+            return (
+                f"✅ ¡Cita agendada exitosamente en {self.company_config.company_name}!\n\n"
+                f"Recibirás una confirmación por email con todos los detalles."
+            )
+        else:
+            error = booking_result.get("error", "Error desconocido")
+            return (
+                f"❌ No pude completar el agendamiento: {error}\n\n"
+                f"Te conectaré con un especialista de {self.company_config.company_name}."
+            )
+    
+    def _generate_booking_request_response(self, entities: Dict[str, Any]) -> str:
+        """Generar respuesta solicitando más info para booking"""
+        required = ["fecha", "tipo de servicio", "nombre completo", "teléfono"]
+        
+        return (
+            f"Para agendar tu cita en {self.company_config.company_name}, necesito:\n\n"
+            + "\n".join([f"- {field}" for field in required])
+        )
+    
+    # ========================================================================
+    # HELPERS AUXILIARES
+    # ========================================================================
+    
+    def _detect_integration_type(self) -> str:
+        """Detectar tipo de integración de calendario"""
+        schedule_url = self.company_config.schedule_service_url.lower()
+        
+        if 'google' in schedule_url:
+            return 'google_calendar'
+        elif 'calendly' in schedule_url:
+            return 'calendly'
+        elif 'cal.com' in schedule_url:
+            return 'cal_com'
+        else:
+            return 'generic_rest'
+    
+    def _generate_error_response(self, error: str) -> str:
+        """Generar respuesta de error"""
+        return (
+            f"Disculpa, tuve un problema procesando tu solicitud en "
+            f"{self.company_config.company_name}. "
+            f"¿Podrías intentarlo de nuevo o contactar directamente? 🙏"
+        )
