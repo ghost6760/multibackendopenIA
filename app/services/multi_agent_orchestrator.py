@@ -10,7 +10,6 @@ from app.services.openai_service import OpenAIService
 from app.services.vectorstore_service import VectorstoreService
 from app.services.agent_state_manager import AgentStateManager
 from app.services.prompt_service import get_prompt_service
-from app.workflows.condition_evaluator import ConditionEvaluator
 from app.models.conversation import ConversationManager
 import logging
 import json
@@ -159,6 +158,9 @@ class MultiAgentOrchestrator:
         self.openai_service = openai_service or OpenAIService()
         self.vectorstore_service = None  # Se inyecta externamente
         self.tool_executor = None  # Se inyecta externamente
+
+        # ✅ AGREGAR EL IMPORT AQUÍ (línea ~164)
+        from app.workflows.condition_evaluator import ConditionEvaluator
         
         # ✅ NUEVOS: Servicios cognitivos
         self.prompt_service = get_prompt_service()
