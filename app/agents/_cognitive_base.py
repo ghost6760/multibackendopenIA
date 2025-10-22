@@ -1,17 +1,13 @@
 """
-Base cognitiva REFACTORIZADA para agentes LangGraph.
-
-CAMBIOS PRINCIPALES:
-- ✅ Integra sistema de prompts PostgreSQL de BaseAgent
-- ✅ Soporte para historial de chat con MessagesPlaceholder
-- ✅ CompanyConfig para personalización por empresa
-- ✅ OpenAI Service integrado
-- ✅ Mantiene arquitectura LangGraph cognitiva
-- ✅ Compatible con orchestrator
+Base cognitiva compartida para agentes LangGraph.
 
 Este módulo define la infraestructura común que todos los agentes cognitivos
-deben implementar, incluyendo tipos de estado, interfaces de nodos, contratos
-de ejecución Y gestión de prompts/historial.
+deben implementar, incluyendo tipos de estado, interfaces de nodos y contratos
+de ejecución.
+
+IMPORTANTE: Los agentes cognitivos mantienen los mismos nombres de clase y firmas
+públicas que sus versiones anteriores, pero internamente usan LangGraph para
+razonamiento, decisión y ejecución de tools.
 """
 
 from typing import TypedDict, Annotated, Sequence, Any, Dict, List, Optional, Callable
@@ -21,17 +17,6 @@ from datetime import datetime
 from abc import ABC, abstractmethod
 import operator
 import logging
-import uuid
-
-# Imports de LangChain para prompts con historial
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import BaseMessage
-from langchain.schema.output_parser import StrOutputParser
-
-# Imports de servicios
-from app.config.company_config import CompanyConfig
-from app.services.openai_service import OpenAIService
-from app.services.prompt_service import get_prompt_service
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +117,10 @@ class AgentState(TypedDict):
     - Debugging y observabilidad
     - Reentrancia y recuperación de errores
     - Telemetría detallada
-    - ✅ NUEVO: Historial de chat persistente
     """
     # Inputs originales (obligatorios)
     question: str
-    chat_history: List[Dict[str, str]]  # ← Historial de conversación
+    chat_history: List[Dict[str, str]]
     user_id: str
     company_id: Optional[str]
     
@@ -152,7 +136,7 @@ class AgentState(TypedDict):
     tool_results: Annotated[List[ToolResult], operator.add]
     
     # Contexto y memoria
-    context: Dict[str, Any]  # ✅ Incluye company_name, services, etc.
+    context: Dict[str, Any]  # Información adicional recuperada
     intermediate_results: Dict[str, Any]  # Resultados parciales
     
     # Herramientas disponibles
@@ -182,6 +166,17 @@ class AgentState(TypedDict):
     # Timestamps
     started_at: str
     completed_at: Optional[str]
+
+
+class ToolExecutionRecord(TypedDict):
+    """Registro de ejecución de una herramienta (legacy compatible)"""
+    tool_name: str
+    inputs: Dict[str, Any]
+    output: Any
+    success: bool
+    error: Optional[str]
+    latency_ms: float
+    timestamp: str
 
 
 # ============================================================================
@@ -234,530 +229,346 @@ class CognitiveConfig:
 
 
 # ============================================================================
-# CLASE BASE REFACTORIZADA
+# INTERFACES BASE
 # ============================================================================
 
 class CognitiveAgentBase(ABC):
     """
-    Clase base abstracta REFACTORIZADA para agentes cognitivos.
-    
-    NUEVAS CAPACIDADES:
-    - ✅ Sistema de prompts PostgreSQL con fallbacks
-    - ✅ Soporte para historial de chat (MessagesPlaceholder)
-    - ✅ CompanyConfig para personalización
-    - ✅ OpenAI Service integrado
-    - ✅ Mantiene arquitectura LangGraph
+    Clase base abstracta para agentes cognitivos.
     
     IMPORTANTE: Las subclases DEBEN:
     1. Mantener el mismo nombre de clase que sus versiones anteriores
-    2. Implementar _create_graph() para construir grafo LangGraph
-    3. Implementar _create_default_prompt_template() con MessagesPlaceholder
-    4. Usar self.prompt_template en nodos de razonamiento
+    2. Implementar invoke(inputs: dict) -> str
+    3. Mantener métodos de inyección: set_vectorstore_service(), etc.
+    4. Usar LangGraph internamente para el grafo de decisión
     """
     
     def __init__(
         self,
-        company_config: CompanyConfig,      # ← NUEVO
-        openai_service: OpenAIService,      # ← NUEVO
         agent_type: AgentType,
         manifest: AgentManifest,
         config: CognitiveConfig
     ):
         """
-        Inicializa el agente cognitivo REFACTORIZADO.
+        Inicializa el agente cognitivo.
         
         Args:
-            company_config: Configuración de la empresa
-            openai_service: Servicio de OpenAI
             agent_type: Tipo de agente
             manifest: Manifest de capacidades
             config: Configuración cognitiva
         """
-        # ✅ NUEVO: Configuración de empresa
-        self.company_config = company_config
-        self.openai_service = openai_service
-        self.chat_model = openai_service.get_chat_model()
-        self.agent_name = self.__class__.__name__
-        
-        # Configuración cognitiva
         self.agent_type = agent_type
         self.manifest = manifest
         self.config = config
         
-        # ✅ NUEVO: Sistema de prompts PostgreSQL (migrado de BaseAgent)
-        self.prompt_service = get_prompt_service()
-        self._current_prompt_template = None
-        self._prompt_source = None
-        
         # Servicios inyectados (inicialmente None)
         self._tool_executor = None
         self._vectorstore_service = None
+        self._prompt_service = None
         self._state_manager = None
         self._condition_evaluator = None
         
         logger.info(
-            f"[{company_config.company_id}] 🏗️ Initializing {self.agent_name} "
-            f"(type: {agent_type.value}) with PostgreSQL prompts + LangGraph"
+            f"[{agent_type.value}] Cognitive agent initialized with "
+            f"{len(manifest.capabilities)} capabilities"
         )
-        
-        # ✅ NUEVO: Cargar prompt desde PostgreSQL (DESPUÉS de tener company_config)
-        self.prompt_template = self._create_prompt_template()
-        
-        # Estadísticas
-        self._stats = {
-            "invocations": 0,
-            "errors": 0,
-            "avg_latency_ms": 0
-        }
     
     # ========================================================================
-    # SISTEMA DE PROMPTS POSTGRESQL (Migrado de BaseAgent)
+    # MÉTODOS PÚBLICOS (MANTENER FIRMAS)
     # ========================================================================
-    
-    def _create_prompt_template(self) -> ChatPromptTemplate:
-        """
-        Crear template con soporte para prompts personalizados desde PostgreSQL.
-        
-        JERARQUÍA DE CARGA (igual que BaseAgent):
-        1. PostgreSQL custom_prompts (Personalizado por empresa)
-        2. PostgreSQL default_prompts (Por defecto del repositorio)
-        3. Fallback a JSON (compatibilidad temporal)
-        4. Método _create_default_prompt_template() (Hardcoded en agente)
-        5. Fallback de emergencia (Prompt básico)
-        
-        ✅ NUEVO: TODOS los prompts incluyen MessagesPlaceholder para historial
-        """
-        company_id = self.company_config.company_id
-        agent_key = self._get_agent_key()
-        
-        logger.info(f"🔄 [{company_id}] Creating prompt template for {self.agent_name} (key: {agent_key})")
-        
-        # 1. Intentar cargar prompt personalizado desde PostgreSQL
-        logger.info(f"🔍 [{company_id}] Step 1: Checking PostgreSQL custom prompts...")
-        custom_template = self._load_custom_prompt_from_postgresql()
-        if custom_template:
-            self._prompt_source = "postgresql_custom"
-            logger.info(f"✅ [{company_id}] SUCCESS: Using PostgreSQL custom prompt for {agent_key}")
-            return self._build_prompt_with_history(custom_template)
-        
-        # 2. Intentar cargar prompt por defecto desde PostgreSQL
-        logger.info(f"🔍 [{company_id}] Step 2: Checking PostgreSQL default prompts...")
-        default_template = self._load_default_prompt_from_postgresql()
-        if default_template:
-            self._prompt_source = "postgresql_default"
-            logger.info(f"✅ [{company_id}] SUCCESS: Using PostgreSQL default prompt for {agent_key}")
-            return self._build_prompt_with_history(default_template)
-        
-        # 3. Fallback a método del agente específico
-        try:
-            self._prompt_source = "hardcoded_agent"
-            logger.warning(f"⚠️ [{company_id}] FALLING BACK TO HARDCODED for {agent_key}")
-            return self._create_default_prompt_template()
-        except Exception as e:
-            logger.error(f"💥 [{company_id}] Error creating default prompt template: {e}")
-        
-        # 4. Fallback de emergencia
-        self._prompt_source = "emergency_fallback"
-        logger.error(f"🚨 [{company_id}] EMERGENCY FALLBACK for {agent_key}")
-        return self._create_emergency_prompt_template()
-    
-    def _load_custom_prompt_from_postgresql(self) -> Optional[str]:
-        """
-        Cargar prompt personalizado desde PostgreSQL.
-        
-        Returns:
-            Template string si se encuentra custom prompt, None si no
-        """
-        try:
-            company_id = self.company_config.company_id
-            agent_key = self._get_agent_key()
-            
-            logger.info(f"🔍 [{company_id}] Loading CUSTOM prompt for agent_key: {agent_key}")
-            
-            if not self.prompt_service:
-                logger.error(f"❌ [{company_id}] prompt_service is None!")
-                return None
-            
-            # Usar el servicio de prompts con fallback automático
-            agents_data = self.prompt_service.get_company_prompts(company_id)
-            agent_data = agents_data.get(agent_key, {})
-            
-            # Solo retornar si es personalizado y viene de PostgreSQL
-            is_custom = agent_data.get('is_custom', False)
-            source = agent_data.get('source', 'unknown')
-            has_prompt = bool(agent_data.get('current_prompt'))
-            
-            logger.info(f"🔍 [{company_id}] Evaluation: is_custom={is_custom}, source={source}, has_prompt={has_prompt}")
-            
-            if (is_custom and 
-                source in ['custom', 'postgresql_custom'] and
-                has_prompt):
-                logger.info(f"✅ [{company_id}] Found custom prompt (length: {len(agent_data['current_prompt'])})")
-                return agent_data['current_prompt']
-            
-            logger.info(f"ℹ️ [{company_id}] No custom prompt found")
-            return None
-            
-        except Exception as e:
-            logger.error(f"💥 [{company_id}] Error loading custom prompt: {e}", exc_info=True)
-            return None
-    
-    def _load_default_prompt_from_postgresql(self) -> Optional[str]:
-        """
-        Cargar prompt por defecto desde PostgreSQL.
-        
-        Returns:
-            Template string si se encuentra default prompt, None si no
-        """
-        try:
-            company_id = self.company_config.company_id
-            agent_key = self._get_agent_key()
-            
-            logger.info(f"🔍 [{company_id}] Loading DEFAULT prompt for agent_key: {agent_key}")
-            
-            if not self.prompt_service:
-                logger.error(f"❌ [{company_id}] prompt_service is None!")
-                return None
-            
-            agents_data = self.prompt_service.get_company_prompts(company_id)
-            agent_data = agents_data.get(agent_key, {})
-            
-            source = agent_data.get('source', 'unknown')
-            has_prompt = bool(agent_data.get('current_prompt'))
-            
-            logger.info(f"🔍 [{company_id}] Evaluation: source={source}, has_prompt={has_prompt}")
-            
-            if (source in ['default', 'postgresql_default'] and has_prompt):
-                logger.info(f"✅ [{company_id}] Found default prompt (length: {len(agent_data['current_prompt'])})")
-                return agent_data['current_prompt']
-            
-            logger.info(f"ℹ️ [{company_id}] No default prompt found")
-            return None
-            
-        except Exception as e:
-            logger.error(f"💥 [{company_id}] Error loading default prompt: {e}", exc_info=True)
-            return None
-    
-    def _build_prompt_with_history(self, template: str) -> ChatPromptTemplate:
-        """
-        ✅ NUEVO: Construir prompt que SIEMPRE incluye MessagesPlaceholder.
-        
-        Esta es la función CLAVE que asegura que el historial se pase al LLM.
-        
-        Args:
-            template: Template string del prompt
-        
-        Returns:
-            ChatPromptTemplate con system + MessagesPlaceholder + human
-        """
-        # Verificar si el template ya tiene contexto de empresa
-        if "{company_name}" in template or "{services}" in template:
-            # Ya tiene contexto, solo añadir historial
-            return ChatPromptTemplate.from_messages([
-                ("system", template),
-                MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "{question}")
-            ])
-        else:
-            # Añadir contexto de empresa Y historial
-            enhanced = f"""{template}
-
-CONTEXTO DE LA EMPRESA:
-- Empresa: {{company_name}}
-- Servicios: {{services}}
-
-Responde considerando el historial de conversación."""
-            
-            return ChatPromptTemplate.from_messages([
-                ("system", enhanced),
-                MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "{question}")
-            ])
-    
-    def _get_agent_key(self) -> str:
-        """
-        Obtener clave del agente para PostgreSQL.
-        
-        Returns:
-            String con formato "support_agent", "schedule_agent", etc.
-        """
-        class_name = self.__class__.__name__
-        if class_name.endswith('Agent'):
-            agent_name = class_name[:-5]
-        else:
-            agent_name = class_name
-        
-        import re
-        agent_key = re.sub('([a-z0-9])([A-Z])', r'\1_\2', agent_name).lower() + '_agent'
-        return agent_key
-    
-    def _create_emergency_prompt_template(self) -> ChatPromptTemplate:
-        """
-        Prompt de emergencia cuando todo lo demás falla.
-        
-        Returns:
-            ChatPromptTemplate básico
-        """
-        return ChatPromptTemplate.from_messages([
-            ("system", f"""Eres un asistente de {self.company_config.company_name}.
-
-Servicios disponibles: {{services}}
-
-Responde de manera profesional considerando el historial."""),
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            ("human", "{question}")
-        ])
     
     @abstractmethod
-    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+    def invoke(self, inputs: dict) -> str:
         """
-        Template por defecto (hardcoded) - DEBE incluir MessagesPlaceholder.
+        Punto de entrada principal del agente.
         
-        Cada agente debe implementar este método para definir su prompt
-        hardcodeado que se usa como último fallback.
-        
-        IMPORTANTE: SIEMPRE debe incluir:
-        1. ("system", "...contexto...")
-        2. MessagesPlaceholder(variable_name="chat_history", optional=True)
-        3. ("human", "{question}")
+        Args:
+            inputs: Diccionario con keys: question, chat_history, user_id, etc.
         
         Returns:
-            ChatPromptTemplate con historial incluido
+            str: Respuesta generada por el agente
+        
+        IMPORTANTE: Esta firma NO debe cambiar para mantener compatibilidad.
+        """
+        raise NotImplementedError("Subclases deben implementar invoke()")
+    
+    def set_vectorstore_service(self, service):
+        """Inyecta el servicio de vectorstore."""
+        self._vectorstore_service = service
+        logger.debug(f"[{self.agent_type.value}] VectorstoreService injected")
+    
+    def set_prompt_service(self, service):
+        """Inyecta el servicio de prompts."""
+        self._prompt_service = service
+        logger.debug(f"[{self.agent_type.value}] PromptService injected")
+    
+    # ========================================================================
+    # MÉTODOS DE INYECCIÓN NUEVOS (PERMITIDOS)
+    # ========================================================================
+    
+    def set_tool_executor(self, executor):
+        """Inyecta el ejecutor de tools."""
+        self._tool_executor = executor
+        logger.debug(f"[{self.agent_type.value}] ToolExecutor injected")
+    
+    def set_state_manager(self, manager):
+        """Inyecta el gestor de estado."""
+        self._state_manager = manager
+        logger.debug(f"[{self.agent_type.value}] StateManager injected")
+    
+    def set_condition_evaluator(self, evaluator):
+        """Inyecta el evaluador de condiciones para guardrails."""
+        self._condition_evaluator = evaluator
+        logger.debug(f"[{self.agent_type.value}] ConditionEvaluator injected")
+    
+    # ========================================================================
+    # MÉTODOS ABSTRACTOS (IMPLEMENTAR EN SUBCLASES)
+    # ========================================================================
+    
+    @abstractmethod
+    def build_graph(self):
+        """
+        Construir el grafo de LangGraph para este agente.
+        
+        Returns:
+            StateGraph de LangGraph
         """
         pass
     
     # ========================================================================
-    # MÉTODOS DE COMPATIBILIDAD CON ORCHESTRATOR
+    # MÉTODOS INTERNOS (HELPERS)
     # ========================================================================
     
-    def invoke(self, inputs: Dict[str, Any]) -> str:
+    def _create_initial_state(self, inputs: dict) -> AgentState:
         """
-        ✅ IMPLEMENTACIÓN BASE: Método de entrada estándar.
-        
-        Este método:
-        1. Extrae inputs (question, chat_history, context)
-        2. Prepara state inicial con historial
-        3. Ejecuta grafo LangGraph
-        4. Retorna respuesta final
+        Crea el estado inicial para LangGraph.
         
         Args:
-            inputs: Dict con question, chat_history, context, etc.
+            inputs: Inputs del usuario
         
         Returns:
-            str: Respuesta del agente
+            AgentState inicial
         """
-        try:
-            # Extraer inputs
-            question = inputs.get("question", "")
-            chat_history = inputs.get("chat_history", [])
-            context = inputs.get("context", "")
-            user_id = inputs.get("user_id", "unknown")
-            
-            if not question:
-                return f"No se proporcionó una pregunta válida para {self.company_config.company_name}."
-            
-            logger.info(f"🤖 [{self.company_config.company_id}] {self.agent_name}.invoke() called")
-            logger.info(f"🤖 [{self.company_config.company_id}] Question: {question[:100]}...")
-            logger.info(f"🤖 [{self.company_config.company_id}] Using prompt source: {self._prompt_source}")
-            logger.info(f"🤖 [{self.company_config.company_id}] Chat history length: {len(chat_history)}")
-            
-            # ✅ Preparar state inicial con historial
-            state = self._prepare_initial_state(
-                question=question,
-                chat_history=chat_history,
-                context=context,
-                user_id=user_id,
-                company_id=self.company_config.company_id
-            )
-            
-            # ✅ Ejecutar grafo LangGraph
-            logger.info(f"🚀 [{self.company_config.company_id}] Executing LangGraph...")
-            final_state = self.graph.invoke(state)
-            
-            # ✅ Construir respuesta
-            response = self._build_response_from_state(final_state)
-            
-            # Telemetría
-            self._stats["invocations"] += 1
-            logger.info(f"✅ [{self.company_config.company_id}] Response generated (length: {len(response)})")
-            
-            return response
-            
-        except Exception as e:
-            logger.exception(f"💥 [{self.company_config.company_id}] Error in invoke: {e}")
-            self._stats["errors"] += 1
-            return f"Lo siento, estoy experimentando dificultades técnicas. Por favor, contacta con {self.company_config.company_name} directamente."
-    
-    def _prepare_initial_state(
-        self,
-        question: str,
-        chat_history: List,
-        context: str,
-        user_id: str,
-        company_id: str
-    ) -> AgentState:
-        """
-        ✅ NUEVO: Crear estado inicial incluyendo historial de chat.
+        execution_id = f"{self.agent_type.value}_{datetime.utcnow().isoformat()}"
         
-        Este método asegura que el historial se incluye en el state
-        y está disponible para todos los nodos del grafo.
-        
-        Args:
-            question: Pregunta del usuario
-            chat_history: Historial de mensajes previos
-            context: Contexto adicional
-            user_id: ID del usuario
-            company_id: ID de la empresa
-        
-        Returns:
-            AgentState inicializado con todos los campos necesarios
-        """
-        return {
+        return AgentState(
             # Inputs
-            "question": question,
-            "chat_history": self._convert_chat_history(chat_history),
-            "user_id": user_id,
-            "company_id": company_id,
+            question=inputs.get("question", ""),
+            chat_history=inputs.get("chat_history", []),
+            user_id=inputs.get("user_id", ""),
+            company_id=inputs.get("company_id"),
             
-            # Context de empresa (para personalización)
-            "context": {
-                "company_name": self.company_config.company_name,
-                "services": self.company_config.services,
-                "additional_context": context
-            },
-            "intermediate_results": {},
+            # Ejecución
+            agent_type=self.agent_type.value,
+            execution_id=execution_id,
+            status=ExecutionStatus.PENDING.value,
+            current_node="start",
             
-            # Estado de ejecución
-            "agent_type": self.agent_type.value,
-            "execution_id": str(uuid.uuid4()),
-            "status": ExecutionStatus.PENDING.value,
-            "current_node": "start",
+            # Razonamiento
+            reasoning_steps=[],
+            tools_called=[],
+            tool_results=[],
             
-            # Inicializar listas (con annotated operator.add)
-            "reasoning_steps": [],
-            "tools_called": [],
-            "tool_results": [],
-            "decisions": [],
-            "errors": [],
-            "warnings": [],
+            # Herramientas
+            tools_available=self.manifest.required_tools + self.manifest.optional_tools,
             
-            # Tools disponibles
-            "tools_available": self.manifest.required_tools + self.manifest.optional_tools,
+            # Decisiones
+            decisions=[],
+            confidence_scores={},
             
-            # Scores y metadata
-            "confidence_scores": {},
-            "metadata": {
-                "prompt_source": self._prompt_source,
-                "agent_version": "cognitive_v2"
-            },
-            
-            # Contexto específico (None inicialmente)
-            "vectorstore_context": None,
-            "calendar_context": None,
+            # Contexto
+            context={},
+            intermediate_results={},
+            vectorstore_context=None,
+            calendar_context=None,
             
             # Output
-            "response": None,
+            response=None,
             
-            # Control de flujo
-            "should_continue": True,
-            "current_step": 0,
-            "retry_count": 0,
+            # Metadata
+            metadata={
+                "agent_type": self.agent_type.value,
+                "manifest_version": self.manifest.metadata.get("version", "1.0"),
+                "config": {
+                    "enable_reasoning_traces": self.config.enable_reasoning_traces,
+                    "enable_guardrails": self.config.enable_guardrails
+                }
+            },
+            errors=[],
+            warnings=[],
+            
+            # Control
+            should_continue=True,
+            current_step=0,
+            retry_count=0,
             
             # Timestamps
-            "started_at": datetime.utcnow().isoformat(),
-            "completed_at": None
-        }
+            started_at=datetime.utcnow().isoformat(),
+            completed_at=None
+        )
     
-    def _convert_chat_history(self, chat_history: List) -> List[Dict[str, str]]:
+    def _add_reasoning_step(
+        self,
+        state: AgentState,
+        node_type: NodeType,
+        description: str,
+        thought: str = "",
+        action: Optional[str] = None,
+        observation: Optional[str] = None,
+        decision: Optional[str] = None,
+        confidence: Optional[float] = None
+    ) -> ReasoningStep:
         """
-        Convertir historial de chat a formato estándar.
-        
-        Soporta:
-        - Lista de BaseMessage (LangChain)
-        - Lista de dicts {"role": "...", "content": "..."}
-        - Lista vacía
+        Añade un paso de razonamiento al estado.
         
         Args:
-            chat_history: Historial en cualquier formato
+            state: Estado actual
+            node_type: Tipo de nodo
+            description: Descripción del razonamiento
+            thought: Pensamiento del agente
+            action: Acción tomada (opcional)
+            observation: Observación obtenida (opcional)
+            decision: Decisión tomada (opcional)
+            confidence: Nivel de confianza (opcional)
         
         Returns:
-            Lista de dicts con formato estándar
+            ReasoningStep creado
         """
-        if not chat_history:
-            return []
-        
-        converted = []
-        for msg in chat_history:
-            if isinstance(msg, BaseMessage):
-                # LangChain BaseMessage
-                converted.append({
-                    "role": msg.type,
-                    "content": msg.content
-                })
-            elif isinstance(msg, dict):
-                # Ya es dict
-                converted.append(msg)
-            else:
-                logger.warning(f"Unknown message type in chat_history: {type(msg)}")
-        
-        return converted
+        step = ReasoningStep(
+            step_id=f"step_{len(state['reasoning_steps']) + 1}",
+            node_type=node_type.value,
+            description=description,
+            thought=thought or description,
+            action=action,
+            observation=observation,
+            decision=decision,
+            confidence=confidence,
+            timestamp=datetime.utcnow().isoformat()
+        )
+        return step
     
-    # ========================================================================
-    # GESTIÓN DE SERVICIOS (Migrado de versión anterior)
-    # ========================================================================
-    
-    def set_tool_executor(self, tool_executor):
-        """Inyectar executor de herramientas"""
-        self._tool_executor = tool_executor
-        logger.info(f"[{self.company_config.company_id}] Tool executor configured")
-    
-    def set_vectorstore_service(self, vectorstore_service):
-        """Inyectar servicio de vectorstore"""
-        self._vectorstore_service = vectorstore_service
-        logger.info(f"[{self.company_config.company_id}] Vectorstore service configured")
-    
-    def set_state_manager(self, state_manager):
-        """Inyectar state manager"""
-        self._state_manager = state_manager
-        logger.info(f"[{self.company_config.company_id}] State manager configured")
-    
-    def set_condition_evaluator(self, condition_evaluator):
-        """Inyectar condition evaluator"""
-        self._condition_evaluator = condition_evaluator
-        logger.info(f"[{self.company_config.company_id}] Condition evaluator configured")
-    
-    # ========================================================================
-    # MÉTODOS ABSTRACTOS (Subclases deben implementar)
-    # ========================================================================
-    
-    @abstractmethod
-    def _create_graph(self):
+    def _record_reasoning_step(
+        self,
+        state: AgentState,
+        thought: str,
+        action: Optional[str] = None,
+        observation: Optional[str] = None
+    ) -> AgentState:
         """
-        Crear grafo LangGraph específico del agente.
+        Registrar paso de razonamiento (método legacy compatible).
         
-        Este método debe:
-        1. Definir nodos (reasoning, tool_execution, etc.)
-        2. Definir edges y conditions
-        3. Retornar CompiledGraph
+        Args:
+            state: Estado actual
+            thought: Pensamiento del agente
+            action: Acción tomada (opcional)
+            observation: Observación obtenida (opcional)
+        
+        Returns:
+            Estado actualizado
         """
-        pass
+        step = self._add_reasoning_step(
+            state,
+            NodeType.REASONING,
+            thought,
+            thought=thought,
+            action=action,
+            observation=observation
+        )
+        
+        # Persistir en state manager si está disponible
+        if self._state_manager:
+            try:
+                self._state_manager.record_step(
+                    agent_name=self.agent_type.value,
+                    user_id=state.get("user_id"),
+                    step=step
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist reasoning step: {e}")
+        
+        return state
     
-    # ========================================================================
-    # UTILIDADES PARA NODOS (Helpers para subclases)
-    # ========================================================================
+    def _record_tool_execution(
+        self,
+        state: AgentState,
+        tool_name: str,
+        inputs: Dict[str, Any],
+        output: Any,
+        success: bool,
+        latency_ms: float,
+        error: Optional[str] = None
+    ) -> AgentState:
+        """
+        Registrar ejecución de herramienta.
+        
+        Args:
+            state: Estado actual
+            tool_name: Nombre de la herramienta
+            inputs: Inputs usados
+            output: Output obtenido
+            success: Si fue exitosa
+            latency_ms: Latencia en milisegundos
+            error: Error si ocurrió
+        
+        Returns:
+            Estado actualizado
+        """
+        record: ToolExecutionRecord = {
+            "tool_name": tool_name,
+            "inputs": inputs,
+            "output": output,
+            "success": success,
+            "error": error,
+            "latency_ms": latency_ms,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Persistir en state manager
+        if self._state_manager:
+            try:
+                self._state_manager.record_tool_execution(
+                    agent_name=self.agent_type.value,
+                    user_id=state.get("user_id"),
+                    tool_record=record
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist tool execution: {e}")
+        
+        return state
+    
+    def _validate_inputs(self, inputs: dict) -> bool:
+        """
+        Valida que los inputs tengan los campos obligatorios.
+        
+        Args:
+            inputs: Inputs del usuario
+        
+        Returns:
+            bool: True si válidos
+        
+        Raises:
+            ValueError: Si faltan campos obligatorios
+        """
+        required_fields = ["question", "chat_history", "user_id"]
+        missing = [f for f in required_fields if f not in inputs]
+        
+        if missing:
+            raise ValueError(f"Faltan campos obligatorios: {missing}")
+        
+        return True
     
     def _should_continue(self, state: AgentState) -> bool:
         """
-        Determinar si el grafo debe continuar ejecutándose.
+        Determinar si el agente debe continuar procesando.
         
         Args:
             state: Estado actual
         
         Returns:
-            bool: True si debe continuar, False si debe terminar
+            True si debe continuar, False si debe terminar
         """
-        # Verificar errores críticos
-        if state.get("status") == ExecutionStatus.FAILED.value:
+        # Verificar errores
+        if state.get("errors") and len(state["errors"]) > 0:
             return False
         
         # Verificar si ya hay respuesta
@@ -777,10 +588,10 @@ Responde de manera profesional considerando el historial."""),
     
     def _build_response_from_state(self, state: AgentState) -> str:
         """
-        Construir respuesta final desde el estado.
+        Construye la respuesta final desde el estado.
         
         Args:
-            state: Estado final del grafo
+            state: Estado final
         
         Returns:
             str: Respuesta formateada
@@ -791,9 +602,21 @@ Responde de manera profesional considerando el historial."""),
         # Safe-fail: generar respuesta de degradación
         return self._generate_degraded_response(state)
     
+    def _format_final_response(self, state: AgentState) -> str:
+        """
+        Formatear respuesta final del agente (método legacy compatible).
+        
+        Args:
+            state: Estado final
+        
+        Returns:
+            String con respuesta formateada
+        """
+        return self._build_response_from_state(state)
+    
     def _generate_degraded_response(self, state: AgentState) -> str:
         """
-        Generar respuesta de degradación cuando algo falla.
+        Genera una respuesta de degradación cuando algo falla.
         
         Args:
             state: Estado actual
@@ -806,9 +629,8 @@ Responde de manera profesional considerando el historial."""),
             logger.error(f"[{self.agent_type.value}] Errors during execution: {errors}")
         
         return (
-            f"Lo siento, no pude procesar completamente tu solicitud en este momento. "
-            f"Por favor, contacta con {self.company_config.company_name} directamente o "
-            f"intenta reformular tu pregunta."
+            "Lo siento, no pude procesar completamente tu solicitud en este momento. "
+            "¿Podrías reformular tu pregunta o intentarlo de nuevo?"
         )
     
     def _get_telemetry(self, state: AgentState) -> Dict[str, Any]:
@@ -819,14 +641,14 @@ Responde de manera profesional considerando el historial."""),
             state: Estado final
         
         Returns:
-            Dict con métricas de ejecución
+            Dict con métricas
         """
         return {
-            "agent_name": self.agent_name,
-            "agent_type": self.agent_type.value,
-            "company_id": self.company_config.company_id,
+            "agent_name": self.agent_type.value,
+            "agent_type": self.__class__.__name__,
             "execution_id": state.get("execution_id"),
             "user_id": state.get("user_id"),
+            "company_id": state.get("company_id"),
             "reasoning_steps": len(state.get("reasoning_steps", [])),
             "tools_used": [t["tool_name"] for t in state.get("tool_results", [])],
             "total_latency_ms": sum(
@@ -835,32 +657,7 @@ Responde de manera profesional considerando el historial."""),
             "errors_count": len(state.get("errors", [])),
             "warnings_count": len(state.get("warnings", [])),
             "success": len(state.get("errors", [])) == 0,
-            "prompt_source": self._prompt_source,
             "timestamp": datetime.utcnow().isoformat()
-        }
-    
-    def get_agent_capabilities(self) -> Dict[str, Any]:
-        """
-        ✅ NUEVO: Obtener capacidades del agente.
-        
-        Returns:
-            Dict con información de capacidades
-        """
-        return {
-            "agent_name": self.agent_name,
-            "agent_key": self._get_agent_key(),
-            "agent_type": self.agent_type.value,
-            "company_id": self.company_config.company_id,
-            "prompt_source": self._prompt_source,
-            "supports_custom_prompts": True,
-            "supports_context": True,
-            "supports_history": True,
-            "supports_langgraph": True,
-            "model_name": getattr(self.chat_model, 'model_name', 'unknown'),
-            "required_tools": self.manifest.required_tools,
-            "optional_tools": self.manifest.optional_tools,
-            "capabilities": [c.name for c in self.manifest.capabilities],
-            "stats": self._stats
         }
 
 
@@ -921,6 +718,7 @@ def create_tool_node(
             )
             
             # Aquí se ejecutaría la tool con tool_executor
+            # La implementación real se hace en agent_tools_service.py
             pass
         
         return state
@@ -940,7 +738,7 @@ def validate_agent_state(state: AgentState) -> bool:
         state: Estado a validar
     
     Returns:
-        bool: True si es válido
+        True si es válido
     """
     required_fields = ["question", "user_id"]
     
@@ -961,7 +759,7 @@ def merge_states(base_state: AgentState, updates: Dict[str, Any]) -> AgentState:
         updates: Actualizaciones a aplicar
     
     Returns:
-        AgentState mergeado
+        Estado mergeado
     """
     merged = base_state.copy()
     
@@ -981,7 +779,7 @@ def merge_states(base_state: AgentState, updates: Dict[str, Any]) -> AgentState:
 
 def get_execution_metrics(state: AgentState) -> Dict[str, Any]:
     """
-    Extraer métricas de ejecución del estado.
+    Extrae métricas de ejecución del estado.
     
     Args:
         state: Estado del agente
@@ -1023,6 +821,7 @@ __all__ = [
     "ToolCall",
     "ToolResult",
     "ReasoningStep",
+    "ToolExecutionRecord",
     
     # Dataclasses
     "AgentCapabilityDef",
