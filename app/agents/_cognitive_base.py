@@ -274,301 +274,369 @@ class CognitiveAgentBase(ABC):
         )
     
     # ========================================================================
-    # MÉTODOS PÚBLICOS (MANTENER FIRMAS)
+    # DEPENDENCY INJECTION (Compatible con arquitectura existente)
     # ========================================================================
+    
+    def set_prompt_service(self, service):
+        """Inyectar servicio de prompts."""
+        self._prompt_service = service
+        logger.debug(f"[{self.agent_type.value}] Prompt service injected")
+    
+    def set_vectorstore_service(self, service):
+        """Inyectar servicio de vectorstore."""
+        self._vectorstore_service = service
+        logger.debug(f"[{self.agent_type.value}] Vectorstore service injected")
+    
+    def set_tool_executor(self, executor):
+        """Inyectar ejecutor de tools."""
+        self._tool_executor = executor
+        logger.debug(f"[{self.agent_type.value}] Tool executor injected")
+    
+    def set_state_manager(self, manager):
+        """Inyectar gestor de estado."""
+        self._state_manager = manager
+        logger.debug(f"[{self.agent_type.value}] State manager injected")
+    
+    def set_condition_evaluator(self, evaluator):
+        """Inyectar evaluador de condiciones."""
+        self._condition_evaluator = evaluator
+        logger.debug(f"[{self.agent_type.value}] Condition evaluator injected")
+    
+    # ========================================================================
+    # PROMPT NODE CONSTRUCTION (NUEVO - Reemplaza ChatPromptTemplate)
+    # ========================================================================
+    
+    def _normalize_chat_history(
+        self, 
+        chat_history: List[Any]
+    ) -> List[Dict[str, str]]:
+        """
+        Normalizar chat_history a formato estándar List[{"role", "content"}].
+        
+        Args:
+            chat_history: Historial en cualquier formato
+        
+        Returns:
+            Lista normalizada de mensajes con role y content
+        """
+        normalized = []
+        
+        if not chat_history:
+            return []
+        
+        for msg in chat_history:
+            if isinstance(msg, dict):
+                # Ya está en formato dict
+                if "role" in msg and "content" in msg:
+                    normalized.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+                elif "type" in msg and "content" in msg:
+                    # Formato alternativo con type
+                    role = "user" if msg["type"] == "human" else "assistant"
+                    normalized.append({
+                        "role": role,
+                        "content": msg["content"]
+                    })
+            elif hasattr(msg, "type") and hasattr(msg, "content"):
+                # Objetos tipo LangChain Message
+                role = "user" if msg.type == "human" else "assistant"
+                normalized.append({
+                    "role": role,
+                    "content": msg.content
+                })
+            else:
+                logger.warning(
+                    f"[{self.agent_type.value}] Skipping unrecognized message format: {type(msg)}"
+                )
+        
+        return normalized
+    
+    def _build_prompt_node(
+        self,
+        company_id: str,
+        agent_key: str,
+        state: AgentState
+    ) -> Dict[str, Any]:
+        """
+        Construir nodo de prompt nativo desde prompt_service.
+        
+        Este método reemplaza completamente la construcción de ChatPromptTemplate
+        y obtiene la estructura del prompt desde el servicio centralizado.
+        
+        Args:
+            company_id: ID de la empresa
+            agent_key: Key del agente (ej. 'sales_agent', 'router_agent')
+            state: Estado actual del agente
+        
+        Returns:
+            Dict con estructura de prompt: {
+                'system': str,
+                'examples': List[Dict],
+                'placeholders': Dict,
+                'meta': Dict
+            }
+        """
+        if not self._prompt_service:
+            logger.warning(
+                f"[{self.agent_type.value}] No prompt service available, using fallback"
+            )
+            return {
+                'system': f"Eres un asistente para {agent_key}.",
+                'examples': [],
+                'placeholders': {},
+                'meta': {'source': 'fallback'}
+            }
+        
+        try:
+            # Obtener payload estructurado desde prompt_service
+            prompt_payload = self._prompt_service.get_prompt_payload(
+                company_id, 
+                agent_key
+            )
+            
+            if not prompt_payload:
+                logger.warning(
+                    f"[{self.agent_type.value}] No prompt payload found for "
+                    f"{company_id}/{agent_key}, using fallback"
+                )
+                return {
+                    'system': f"Eres un asistente para {agent_key}.",
+                    'examples': [],
+                    'placeholders': {},
+                    'meta': {'source': 'fallback'}
+                }
+            
+            logger.debug(
+                f"[{self.agent_type.value}] Prompt payload loaded for {agent_key}: "
+                f"system={len(prompt_payload.get('system', ''))} chars, "
+                f"examples={len(prompt_payload.get('examples', []))}"
+            )
+            
+            return prompt_payload
+            
+        except Exception as e:
+            logger.error(
+                f"[{self.agent_type.value}] Error building prompt node: {e}",
+                exc_info=True
+            )
+            return {
+                'system': f"Eres un asistente para {agent_key}.",
+                'examples': [],
+                'placeholders': {},
+                'meta': {'source': 'error_fallback', 'error': str(e)}
+            }
+    
+    def _run_graph_prompt(
+        self,
+        state: AgentState,
+        prompt_node: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Ejecutar StateGraph con prompt estructurado.
+        
+        Este método reemplaza la ejecución directa del LLM con ChatPromptTemplate
+        y usa el grafo de decisión de LangGraph comenzando con el nodo de prompt.
+        
+        Args:
+            state: Estado actual del agente
+            prompt_node: Nodo de prompt construido con _build_prompt_node
+        
+        Returns:
+            Dict normalizado: {
+                'text': str,  # Respuesta generada
+                'raw': Any,   # Output crudo del grafo
+                'metadata': Dict  # Metadatos de ejecución
+            }
+        """
+        try:
+            # Normalizar chat_history
+            normalized_history = self._normalize_chat_history(
+                state.get("chat_history", [])
+            )
+            
+            # Construir inputs para el grafo
+            graph_inputs = {
+                "system_prompt": prompt_node.get("system", ""),
+                "examples": prompt_node.get("examples", []),
+                "placeholders": prompt_node.get("placeholders", {}),
+                "chat_history": normalized_history,
+                "question": state.get("question", ""),
+                "context": state.get("context", {}),
+                "metadata": {
+                    **state.get("metadata", {}),
+                    "prompt_source": prompt_node.get("meta", {}).get("source", "unknown")
+                }
+            }
+            
+            # NOTA: La implementación real del StateGraph.run() debe ser
+            # proporcionada por las subclases concretas de agentes.
+            # Este es un placeholder que muestra la estructura esperada.
+            
+            # Las subclases deberán implementar:
+            # result = self.graph.run(graph_inputs)
+            
+            # Por ahora, retornamos estructura normalizada
+            logger.info(
+                f"[{self.agent_type.value}] Graph prompt ready with "
+                f"{len(normalized_history)} history messages"
+            )
+            
+            return {
+                'text': "",  # Será llenado por la implementación real
+                'raw': graph_inputs,
+                'metadata': {
+                    'prompt_length': len(graph_inputs['system_prompt']),
+                    'examples_count': len(graph_inputs['examples']),
+                    'history_messages': len(normalized_history),
+                    'execution_timestamp': datetime.utcnow().isoformat()
+                }
+            }
+            
+        except Exception as e:
+            logger.error(
+                f"[{self.agent_type.value}] Error running graph prompt: {e}",
+                exc_info=True
+            )
+            return {
+                'text': "Error ejecutando el prompt.",
+                'raw': None,
+                'metadata': {
+                    'error': str(e),
+                    'error_timestamp': datetime.utcnow().isoformat()
+                }
+            }
+    
+    # ========================================================================
+    # ABSTRACT METHODS (Deben ser implementados por subclases)
+    # ========================================================================
+    
+    @abstractmethod
+    def _build_graph(self):
+        """
+        Construir el grafo LangGraph del agente.
+        
+        Las subclases deben implementar este método para definir:
+        - Nodos del grafo
+        - Edges y condiciones
+        - Flujo de ejecución
+        
+        Deben usar _build_prompt_node y _run_graph_prompt para manejar prompts.
+        """
+        pass
     
     @abstractmethod
     def invoke(self, inputs: dict) -> str:
         """
-        Punto de entrada principal del agente.
+        Método público de invocación del agente (compatible con legacy).
         
         Args:
-            inputs: Diccionario con keys: question, chat_history, user_id, etc.
+            inputs: Dict con:
+                - question: str
+                - chat_history: List
+                - user_id: str
+                - company_id: str (opcional)
         
         Returns:
-            str: Respuesta generada por el agente
-        
-        IMPORTANTE: Esta firma NO debe cambiar para mantener compatibilidad.
-        """
-        raise NotImplementedError("Subclases deben implementar invoke()")
-    
-    def set_vectorstore_service(self, service):
-        """Inyecta el servicio de vectorstore."""
-        self._vectorstore_service = service
-        logger.debug(f"[{self.agent_type.value}] VectorstoreService injected")
-    
-    def set_prompt_service(self, service):
-        """Inyecta el servicio de prompts."""
-        self._prompt_service = service
-        logger.debug(f"[{self.agent_type.value}] PromptService injected")
-    
-    # ========================================================================
-    # MÉTODOS DE INYECCIÓN NUEVOS (PERMITIDOS)
-    # ========================================================================
-    
-    def set_tool_executor(self, executor):
-        """Inyecta el ejecutor de tools."""
-        self._tool_executor = executor
-        logger.debug(f"[{self.agent_type.value}] ToolExecutor injected")
-    
-    def set_state_manager(self, manager):
-        """Inyecta el gestor de estado."""
-        self._state_manager = manager
-        logger.debug(f"[{self.agent_type.value}] StateManager injected")
-    
-    def set_condition_evaluator(self, evaluator):
-        """Inyecta el evaluador de condiciones para guardrails."""
-        self._condition_evaluator = evaluator
-        logger.debug(f"[{self.agent_type.value}] ConditionEvaluator injected")
-    
-    # ========================================================================
-    # MÉTODOS ABSTRACTOS (IMPLEMENTAR EN SUBCLASES)
-    # ========================================================================
-    
-    @abstractmethod
-    def build_graph(self):
-        """
-        Construir el grafo de LangGraph para este agente.
-        
-        Returns:
-            StateGraph de LangGraph
+            str: Respuesta del agente
         """
         pass
     
     # ========================================================================
-    # MÉTODOS INTERNOS (HELPERS)
+    # STATE MANAGEMENT
     # ========================================================================
     
-    def _create_initial_state(self, inputs: dict) -> AgentState:
+    def _initialize_state(
+        self,
+        question: str,
+        chat_history: List,
+        user_id: str,
+        company_id: Optional[str] = None,
+        **kwargs
+    ) -> AgentState:
         """
-        Crea el estado inicial para LangGraph.
+        Inicializar estado del agente.
         
         Args:
-            inputs: Inputs del usuario
+            question: Pregunta del usuario
+            chat_history: Historial de conversación
+            user_id: ID del usuario
+            company_id: ID de la empresa (opcional)
+            **kwargs: Campos adicionales
         
         Returns:
-            AgentState inicial
+            AgentState inicializado
         """
-        execution_id = f"{self.agent_type.value}_{datetime.utcnow().isoformat()}"
+        import uuid
         
-        return AgentState(
+        execution_id = f"{self.agent_type.value}_{uuid.uuid4().hex[:8]}"
+        
+        state: AgentState = {
             # Inputs
-            question=inputs.get("question", ""),
-            chat_history=inputs.get("chat_history", []),
-            user_id=inputs.get("user_id", ""),
-            company_id=inputs.get("company_id"),
+            "question": question,
+            "chat_history": chat_history or [],
+            "user_id": user_id,
+            "company_id": company_id,
             
-            # Ejecución
-            agent_type=self.agent_type.value,
-            execution_id=execution_id,
-            status=ExecutionStatus.PENDING.value,
-            current_node="start",
+            # Execution
+            "agent_type": self.agent_type.value,
+            "execution_id": execution_id,
+            "status": ExecutionStatus.PENDING.value,
+            "current_node": "init",
             
-            # Razonamiento
-            reasoning_steps=[],
-            tools_called=[],
-            tool_results=[],
+            # Reasoning
+            "reasoning_steps": [],
+            "tools_called": [],
+            "tool_results": [],
             
-            # Herramientas
-            tools_available=self.manifest.required_tools + self.manifest.optional_tools,
+            # Context
+            "context": kwargs.get("context", {}),
+            "intermediate_results": {},
             
-            # Decisiones
-            decisions=[],
-            confidence_scores={},
+            # Tools
+            "tools_available": self.manifest.required_tools,
             
-            # Contexto
-            context={},
-            intermediate_results={},
-            vectorstore_context=None,
-            calendar_context=None,
+            # Decisions
+            "decisions": [],
+            "confidence_scores": {},
+            
+            # Agent-specific context
+            "vectorstore_context": kwargs.get("vectorstore_context"),
+            "calendar_context": kwargs.get("calendar_context"),
             
             # Output
-            response=None,
+            "response": None,
             
             # Metadata
-            metadata={
-                "agent_type": self.agent_type.value,
-                "manifest_version": self.manifest.metadata.get("version", "1.0"),
-                "config": {
-                    "enable_reasoning_traces": self.config.enable_reasoning_traces,
-                    "enable_guardrails": self.config.enable_guardrails
-                }
-            },
-            errors=[],
-            warnings=[],
+            "metadata": kwargs.get("metadata", {}),
+            "errors": [],
+            "warnings": [],
             
             # Control
-            should_continue=True,
-            current_step=0,
-            retry_count=0,
+            "should_continue": True,
+            "current_step": 0,
+            "retry_count": 0,
             
             # Timestamps
-            started_at=datetime.utcnow().isoformat(),
-            completed_at=None
-        )
-    
-    def _add_reasoning_step(
-        self,
-        state: AgentState,
-        node_type: NodeType,
-        description: str,
-        thought: str = "",
-        action: Optional[str] = None,
-        observation: Optional[str] = None,
-        decision: Optional[str] = None,
-        confidence: Optional[float] = None
-    ) -> ReasoningStep:
-        """
-        Añade un paso de razonamiento al estado.
-        
-        Args:
-            state: Estado actual
-            node_type: Tipo de nodo
-            description: Descripción del razonamiento
-            thought: Pensamiento del agente
-            action: Acción tomada (opcional)
-            observation: Observación obtenida (opcional)
-            decision: Decisión tomada (opcional)
-            confidence: Nivel de confianza (opcional)
-        
-        Returns:
-            ReasoningStep creado
-        """
-        step = ReasoningStep(
-            step_id=f"step_{len(state['reasoning_steps']) + 1}",
-            node_type=node_type.value,
-            description=description,
-            thought=thought or description,
-            action=action,
-            observation=observation,
-            decision=decision,
-            confidence=confidence,
-            timestamp=datetime.utcnow().isoformat()
-        )
-        return step
-    
-    def _record_reasoning_step(
-        self,
-        state: AgentState,
-        thought: str,
-        action: Optional[str] = None,
-        observation: Optional[str] = None
-    ) -> AgentState:
-        """
-        Registrar paso de razonamiento (método legacy compatible).
-        
-        Args:
-            state: Estado actual
-            thought: Pensamiento del agente
-            action: Acción tomada (opcional)
-            observation: Observación obtenida (opcional)
-        
-        Returns:
-            Estado actualizado
-        """
-        step = self._add_reasoning_step(
-            state,
-            NodeType.REASONING,
-            thought,
-            thought=thought,
-            action=action,
-            observation=observation
-        )
-        
-        # Persistir en state manager si está disponible
-        if self._state_manager:
-            try:
-                self._state_manager.record_step(
-                    agent_name=self.agent_type.value,
-                    user_id=state.get("user_id"),
-                    step=step
-                )
-            except Exception as e:
-                logger.error(f"Failed to persist reasoning step: {e}")
-        
-        return state
-    
-    def _record_tool_execution(
-        self,
-        state: AgentState,
-        tool_name: str,
-        inputs: Dict[str, Any],
-        output: Any,
-        success: bool,
-        latency_ms: float,
-        error: Optional[str] = None
-    ) -> AgentState:
-        """
-        Registrar ejecución de herramienta.
-        
-        Args:
-            state: Estado actual
-            tool_name: Nombre de la herramienta
-            inputs: Inputs usados
-            output: Output obtenido
-            success: Si fue exitosa
-            latency_ms: Latencia en milisegundos
-            error: Error si ocurrió
-        
-        Returns:
-            Estado actualizado
-        """
-        record: ToolExecutionRecord = {
-            "tool_name": tool_name,
-            "inputs": inputs,
-            "output": output,
-            "success": success,
-            "error": error,
-            "latency_ms": latency_ms,
-            "timestamp": datetime.utcnow().isoformat()
+            "started_at": datetime.utcnow().isoformat(),
+            "completed_at": None
         }
         
-        # Persistir en state manager
-        if self._state_manager:
-            try:
-                self._state_manager.record_tool_execution(
-                    agent_name=self.agent_type.value,
-                    user_id=state.get("user_id"),
-                    tool_record=record
-                )
-            except Exception as e:
-                logger.error(f"Failed to persist tool execution: {e}")
-        
         return state
     
-    def _validate_inputs(self, inputs: dict) -> bool:
+    def _should_continue_execution(self, state: AgentState) -> bool:
         """
-        Valida que los inputs tengan los campos obligatorios.
-        
-        Args:
-            inputs: Inputs del usuario
-        
-        Returns:
-            bool: True si válidos
-        
-        Raises:
-            ValueError: Si faltan campos obligatorios
-        """
-        required_fields = ["question", "chat_history", "user_id"]
-        missing = [f for f in required_fields if f not in inputs]
-        
-        if missing:
-            raise ValueError(f"Faltan campos obligatorios: {missing}")
-        
-        return True
-    
-    def _should_continue(self, state: AgentState) -> bool:
-        """
-        Determinar si el agente debe continuar procesando.
+        Determinar si el agente debe continuar ejecutándose.
         
         Args:
             state: Estado actual
         
         Returns:
-            True si debe continuar, False si debe terminar
+            bool: True si debe continuar
         """
-        # Verificar errores
-        if state.get("errors") and len(state["errors"]) > 0:
+        # Verificar errores críticos
+        if state.get("status") == ExecutionStatus.FAILED.value:
             return False
         
         # Verificar si ya hay respuesta
