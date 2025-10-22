@@ -1,14 +1,25 @@
+# app/agents/router_agent.py
+# Mantiene BaseAgent - NO migrar a cognitivo (es clasificación simple)
+
 from app.agents.base_agent import BaseAgent
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any
 import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 class RouterAgent(BaseAgent):
-    """Agente Router multi-tenant para clasificación de intenciones"""
+    """
+    Agente Router multi-tenant para clasificación de intenciones.
+    
+    IMPORTANTE: NO migrar a CognitiveAgentBase
+    - Es un agente simple de clasificación
+    - Solo necesita LLM para categorizar
+    - No requiere razonamiento multi-paso
+    - Mantiene BaseAgent como padre
+    """
     
     def _initialize_agent(self):
         """Inicializar configuración del router"""
@@ -16,49 +27,93 @@ class RouterAgent(BaseAgent):
         self.chain = self.prompt_template | self.chat_model | StrOutputParser()
     
     def _create_default_prompt_template(self) -> ChatPromptTemplate:
-        """Crear template de prompts por defecto por empresa"""
+        """Crear template de prompts por defecto"""
         return ChatPromptTemplate.from_messages([
             ("system", f"""Eres un clasificador de intenciones para {self.company_config.company_name}.
-            
-Servicios disponibles: {self.company_config.services}
 
-ANALIZA el mensaje del usuario y clasifica la intención en UNA de estas categorías:
+SERVICIOS: {self.company_config.services}
 
-1. **EMERGENCY** - Urgencias médicas:
-   - Palabras clave: {', '.join(self.company_config.emergency_keywords)}
-   - Síntomas post-tratamiento graves
-   - Cualquier situación que requiera atención médica inmediata
+ANALIZA el mensaje y clasifica en UNA categoría:
 
-2. **SALES** - Consultas comerciales:
-   - Información sobre tratamientos y servicios
-   - Palabras clave: {', '.join(self.company_config.sales_keywords)}
-   - Comparación de procedimientos
-   - Beneficios y resultados
+**EMERGENCY** - Urgencias médicas:
+- Keywords: {', '.join(self.company_config.emergency_keywords)}
+- Síntomas graves, dolor intenso
+- Cualquier situación urgente
 
-3. **SCHEDULE** - Gestión de citas:
-   - Palabras clave: {', '.join(self.company_config.schedule_keywords)}
-   - Modificar, cancelar o consultar citas
-   - Verificar disponibilidad
+**SALES** - Consultas comerciales:
+- Keywords: {', '.join(self.company_config.sales_keywords)}
+- Información de servicios, precios
+- Comparaciones, beneficios
 
-4. **SUPPORT** - Soporte general:
-   - Información general de {self.company_config.company_name}
-   - Consultas sobre procesos
-   - Cualquier otra consulta
+**SCHEDULE** - Gestión de citas:
+- Keywords: {', '.join(self.company_config.schedule_keywords)}
+- Agendar, cancelar, consultar citas
+- Verificar disponibilidad
 
-RESPONDE SOLO con el formato JSON:
+**SUPPORT** - Soporte general:
+- Información general
+- Dudas, preguntas
+- Cualquier otra consulta
+
+RESPONDE SOLO en formato JSON:
 {{{{
     "intent": "EMERGENCY|SALES|SCHEDULE|SUPPORT",
     "confidence": 0.0-1.0,
     "keywords": ["palabra1", "palabra2"],
-    "reasoning": "breve explicación",
-    "company_context": "{self.company_config.company_name}"
+    "reasoning": "breve explicación"
 }}}}
 
-Mensaje del usuario: {{question}}"""),
+Mensaje: {{question}}"""),
             ("human", "{question}")
         ])
     
-    def _execute_agent_chain(self, inputs: Dict[str, Any]) -> str:
-        """Ejecutar clasificación de intenciones"""
-        self._log_agent_activity("classifying_intent", {"question": inputs.get("question", "")[:50]})
-        return self.chain.invoke(inputs)
+    def invoke(self, inputs: Dict[str, Any]) -> str:
+        """
+        Clasificar intención del mensaje.
+        
+        Args:
+            inputs: Dict con question, chat_history, user_id
+        
+        Returns:
+            JSON string con clasificación
+        """
+        try:
+            question = inputs.get("question", "")
+            
+            if not question:
+                return json.dumps({
+                    "intent": "SUPPORT",
+                    "confidence": 0.3,
+                    "keywords": [],
+                    "reasoning": "Empty question"
+                })
+            
+            # Ejecutar clasificación
+            response = self.chain.invoke({
+                "question": question,
+                "company_name": self.company_config.company_name,
+                "services": self.company_config.services
+            })
+            
+            # Validar JSON
+            try:
+                json.loads(response)
+                return response
+            except json.JSONDecodeError:
+                # Si no es JSON válido, extraer y corregir
+                logger.warning(f"Router response not valid JSON: {response[:100]}")
+                return json.dumps({
+                    "intent": "SUPPORT",
+                    "confidence": 0.5,
+                    "keywords": [],
+                    "reasoning": "Fallback classification"
+                })
+            
+        except Exception as e:
+            logger.error(f"Error in RouterAgent.invoke(): {e}")
+            return json.dumps({
+                "intent": "SUPPORT",
+                "confidence": 0.3,
+                "keywords": [],
+                "reasoning": f"Error: {str(e)}"
+            })
