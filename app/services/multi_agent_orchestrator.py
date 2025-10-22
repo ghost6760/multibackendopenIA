@@ -548,6 +548,7 @@ class MultiAgentOrchestrator:
                 self.state_manager.record_execution(
                     agent_name=metrics.agent_name,
                     user_id=metrics.user_id,
+                    company_id=self.company_id,
                     metrics=metrics.to_dict()
                 )
             
