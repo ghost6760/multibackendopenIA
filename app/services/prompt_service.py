@@ -60,8 +60,318 @@ class PromptService:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             return None
 
-
-
+    # ========================================================================
+    # NUEVO MÉTODO: get_prompt_payload
+    # Devuelve estructura con system, examples, placeholders, meta
+    # ========================================================================
+    
+    def get_prompt_payload(
+        self, 
+        company_id: str, 
+        agent_key: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Obtener payload estructurado de prompt para un agente.
+        
+        NUEVO: Devuelve estructura completa con system, examples, placeholders.
+        Reemplaza la necesidad de construir ChatPromptTemplate manualmente.
+        
+        Args:
+            company_id: ID de la empresa
+            agent_key: Key del agente (ej. 'sales_agent', 'router_agent')
+        
+        Returns:
+            Dict con estructura:
+            {
+                'system': str,              # Prompt del sistema
+                'examples': List[Dict],     # Ejemplos de conversación
+                'placeholders': Dict,       # Variables para interpolación
+                'meta': Dict                # Metadata (source, version, etc)
+            }
+        """
+        conn = self.get_db_connection()
+        if not conn:
+            logger.warning(
+                f"No DB connection, using hardcoded fallback for {company_id}/{agent_key}"
+            )
+            return self._get_fallback_prompt_payload(agent_key)
+        
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # 1. Intentar obtener custom prompt (personalizado)
+                cursor.execute("""
+                    SELECT 
+                        template, 
+                        structured_template,
+                        version,
+                        modified_at,
+                        modified_by
+                    FROM custom_prompts 
+                    WHERE company_id = %s 
+                      AND agent_name = %s 
+                      AND is_active = true
+                """, (company_id, agent_key))
+                
+                custom_result = cursor.fetchone()
+                
+                if custom_result:
+                    # Si tiene structured_template (JSONB), usar ese
+                    if custom_result.get('structured_template'):
+                        structured = custom_result['structured_template']
+                        
+                        # Asegurar que tiene la estructura esperada
+                        payload = {
+                            'system': structured.get('system', custom_result['template']),
+                            'examples': structured.get('examples', []),
+                            'placeholders': structured.get('placeholders', {}),
+                            'meta': {
+                                'source': 'postgresql_custom_structured',
+                                'version': custom_result['version'],
+                                'modified_at': str(custom_result['modified_at']),
+                                'modified_by': custom_result['modified_by']
+                            }
+                        }
+                        
+                        logger.debug(
+                            f"Loaded structured custom prompt for {company_id}/{agent_key}"
+                        )
+                        return payload
+                    else:
+                        # Solo tiene template string (legacy)
+                        return {
+                            'system': custom_result['template'],
+                            'examples': [],
+                            'placeholders': {},
+                            'meta': {
+                                'source': 'postgresql_custom_legacy',
+                                'version': custom_result['version'],
+                                'modified_at': str(custom_result['modified_at']),
+                                'modified_by': custom_result['modified_by']
+                            }
+                        }
+                
+                # 2. Intentar obtener default prompt
+                cursor.execute("""
+                    SELECT 
+                        template,
+                        structured_template,
+                        description,
+                        updated_at
+                    FROM default_prompts 
+                    WHERE company_id = %s 
+                      AND agent_name = %s
+                """, (company_id, agent_key))
+                
+                default_result = cursor.fetchone()
+                
+                if default_result:
+                    # Si tiene structured_template, usar ese
+                    if default_result.get('structured_template'):
+                        structured = default_result['structured_template']
+                        
+                        return {
+                            'system': structured.get('system', default_result['template']),
+                            'examples': structured.get('examples', []),
+                            'placeholders': structured.get('placeholders', {}),
+                            'meta': {
+                                'source': 'postgresql_default_structured',
+                                'description': default_result['description'],
+                                'updated_at': str(default_result['updated_at'])
+                            }
+                        }
+                    else:
+                        # Solo tiene template string
+                        return {
+                            'system': default_result['template'],
+                            'examples': [],
+                            'placeholders': {},
+                            'meta': {
+                                'source': 'postgresql_default_legacy',
+                                'description': default_result['description'],
+                                'updated_at': str(default_result['updated_at'])
+                            }
+                        }
+                
+                # 3. No se encontró nada, usar fallback
+                logger.info(
+                    f"No prompt found in DB for {company_id}/{agent_key}, using fallback"
+                )
+                return self._get_fallback_prompt_payload(agent_key)
+                
+        except Exception as e:
+            logger.error(
+                f"Error getting prompt payload for {company_id}/{agent_key}: {e}",
+                exc_info=True
+            )
+            return self._get_fallback_prompt_payload(agent_key)
+        finally:
+            conn.close()
+    
+    def _get_fallback_prompt_payload(self, agent_key: str) -> Dict[str, Any]:
+        """
+        Obtener payload de fallback desde prompts hardcodeados.
+        
+        Args:
+            agent_key: Key del agente
+        
+        Returns:
+            Dict con estructura de prompt básica
+        """
+        system_prompt = self._hardcoded_prompts.get(
+            agent_key,
+            f"Eres un asistente para {agent_key}."
+        )
+        
+        return {
+            'system': system_prompt,
+            'examples': [],
+            'placeholders': {},
+            'meta': {
+                'source': 'hardcoded_fallback',
+                'agent_key': agent_key
+            }
+        }
+    
+    # ========================================================================
+    # NUEVO MÉTODO: save_custom_prompt_payload
+    # Guarda payload estructurado en JSONB
+    # ========================================================================
+    
+    def save_custom_prompt_payload(
+        self,
+        company_id: str,
+        agent_key: str,
+        prompt_payload: Dict[str, Any],
+        modified_by: str = "admin"
+    ) -> bool:
+        """
+        Guardar payload estructurado de prompt personalizado.
+        
+        NUEVO: Guarda estructura completa en campo JSONB structured_template.
+        Permite guardar system, examples, placeholders de forma estructurada.
+        
+        Args:
+            company_id: ID de la empresa
+            agent_key: Key del agente
+            prompt_payload: Dict con estructura:
+                {
+                    'system': str,
+                    'examples': List[Dict],
+                    'placeholders': Dict,
+                    'meta': Dict (opcional)
+                }
+            modified_by: Usuario que modifica
+        
+        Returns:
+            bool: True si se guardó exitosamente
+        """
+        conn = self.get_db_connection()
+        if not conn:
+            logger.error(
+                f"Cannot save prompt payload - No DB connection for {company_id}/{agent_key}"
+            )
+            return False
+        
+        try:
+            # Validar estructura mínima
+            if not prompt_payload.get('system'):
+                logger.error(
+                    f"Invalid prompt payload - missing 'system' field for {company_id}/{agent_key}"
+                )
+                return False
+            
+            # Extraer template string (para compatibilidad)
+            template_string = prompt_payload['system']
+            
+            # Preparar structured_template JSONB
+            structured_template = {
+                'system': prompt_payload.get('system', ''),
+                'examples': prompt_payload.get('examples', []),
+                'placeholders': prompt_payload.get('placeholders', {}),
+                'meta': prompt_payload.get('meta', {})
+            }
+            
+            with conn.cursor() as cursor:
+                # Verificar si ya existe custom prompt
+                cursor.execute("""
+                    SELECT version FROM custom_prompts 
+                    WHERE company_id = %s AND agent_name = %s AND is_active = true
+                """, (company_id, agent_key))
+                
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # UPDATE con incremento de versión
+                    new_version = existing[0] + 1
+                    
+                    cursor.execute("""
+                        UPDATE custom_prompts 
+                        SET template = %s,
+                            structured_template = %s,
+                            version = %s,
+                            modified_at = CURRENT_TIMESTAMP,
+                            modified_by = %s
+                        WHERE company_id = %s 
+                          AND agent_name = %s 
+                          AND is_active = true
+                    """, (
+                        template_string,
+                        json.dumps(structured_template),
+                        new_version,
+                        modified_by,
+                        company_id,
+                        agent_key
+                    ))
+                    
+                    logger.info(
+                        f"✅ Updated custom prompt payload for {company_id}/{agent_key} "
+                        f"(v{new_version})"
+                    )
+                else:
+                    # INSERT nuevo
+                    cursor.execute("""
+                        INSERT INTO custom_prompts (
+                            company_id,
+                            agent_name,
+                            template,
+                            structured_template,
+                            version,
+                            is_active,
+                            created_at,
+                            modified_at,
+                            modified_by
+                        ) VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s)
+                    """, (
+                        company_id,
+                        agent_key,
+                        template_string,
+                        json.dumps(structured_template),
+                        1,
+                        True,
+                        modified_by
+                    ))
+                    
+                    logger.info(
+                        f"✅ Created new custom prompt payload for {company_id}/{agent_key}"
+                    )
+                
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(
+                f"Error saving prompt payload for {company_id}/{agent_key}: {e}",
+                exc_info=True
+            )
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            conn.close()
+    
+    # ========================================================================
+    # MÉTODOS EXISTENTES (MANTENIDOS PARA COMPATIBILIDAD)
+    # ========================================================================
     
     def _get_prompts_from_json_fallback(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
         """Fallback a custom_prompts.json para compatibilidad temporal"""
@@ -95,7 +405,10 @@ class PromptService:
                         "last_modified": agent_data.get('modified_at'),
                         "version": 1,
                         "source": "json_file",
-                        "fallback_level": "json_compatibility"
+                        "fallback_level": "json_compatibility",
+                        # NUEVO: Incluir structured_template si existe
+                        "structured_template": agent_data.get('structured_template'),
+                        "format": "structured" if agent_data.get('structured_template') else "string"
                     }
                 else:
                     agents_data[agent_name] = {
@@ -104,7 +417,9 @@ class PromptService:
                         "last_modified": None,
                         "version": 0,
                         "source": "hardcoded",
-                        "fallback_level": "json_hardcoded"
+                        "fallback_level": "json_hardcoded",
+                        "structured_template": None,
+                        "format": "string"
                     }
             
             return agents_data
@@ -116,10 +431,14 @@ class PromptService:
 
     def get_company_prompts(self, company_id: str, agents: List[str] = None) -> Optional[Dict[str, Dict]]:
         """
-        Obtener prompts de una empresa con arquitectura separada
+        Obtener prompts de una empresa con arquitectura separada.
+        MODIFICADO: Incluye structured_template y format para compatibilidad.
         
         Returns:
-            Dict con datos de prompts para cada agente
+            Dict con datos de prompts para cada agente, incluyendo:
+            - current_prompt (str)
+            - structured_template (dict, si existe)
+            - format ('string' o 'structured')
         """
         if agents is None:
             agents = ['router_agent', 'sales_agent', 'support_agent', 'emergency_agent', 'schedule_agent']
@@ -136,7 +455,14 @@ class PromptService:
                 for agent_name in agents:
                     # Buscar custom prompt (personalizado)
                     cursor.execute("""
-                        SELECT template, is_active, version, modified_at, modified_by, notes
+                        SELECT 
+                            template, 
+                            structured_template,
+                            is_active, 
+                            version, 
+                            modified_at, 
+                            modified_by, 
+                            notes
                         FROM custom_prompts 
                         WHERE company_id = %s AND agent_name = %s AND is_active = true
                     """, (company_id, agent_name))
@@ -152,12 +478,20 @@ class PromptService:
                             "modified_by": custom_result['modified_by'],
                             "version": custom_result['version'],
                             "source": "postgresql_custom",
-                            "notes": custom_result['notes']
+                            "notes": custom_result['notes'],
+                            # NUEVO: Incluir structured_template
+                            "structured_template": custom_result.get('structured_template'),
+                            "format": "structured" if custom_result.get('structured_template') else "string"
                         }
                     else:
                         # Buscar default prompt (por defecto)
                         cursor.execute("""
-                            SELECT template, description, category, updated_at
+                            SELECT 
+                                template,
+                                structured_template, 
+                                description, 
+                                category, 
+                                updated_at
                             FROM default_prompts 
                             WHERE company_id = %s AND agent_name = %s
                         """, (company_id, agent_name))
@@ -173,557 +507,210 @@ class PromptService:
                                 "version": 1,
                                 "source": "postgresql_default",
                                 "description": default_result['description'],
-                                "category": default_result['category']
+                                "category": default_result['category'],
+                                # NUEVO: Incluir structured_template
+                                "structured_template": default_result.get('structured_template'),
+                                "format": "structured" if default_result.get('structured_template') else "string"
                             }
                         else:
-                            # No tiene ni custom ni default - usar hardcoded
-                            hardcoded_prompt = self._hardcoded_prompts.get(agent_name)
-                            if hardcoded_prompt:
-                                agents_data[agent_name] = {
-                                    "current_prompt": hardcoded_prompt,
-                                    "is_custom": False,
-                                    "last_modified": None,
-                                    "version": 0,
-                                    "source": "hardcoded_fallback"
-                                }
+                            # No tiene ni custom ni default, usar hardcoded
+                            agents_data[agent_name] = {
+                                "current_prompt": self._hardcoded_prompts.get(agent_name, f"Default prompt for {agent_name}"),
+                                "is_custom": False,
+                                "last_modified": None,
+                                "version": 0,
+                                "source": "hardcoded",
+                                "fallback_level": "hardcoded",
+                                "structured_template": None,
+                                "format": "string"
+                            }
             
-            logger.debug(f"Retrieved prompts for {company_id}: {len(agents_data)} agents")
             return agents_data
             
         except Exception as e:
-            logger.error(f"Error getting company prompts for {company_id}: {e}")
-            # Fallback a JSON en caso de error
+            logger.error(f"Error getting company prompts: {e}")
+            # Fallback a JSON
             return self._get_prompts_from_json_fallback(company_id, agents)
         finally:
             conn.close()
-    
-    def _get_prompts_from_postgresql(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
-        """Obtener prompts desde PostgreSQL usando función con fallback"""
-        conn = self.get_db_connection()
-        if not conn:
-            return None
-        
-        agents_data = {}
-        
-        try:
-            with conn.cursor() as cursor:
-                for agent_name in agents:
-                    # Usar función SQL con fallback automático
-                    cursor.execute("""
-                        SELECT template, source, is_custom, version, modified_at
-                        FROM get_prompt_with_fallback(%s, %s)
-                    """, (company_id, agent_name))
-                    
-                    result = cursor.fetchone()
-                    if result:
-                        agents_data[agent_name] = {
-                            "current_prompt": result['template'],
-                            "is_custom": result['is_custom'],
-                            "last_modified": result['modified_at'].isoformat() if result['modified_at'] else None,
-                            "version": result['version'],
-                            "source": result['source'],
-                            "fallback_level": "postgresql"
-                        }
-                    else:
-                        # Si la función no retorna nada, usar hardcoded
-                        agents_data[agent_name] = {
-                            "current_prompt": self._hardcoded_prompts.get(agent_name, f"Default prompt for {agent_name}"),
-                            "is_custom": False,
-                            "last_modified": None,
-                            "version": 0,
-                            "source": "hardcoded",
-                            "fallback_level": "postgresql_hardcoded"
-                        }
-            
-            return agents_data
-            
-        except Exception as e:
-            logger.error(f"Error querying PostgreSQL prompts: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    def _get_prompts_from_json(self, company_id: str, agents: List[str]) -> Optional[Dict[str, Dict]]:
-        """Fallback a custom_prompts.json para compatibilidad temporal"""
-        try:
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            if not os.path.exists(custom_prompts_file):
-                return None
-            
-            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                custom_prompts = json.load(f)
-            
-            company_prompts = custom_prompts.get(company_id, {})
-            agents_data = {}
-            
-            for agent_name in agents:
-                agent_data = company_prompts.get(agent_name, {})
-                
-                if isinstance(agent_data, dict):
-                    template = agent_data.get('template')
-                    if not template or template == "null":
-                        template = agent_data.get('default_template') or self._hardcoded_prompts.get(agent_name)
-                    
-                    agents_data[agent_name] = {
-                        "current_prompt": template,
-                        "is_custom": agent_data.get('is_custom', False),
-                        "last_modified": agent_data.get('modified_at'),
-                        "version": 1,
-                        "source": "json_file",
-                        "fallback_level": "json_compatibility"
-                    }
-                else:
-                    agents_data[agent_name] = {
-                        "current_prompt": self._hardcoded_prompts.get(agent_name, f"Default prompt for {agent_name}"),
-                        "is_custom": False,
-                        "last_modified": None,
-                        "version": 0,
-                        "source": "hardcoded",
-                        "fallback_level": "json_hardcoded"
-                    }
-            
-            return agents_data
-            
-        except Exception as e:
-            logger.error(f"Error reading JSON prompts: {e}")
-            return None
-    
+
     def save_custom_prompt(self, company_id: str, agent_name: str, template: str, modified_by: str = "admin") -> bool:
         """
-        Guardar prompt personalizado con versionado automático
+        MANTENIDO: Guardar custom prompt (compatibilidad con endpoints existentes).
         
-        Args:
-            company_id: ID de la empresa
-            agent_name: Nombre del agente
-            template: Template del prompt
-            modified_by: Usuario que modifica
-            
-        Returns:
-            bool: True si se guardó exitosamente
+        Nota: Este método guarda solo el template string.
+        Para guardar estructura completa, usar save_custom_prompt_payload.
         """
         conn = self.get_db_connection()
         if not conn:
-            # Fallback a JSON si no hay PostgreSQL
-            return self._save_prompt_to_json(company_id, agent_name, template, modified_by)
+            logger.error(f"❌ [{company_id}] Cannot save custom prompt - No DB connection")
+            return False
         
         try:
             with conn.cursor() as cursor:
-                # Usar UPSERT para insertar o actualizar
-                cursor.execute("""
-                    INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (company_id, agent_name) 
-                    DO UPDATE SET 
-                        template = EXCLUDED.template,
-                        modified_by = EXCLUDED.modified_by,
-                        modified_at = CURRENT_TIMESTAMP,
-                        notes = EXCLUDED.notes,
-                        is_active = true
-                """, (company_id, agent_name, template, modified_by, modified_by, f"Updated by {modified_by}"))
-                
-                conn.commit()
-                logger.info(f"Prompt saved for {company_id}/{agent_name} by {modified_by}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error saving prompt to PostgreSQL: {e}")
-            conn.rollback()
-            # Fallback a JSON
-            return self._save_prompt_to_json(company_id, agent_name, template, modified_by)
-        finally:
-            conn.close()
-    
-    def _save_prompt_to_json(self, company_id: str, agent_name: str, template: str, modified_by: str) -> bool:
-        """Fallback para guardar en JSON"""
-        try:
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            # Cargar o crear estructura
-            if os.path.exists(custom_prompts_file):
-                with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                    custom_prompts = json.load(f)
-            else:
-                custom_prompts = {}
-            
-            # Asegurar estructura
-            if company_id not in custom_prompts:
-                custom_prompts[company_id] = {}
-            
-            if agent_name not in custom_prompts[company_id]:
-                custom_prompts[company_id][agent_name] = {}
-            
-            # Actualizar
-            custom_prompts[company_id][agent_name].update({
-                "template": template,
-                "is_custom": True,
-                "modified_at": datetime.utcnow().isoformat() + "Z",
-                "modified_by": modified_by
-            })
-            
-            # Guardar
-            with open(custom_prompts_file, 'w', encoding='utf-8') as f:
-                json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"Prompt saved to JSON fallback for {company_id}/{agent_name}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error saving prompt to JSON: {e}")
-            return False
-    
-    def restore_default_prompt(self, company_id: str, agent_name: str, modified_by: str = "admin") -> bool:
-        """
-        Restaurar prompt a default eliminando personalización
-        
-        Args:
-            company_id: ID de la empresa
-            agent_name: Nombre del agente
-            modified_by: Usuario que restaura
-            
-        Returns:
-            bool: True si se restauró exitosamente
-        """
-        conn = self.get_db_connection()
-        if not conn:
-            # Fallback a JSON
-            return self._restore_prompt_in_json(company_id, agent_name)
-        
-        try:
-            with conn.cursor() as cursor:
-                # Marcar como inactivo en lugar de eliminar (preservar historial)
-                cursor.execute("""
-                    UPDATE custom_prompts 
-                    SET is_active = false, 
-                        modified_by = %s, 
-                        modified_at = CURRENT_TIMESTAMP,
-                        notes = 'Restored to default'
-                    WHERE company_id = %s AND agent_name = %s
-                """, (modified_by, company_id, agent_name))
-                
-                rows_affected = cursor.rowcount
-                conn.commit()
-                
-                if rows_affected > 0:
-                    logger.info(f"Prompt restored to default for {company_id}/{agent_name}")
-                    return True
-                else:
-                    logger.info(f"No custom prompt found to restore for {company_id}/{agent_name}")
-                    return True  # Consideramos exitoso si no había nada que restaurar
-                
-        except Exception as e:
-            logger.error(f"Error restoring prompt in PostgreSQL: {e}")
-            conn.rollback()
-            # Fallback a JSON
-            return self._restore_prompt_in_json(company_id, agent_name)
-        finally:
-            conn.close()
-    
-    def _restore_prompt_in_json(self, company_id: str, agent_name: str) -> bool:
-        """Fallback para restaurar en JSON"""
-        try:
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            if not os.path.exists(custom_prompts_file):
-                return True  # No hay archivo, ya está "restaurado"
-            
-            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                custom_prompts = json.load(f)
-            
-            # Limpiar prompt personalizado
-            if (company_id in custom_prompts and 
-                agent_name in custom_prompts[company_id]):
-                custom_prompts[company_id][agent_name].update({
-                    "template": None,
-                    "is_custom": False,
-                    "modified_at": datetime.utcnow().isoformat() + "Z",
-                    "modified_by": "system_restore"
-                })
-            
-            with open(custom_prompts_file, 'w', encoding='utf-8') as f:
-                json.dump(custom_prompts, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"Prompt restored in JSON fallback for {company_id}/{agent_name}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error restoring prompt in JSON: {e}")
-            return False
-    
-    def repair_from_repository(self, company_id: str = None, agent_name: str = None, repair_user: str = "system_repair") -> bool:
-        """
-        Función REPARAR - Restaura prompts desde repositorio (default_prompts)
-        
-        Args:
-            company_id: ID de empresa (requerido)
-            agent_name: Agente específico (opcional, None = todos)
-            repair_user: Usuario que ejecuta la reparación
-            
-        Returns:
-            bool: True si la reparación fue exitosa
-        """
-        if not company_id:
-            logger.error("company_id is required for repair operation")
-            return False
-        
-        self.repair_summary = []
-        
-        conn = self.get_db_connection()
-        if not conn:
-            # Fallback: reparar desde hardcoded prompts
-            return self._repair_from_hardcoded(company_id, agent_name, repair_user)
-        
-        try:
-            with conn.cursor() as cursor:
-                # Usar la función SQL de reparación
-                cursor.execute("""
-                    SELECT agent_name, action, success, message
-                    FROM repair_prompts_from_repository(%s, %s, %s)
-                """, (company_id, agent_name, repair_user))
-                
-                results = cursor.fetchall()
-                conn.commit()
-                
-                # Procesar resultados
-                success_count = 0
-                for result in results:
-                    self.repair_summary.append({
-                        "agent_name": result['agent_name'],
-                        "action": result['action'],
-                        "success": result['success'],
-                        "message": result['message']
-                    })
-                    if result['success']:
-                        success_count += 1
-                
-                logger.info(f"Repair completed: {success_count}/{len(results)} agents repaired for {company_id}")
-                return len(results) > 0 and success_count > 0
-                
-        except Exception as e:
-            logger.error(f"Error in repair operation: {e}")
-            conn.rollback()
-            # Fallback a reparación hardcoded
-            return self._repair_from_hardcoded(company_id, agent_name, repair_user)
-        finally:
-            conn.close()
-    
-    def _repair_from_hardcoded(self, company_id: str, agent_name: str = None, repair_user: str = "system_repair") -> bool:
-        """Fallback para reparar usando prompts hardcodeados"""
-        try:
-            agents_to_repair = [agent_name] if agent_name else list(self._hardcoded_prompts.keys())
-            
-            for agent in agents_to_repair:
-                if agent in self._hardcoded_prompts:
-                    success = self.save_custom_prompt(
-                        company_id, 
-                        agent, 
-                        self._hardcoded_prompts[agent], 
-                        repair_user
-                    )
-                    
-                    self.repair_summary.append({
-                        "agent_name": agent,
-                        "action": "REPAIR_HARDCODED",
-                        "success": success,
-                        "message": "Repaired from hardcoded fallback" if success else "Failed to repair"
-                    })
-            
-            success_count = sum(1 for item in self.repair_summary if item['success'])
-            logger.info(f"Hardcoded repair completed: {success_count}/{len(agents_to_repair)} agents")
-            return success_count > 0
-            
-        except Exception as e:
-            logger.error(f"Error in hardcoded repair: {e}")
-            return False
-    
-    def get_current_version(self, company_id: str, agent_name: str) -> int:
-        """Obtener versión actual de un prompt"""
-        conn = self.get_db_connection()
-        if not conn:
-            return 1  # Versión por defecto
-        
-        try:
-            with conn.cursor() as cursor:
+                # Verificar si ya existe
                 cursor.execute("""
                     SELECT version FROM custom_prompts 
                     WHERE company_id = %s AND agent_name = %s AND is_active = true
                 """, (company_id, agent_name))
                 
-                result = cursor.fetchone()
-                return result['version'] if result else 1
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # UPDATE con incremento de versión
+                    new_version = existing[0] + 1
+                    
+                    cursor.execute("""
+                        UPDATE custom_prompts 
+                        SET template = %s,
+                            version = %s,
+                            modified_at = CURRENT_TIMESTAMP,
+                            modified_by = %s
+                        WHERE company_id = %s AND agent_name = %s AND is_active = true
+                    """, (template, new_version, modified_by, company_id, agent_name))
+                    
+                    logger.info(f"✅ [{company_id}] Updated custom prompt for {agent_name} (v{new_version})")
+                else:
+                    # INSERT nuevo
+                    cursor.execute("""
+                        INSERT INTO custom_prompts (
+                            company_id, agent_name, template, version, is_active,
+                            created_at, modified_at, modified_by
+                        ) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s)
+                    """, (company_id, agent_name, template, 1, True, modified_by))
+                    
+                    logger.info(f"✅ [{company_id}] Created new custom prompt for {agent_name}")
+                
+                conn.commit()
+                return True
                 
         except Exception as e:
-            logger.error(f"Error getting version: {e}")
-            return 1
+            logger.error(f"❌ [{company_id}] Error saving custom prompt for {agent_name}: {e}")
+            conn.rollback()
+            return False
         finally:
             conn.close()
-    
-    def get_repair_summary(self) -> List[Dict[str, Any]]:
-        """Obtener resumen de la última operación de reparación"""
-        return self.repair_summary
-    
+
+    def delete_custom_prompt(self, company_id: str, agent_name: str) -> bool:
+        """Eliminar custom prompt (soft delete)"""
+        conn = self.get_db_connection()
+        if not conn:
+            return False
+        
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE custom_prompts 
+                    SET is_active = false,
+                        modified_at = CURRENT_TIMESTAMP
+                    WHERE company_id = %s AND agent_name = %s
+                """, (company_id, agent_name))
+                
+                conn.commit()
+                logger.info(f"✅ [{company_id}] Deleted custom prompt for {agent_name}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error deleting custom prompt: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     def get_db_status(self) -> Dict[str, Any]:
         """Obtener estado de la base de datos"""
+        conn = self.get_db_connection()
+        
+        if not conn:
+            return {
+                "postgresql_available": False,
+                "status": "disconnected",
+                "fallback_active": True
+            }
+        
         try:
-            conn = self.get_db_connection()
-            if not conn:
-                self._db_status = "failed"
-                return {
-                    "postgresql_available": False,
-                    "connection_status": "failed",
-                    "tables_exist": False,
-                    "fallback_mode": "json_or_hardcoded"
-                }
-            
             with conn.cursor() as cursor:
-                # Verificar que las tablas existen
+                # Verificar tablas
                 cursor.execute("""
-                    SELECT table_name FROM information_schema.tables 
+                    SELECT table_name 
+                    FROM information_schema.tables 
                     WHERE table_schema = 'public' 
-                    AND table_name IN ('custom_prompts', 'prompt_versions', 'default_prompts')
+                      AND table_name IN ('custom_prompts', 'default_prompts')
                 """)
                 
-                tables = [row['table_name'] for row in cursor.fetchall()]
-                all_tables_exist = len(tables) == 3
+                tables = [row[0] for row in cursor.fetchall()]
                 
-                # Contar registros
-                total_custom = 0
-                total_defaults = 0
+                has_custom = 'custom_prompts' in tables
+                has_default = 'default_prompts' in tables
                 
-                if 'custom_prompts' in tables:
-                    cursor.execute("SELECT COUNT(*) as count FROM custom_prompts WHERE is_active = true")
-                    total_custom = cursor.fetchone()['count']
-                
-                if 'default_prompts' in tables:
-                    cursor.execute("SELECT COUNT(*) as count FROM default_prompts")
-                    total_defaults = cursor.fetchone()['count']
-                
-                self._db_status = "connected"
                 return {
                     "postgresql_available": True,
-                    "connection_status": "connected",
-                    "tables_exist": all_tables_exist,
-                    "tables_found": tables,
-                    "total_custom_prompts": total_custom,
-                    "total_default_prompts": total_defaults,
-                    "fallback_mode": "none"
+                    "status": "connected",
+                    "tables": {
+                        "custom_prompts": has_custom,
+                        "default_prompts": has_default
+                    },
+                    "fallback_active": not (has_custom and has_default)
                 }
                 
         except Exception as e:
             logger.error(f"Error checking DB status: {e}")
-            self._db_status = f"error: {str(e)}"
             return {
                 "postgresql_available": False,
-                "connection_status": "error",
+                "status": "error",
                 "error": str(e),
-                "fallback_mode": "json_or_hardcoded"
+                "fallback_active": True
             }
         finally:
-            if 'conn' in locals():
-                conn.close()
-    
-    def migrate_from_json(self) -> Dict[str, Any]:
-        """
-        Migrar datos existentes de custom_prompts.json a PostgreSQL
-        
-        Returns:
-            Dict con estadísticas de migración
-        """
-        migration_stats = {
-            "companies_migrated": 0,
-            "prompts_migrated": 0,
-            "errors": [],
-            "success": False
-        }
-        
-        try:
-            # Leer archivo JSON existente
-            custom_prompts_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                'custom_prompts.json'
-            )
-            
-            if not os.path.exists(custom_prompts_file):
-                migration_stats["errors"].append("custom_prompts.json not found")
-                return migration_stats
-            
-            with open(custom_prompts_file, 'r', encoding='utf-8') as f:
-                custom_prompts = json.load(f)
-            
-            conn = self.get_db_connection()
-            if not conn:
-                migration_stats["errors"].append("PostgreSQL connection failed")
-                return migration_stats
-            
-            # Migrar datos
-            with conn.cursor() as cursor:
-                for company_id, company_data in custom_prompts.items():
-                    try:
-                        migration_stats["companies_migrated"] += 1
-                        
-                        for agent_name, agent_data in company_data.items():
-                            if isinstance(agent_data, dict) and agent_data.get('is_custom', False):
-                                template = agent_data.get('template')
-                                modified_by = agent_data.get('modified_by', 'migration')
-                                
-                                if template:
-                                    cursor.execute("""
-                                        INSERT INTO custom_prompts (company_id, agent_name, template, created_by, modified_by, notes)
-                                        VALUES (%s, %s, %s, %s, %s, %s)
-                                        ON CONFLICT (company_id, agent_name) DO NOTHING
-                                    """, (company_id, agent_name, template, 'migration', modified_by, 'Migrated from JSON'))
-                                    
-                                    migration_stats["prompts_migrated"] += 1
-                    
-                    except Exception as e:
-                        migration_stats["errors"].append(f"Error migrating {company_id}: {str(e)}")
-                
-                conn.commit()
-                migration_stats["success"] = True
-                logger.info(f"Migration completed: {migration_stats['prompts_migrated']} prompts from {migration_stats['companies_migrated']} companies")
-                
-        except Exception as e:
-            migration_stats["errors"].append(f"Migration failed: {str(e)}")
-            logger.error(f"Migration error: {e}")
-            if 'conn' in locals():
-                conn.rollback()
-        finally:
-            if 'conn' in locals():
-                conn.close()
-        
-        return migration_stats
-    
-    def get_default_prompt_by_company_agent(self, company_id: str, agent_name: str) -> Optional[str]:
-        """Obtener prompt por defecto específico para empresa + agente (ARQUITECTURA SEPARADA)"""
+            conn.close()
+
+    def get_prompt_history(self, company_id: str, agent_name: str, limit: int = 10) -> List[Dict]:
+        """Obtener historial de cambios de un prompt"""
         conn = self.get_db_connection()
         if not conn:
-            return None
+            return []
         
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # ✅ CORREGIDO: Buscar por company_id + agent_name separados
-                cursor.execute(
-                    "SELECT template FROM default_prompts WHERE company_id = %s AND agent_name = %s",
-                    (company_id, agent_name)
-                )
+                cursor.execute("""
+                    SELECT version, template, modified_at, modified_by, notes
+                    FROM custom_prompts 
+                    WHERE company_id = %s AND agent_name = %s
+                    ORDER BY version DESC
+                    LIMIT %s
+                """, (company_id, agent_name, limit))
+                
+                results = cursor.fetchall()
+                return [dict(row) for row in results]
+                
+        except Exception as e:
+            logger.error(f"Error getting prompt history: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_default_prompt(self, company_id: str, agent_name: str) -> Optional[str]:
+        """Obtener default prompt de un agente"""
+        conn = self.get_db_connection()
+        if not conn:
+            return self._hardcoded_prompts.get(agent_name)
+        
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT template 
+                    FROM default_prompts 
+                    WHERE company_id = %s AND agent_name = %s
+                """, (company_id, agent_name))
                 
                 result = cursor.fetchone()
+                
                 if result:
-                    logger.debug(f"Found default prompt for {company_id}/{agent_name}")
-                    return result['template']
-                
-                logger.debug(f"No default prompt found for {company_id}/{agent_name}")
-                return None
-                
+                    return result[0]
+                else:
+                    logger.debug(f"No default prompt found for {company_id}/{agent_name}")
+                    return None
+                    
         except Exception as e:
             logger.error(f"Error getting default prompt for {company_id}/{agent_name}: {e}")
             return None
@@ -732,6 +719,7 @@ class PromptService:
 
 
 
+    
     # Agregar al final de la clase PromptService en app/services/prompt_service.py
     
     def initialize_default_prompts_for_company(self, company_id: str, company_config=None) -> Dict[str, Any]:
@@ -807,7 +795,8 @@ class PromptService:
                         prompt_template = temp_agent._create_default_prompt_template()
                         
                         # ✅ Extraer el contenido del system message
-                        # El ChatPromptTemplate tiene una estructura: messages[0] = system message
+                        # NOTA: Este código maneja ChatPromptTemplate SOLO aquí, en este método legacy
+                        # para compatibilidad con agentes que aún no migraron
                         system_message = prompt_template.messages[0]
                         
                         # Obtener el template string del system message
