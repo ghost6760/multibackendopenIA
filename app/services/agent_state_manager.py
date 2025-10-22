@@ -376,7 +376,41 @@ class AgentStateManager:
             f"success={tool_record.get('success')}, "
             f"latency={tool_record.get('latency_ms')}ms"
         )
-    
+
+    def record_execution(
+        self,
+        agent_name: str,
+        user_id: str,
+        company_id: str,
+        metrics: Dict[str, Any]
+    ):
+        """
+        Registrar métricas completas de una ejecución (para telemetría).
+        
+        Args:
+            agent_name: Nombre del agente
+            user_id: ID del usuario
+            company_id: ID de la empresa
+            metrics: Dict con métricas de ejecución
+        """
+        logger.info(
+            f"[{agent_name}] Execution completed: "
+            f"company={company_id}, user={user_id}, "
+            f"latency={metrics.get('latency_ms', 0):.2f}ms, "
+            f"success={metrics.get('success', False)}, "
+            f"tools_used={len(metrics.get('tools_used', []))}"
+        )
+        
+        # Opcionalmente, persistir en Redis si está habilitado
+        if self.use_persistence and self.redis_service:
+            try:
+                key = f"agent_metrics:{company_id}:{agent_name}:{user_id}"
+                self.redis_service.lpush(key, json.dumps(metrics))
+                self.redis_service.ltrim(key, 0, 99)  # Mantener últimas 100 métricas
+                self.redis_service.expire(key, 86400)  # 24 horas
+            except Exception as e:
+                logger.error(f"Error persisting metrics: {e}")
+            
     # === REENTRANCIA (CONTINUAR EJECUCIÓN) === #
     
     def can_resume_execution(self, execution_id: str) -> bool:
