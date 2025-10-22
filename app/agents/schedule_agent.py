@@ -659,10 +659,43 @@ class ScheduleAgent(CognitiveAgentBase):
         return entities
     
     def _extract_date_from_text(self, text: str) -> Optional[str]:
-        """Extraer fecha del texto"""
+        """Extraer fecha del texto - VERSIÓN MEJORADA"""
         text_lower = text.lower()
         
-        # Patrones de fecha
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        
+        # 1. DÍAS DE LA SEMANA (NUEVO)
+        day_names = {
+            'lunes': 0, 'martes': 1, 'miércoles': 2, 'miercoles': 2,
+            'jueves': 3, 'viernes': 4, 'sábado': 5, 'sabado': 5, 'domingo': 6
+        }
+        
+        for day_name, day_num in day_names.items():
+            if day_name in text_lower:
+                current_day = today.weekday()
+                days_ahead = day_num - current_day
+                
+                if days_ahead <= 0:
+                    days_ahead += 7
+                
+                target_date = today + timedelta(days=days_ahead)
+                logger.debug(f"Parsed '{day_name}' as {target_date.strftime('%d-%m-%Y')}")
+                return target_date.strftime("%d-%m-%Y")
+        
+        # 2. Fechas relativas
+        relative_dates = {
+            'hoy': today,
+            'mañana': today + timedelta(days=1),
+            'pasado mañana': today + timedelta(days=2),
+            'pasado manana': today + timedelta(days=2)
+        }
+        
+        for word, date_obj in relative_dates.items():
+            if word in text_lower:
+                return date_obj.strftime("%d-%m-%Y")
+        
+        # 3. Patrones de fecha numérica
         date_patterns = [
             r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b',
             r'\b(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})\b'
@@ -672,20 +705,6 @@ class ScheduleAgent(CognitiveAgentBase):
             match = re.search(pattern, text)
             if match:
                 return match.group(0)
-        
-        # Fechas relativas
-        from datetime import datetime, timedelta
-        today = datetime.now()
-        
-        relative_dates = {
-            'hoy': today,
-            'mañana': today + timedelta(days=1),
-            'pasado mañana': today + timedelta(days=2)
-        }
-        
-        for word, date_obj in relative_dates.items():
-            if word in text_lower:
-                return date_obj.strftime("%d-%m-%Y")
         
         return None
     
@@ -837,31 +856,30 @@ class ScheduleAgent(CognitiveAgentBase):
         state: AgentState
     ) -> List[Dict[str, Any]]:
         """
-        Seleccionar herramientas basado en intención y entidades disponibles.
-        
-        Returns:
-            Lista de configs de tools: [{"tool_name": str, "params": dict}, ...]
+        Seleccionar herramientas - VERSIÓN MEJORADA.
         """
         tools = []
         
-        if intent == "check_availability":
-            # Verificar disponibilidad
-            if entities.get("date") and entities.get("treatment"):
-                tools.append({
-                    "tool_name": "get_available_slots",
-                    "params": {
-                        "date": entities["date"],
-                        "treatment": entities["treatment"],
-                        "company_id": self.company_config.company_id
-                    }
-                })
-            else:
-                # Necesita más info, no ejecutar tools aún
-                pass
-        
-        elif intent == "create_appointment":
-            # Validar datos primero
-            if self._has_complete_booking_info(entities, state):
+        if intent == "create_appointment":
+            # Verificar datos disponibles
+            has_complete_info = all([
+                entities.get("date"),
+                entities.get("treatment")
+            ])
+            
+            # Marcar datos faltantes
+            missing_info = []
+            if not entities.get("date"):
+                missing_info.append("date")
+            if not entities.get("treatment"):
+                missing_info.append("treatment")
+            if not entities.get("patient_name"):
+                missing_info.append("patient_name")
+            
+            state["context"]["missing_info"] = missing_info
+            
+            if has_complete_info:
+                # Solo si tenemos info básica completa
                 tools.append({
                     "tool_name": "validate_appointment_data",
                     "params": {
@@ -870,23 +888,37 @@ class ScheduleAgent(CognitiveAgentBase):
                     }
                 })
                 
-                # Luego crear cita
                 tools.append({
                     "tool_name": "create_appointment",
                     "params": {
                         "datetime": f"{entities['date']} {entities.get('time', '10:00')}",
                         "patient_info": {
-                            "name": entities.get("patient_name", "Pendiente"),
-                            "treatment": entities.get("treatment", "Consulta general")
+                            "name": entities.get("patient_name", "Por confirmar"),
+                            "treatment": entities.get("treatment", "Consulta")
                         },
-                        "service": entities.get("treatment", "Consulta general"),
+                        "service": entities.get("treatment"),
                         "company_id": self.company_config.company_id
                     }
                 })
+                
+                logger.info(
+                    f"[{self.company_config.company_id}] Selected {len(tools)} tools for booking"
+                )
+            else:
+                logger.info(
+                    f"[{self.company_config.company_id}] Incomplete info, will request: {missing_info}"
+                )
         
-        elif intent == "get_info":
-            # Ya tenemos RAG context, no necesitamos tools adicionales
-            pass
+        elif intent == "check_availability":
+            if entities.get("date") or entities.get("treatment"):
+                tools.append({
+                    "tool_name": "get_available_slots",
+                    "params": {
+                        "date": entities.get("date", "próximos 7 días"),
+                        "treatment": entities.get("treatment", "cualquier servicio"),
+                        "company_id": self.company_config.company_id
+                    }
+                })
         
         return tools
     
@@ -1025,8 +1057,53 @@ RESPUESTA:"""
         tool_results: Dict[str, Any],
         rag_context: str
     ) -> str:
-        """Generar respuesta programática (fallback)"""
-        if intent == "check_availability":
+        """Generar respuesta programática - VERSIÓN MEJORADA"""
+        
+        if intent == "create_appointment":
+            # Si tools se ejecutaron exitosamente
+            if "create_appointment" in tool_results:
+                booking_result = tool_results["create_appointment"]
+                return self._format_booking_confirmation(booking_result)
+            
+            # Verificar datos disponibles
+            confirmed_data = []
+            missing_data = []
+            
+            if entities.get("date"):
+                confirmed_data.append(f"✅ Fecha: {entities['date']}")
+            else:
+                missing_data.append("📅 Fecha específica (ej: 'el lunes', 'mañana', '15-01-2025')")
+            
+            if entities.get("time"):
+                confirmed_data.append(f"✅ Hora: {entities['time']}")
+            else:
+                missing_data.append("🕐 Hora preferida")
+            
+            if entities.get("treatment"):
+                confirmed_data.append(f"✅ Servicio: {entities['treatment']}")
+            else:
+                missing_data.append(f"🩺 Servicio ({self.company_config.services})")
+            
+            if entities.get("patient_name"):
+                confirmed_data.append(f"✅ Nombre: {entities['patient_name']}")
+            else:
+                missing_data.append("👤 Nombre completo")
+            
+            # Construir respuesta
+            service_name = entities.get("treatment", "cita")
+            response = f"Perfecto, te ayudo a agendar tu {service_name} en {self.company_config.company_name}. 📋\n\n"
+            
+            if confirmed_data:
+                response += "**Datos confirmados:**\n" + "\n".join(confirmed_data) + "\n\n"
+            
+            if missing_data:
+                response += "**Para completar tu reserva necesito:**\n" + "\n".join(missing_data)
+            else:
+                response += "¿Confirmas estos datos para proceder con la reserva?"
+            
+            return response
+        
+        elif intent == "check_availability":
             if "get_available_slots" in tool_results:
                 slots = tool_results["get_available_slots"]
                 if slots:
@@ -1036,16 +1113,9 @@ RESPUESTA:"""
             else:
                 return self._generate_availability_request_response(entities)
         
-        elif intent == "create_appointment":
-            if "create_appointment" in tool_results:
-                booking_result = tool_results["create_appointment"]
-                return self._format_booking_confirmation(booking_result)
-            else:
-                return self._generate_booking_request_response(entities)
-        
         elif intent == "get_info":
             if rag_context:
-                return f"Información sobre tratamientos en {self.company_config.company_name}:\n\n{rag_context[:500]}"
+                return f"Información sobre servicios en {self.company_config.company_name}:\n\n{rag_context[:500]}"
             else:
                 return self._get_basic_schedule_info()
         
