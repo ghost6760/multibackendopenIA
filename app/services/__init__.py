@@ -21,6 +21,23 @@ from .company_config_service import (
     EnterpriseCompanyConfig
 )
 
+# ✅ COGNITIVE SERVICES - Imports seguros (no tienen dependencias circulares)
+from .agent_state_manager import (
+    AgentStateManager,
+    get_agent_state_manager,
+    ExecutionStatus,
+    StateSnapshot
+)
+from .cognitive_engine import (
+    CognitiveEngine,
+    get_cognitive_engine,
+    INTENT_PATTERNS,
+    CONFIDENCE_WEIGHTS
+)
+
+# ⚠️ agent_tools_service tiene dependencia con workflows.tool_executor
+# Se carga mediante lazy loading (ver __getattr__ más abajo)
+
 # ========================================================================
 # LAZY IMPORTS para evitar circular dependencies
 # ========================================================================
@@ -57,10 +74,22 @@ __all__ = [
     'get_prompt_service',
     'init_prompt_service',
     
-    # ✅ FIXED: Added missing comma
+    # Company config service
     'EnterpriseCompanyConfigService',
     'get_enterprise_company_service', 
     'EnterpriseCompanyConfig',
+    
+    # ✅ Cognitive services
+    'AgentStateManager',
+    'get_agent_state_manager',
+    'ExecutionStatus',
+    'StateSnapshot',
+    'CognitiveEngine',
+    'get_cognitive_engine',
+    'INTENT_PATTERNS',
+    'CONFIDENCE_WEIGHTS',
+    'AgentToolsService',  # Lazy loaded
+    'get_agent_tools_service',  # Lazy loaded
     
     # Convenience functions
     'get_chatwoot_service',
@@ -87,6 +116,11 @@ def _lazy_import_factory():
     from .multi_agent_factory import MultiAgentFactory, get_multi_agent_factory, get_orchestrator_for_company
     return MultiAgentFactory, get_multi_agent_factory, get_orchestrator_for_company
 
+def _lazy_import_agent_tools_service():
+    """Lazy import de AgentToolsService (tiene dependencia con workflows)"""
+    from .agent_tools_service import AgentToolsService, get_agent_tools_service
+    return AgentToolsService, get_agent_tools_service
+
 # ========================================================================
 # PUBLIC API - Funciones que usan lazy loading
 # ========================================================================
@@ -109,6 +143,12 @@ def __getattr__(name):
         return getter
     elif name == 'get_orchestrator_for_company':
         _, _, getter = _lazy_import_factory()
+        return getter
+    elif name == 'AgentToolsService':
+        service_class, _ = _lazy_import_agent_tools_service()
+        return service_class
+    elif name == 'get_agent_tools_service':
+        _, getter = _lazy_import_agent_tools_service()
         return getter
     
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
