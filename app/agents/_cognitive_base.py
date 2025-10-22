@@ -370,26 +370,22 @@ class CognitiveAgentBase(ABC):
         """
         pass
     
-    @abstractmethod
     def _create_default_prompt_template(self) -> ChatPromptTemplate:
         """
-        🆕 NUEVO MÉTODO ABSTRACTO
-        
-        Los agentes DEBEN implementar este método con su prompt hardcoded.
-        Este es el fallback cuando no hay prompts en PostgreSQL.
-        
-        IMPORTANTE: Debe incluir MessagesPlaceholder para historial.
-        
-        Ejemplo:
-            return ChatPromptTemplate.from_messages([
-                ("system", "Eres un agente de {company_name}..."),
-                MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{question}")
-            ])
-        
-        Returns:
-            ChatPromptTemplate con MessagesPlaceholder
+        Prompt hardcoded como FALLBACK.
+        Puede ser sobrescrito en subclases para prompts específicos.
         """
+        template = """Eres un asistente profesional de {company_name}.
+    
+    Servicios disponibles: {services}
+    
+    Responde de manera profesional y útil a la pregunta del usuario."""
+        
+        return ChatPromptTemplate.from_messages([
+            ("system", template),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}")
+        ])
         pass
     
     # ========================================================================
