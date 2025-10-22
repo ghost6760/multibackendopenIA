@@ -1,9 +1,15 @@
 """
-Base cognitiva compartida para agentes LangGraph.
+Base cognitiva compartida para agentes LangGraph - VERSIÓN COMPLETA CON POSTGRESQL
+==================================================================================
 
-Este módulo define la infraestructura común que todos los agentes cognitivos
-deben implementar, incluyendo tipos de estado, interfaces de nodos y contratos
-de ejecución.
+🔄 ESTA VERSIÓN INCLUYE:
+- ✅ TODOS los métodos originales de CognitiveAgentBase
+- ✅ Soporte completo para PostgreSQL prompts
+- ✅ Soporte para MessagesPlaceholder (historial)
+- ✅ Funciones de gestión de prompts
+- ✅ Métodos de razonamiento y tool execution
+- ✅ Métodos de inyección de servicios
+- ✅ Validación y helpers
 
 IMPORTANTE: Los agentes cognitivos mantienen los mismos nombres de clase y firmas
 públicas que sus versiones anteriores, pero internamente usan LangGraph para
@@ -17,6 +23,10 @@ from datetime import datetime
 from abc import ABC, abstractmethod
 import operator
 import logging
+
+# Imports para PostgreSQL y prompts
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -229,48 +239,73 @@ class CognitiveConfig:
 
 
 # ============================================================================
-# INTERFACES BASE
+# 🧠 COGNITIVE AGENT BASE - VERSIÓN COMPLETA CON POSTGRESQL
 # ============================================================================
 
 class CognitiveAgentBase(ABC):
     """
-    Clase base abstracta para agentes cognitivos.
+    Clase base abstracta para agentes cognitivos - VERSIÓN COMPLETA
+    
+    🆕 NUEVAS CAPACIDADES (PostgreSQL):
+    - Carga de prompts desde PostgreSQL (custom y default)
+    - Soporte para MessagesPlaceholder (historial de chat)
+    - Funciones de gestión de prompts (save, restore, reload)
+    - Fallbacks automáticos (4 niveles)
+    
+    ✅ MANTIENE (Original):
+    - Todas las capacidades cognitivas (LangGraph, reasoning, tools)
+    - Métodos de razonamiento y tool execution
+    - Métodos de inyección de servicios
+    - Validación y helpers
+    - Misma firma pública: invoke(inputs: dict) -> str
     
     IMPORTANTE: Las subclases DEBEN:
     1. Mantener el mismo nombre de clase que sus versiones anteriores
     2. Implementar invoke(inputs: dict) -> str
-    3. Mantener métodos de inyección: set_vectorstore_service(), etc.
-    4. Usar LangGraph internamente para el grafo de decisión
+    3. Implementar build_graph()
+    4. Implementar _create_default_prompt_template() [NUEVO]
+    5. Mantener métodos de inyección: set_vectorstore_service(), etc.
     """
     
     def __init__(
         self,
         agent_type: AgentType,
         manifest: AgentManifest,
-        config: CognitiveConfig
+        config: CognitiveConfig,
+        company_config=None,  # 🆕 NUEVO: Para PostgreSQL
+        prompt_service=None   # 🆕 NUEVO: Para PostgreSQL
     ):
         """
-        Inicializa el agente cognitivo.
+        Inicializa el agente cognitivo con soporte PostgreSQL.
         
         Args:
             agent_type: Tipo de agente
             manifest: Manifest de capacidades
             config: Configuración cognitiva
+            company_config: 🆕 Configuración de empresa (para PostgreSQL)
+            prompt_service: 🆕 Servicio de prompts (para PostgreSQL)
         """
         self.agent_type = agent_type
         self.manifest = manifest
         self.config = config
         
+        # 🆕 NUEVO: Configuración para PostgreSQL
+        self.company_config = company_config
+        self.prompt_service = prompt_service
+        
+        # 🆕 NUEVO: Cache del prompt actual
+        self._current_prompt_template = None
+        self._prompt_source = None
+        
         # Servicios inyectados (inicialmente None)
         self._tool_executor = None
         self._vectorstore_service = None
-        self._prompt_service = None
         self._state_manager = None
         self._condition_evaluator = None
         
         logger.info(
-            f"[{agent_type.value}] Cognitive agent initialized with "
-            f"{len(manifest.capabilities)} capabilities"
+            f"🧠 [{agent_type.value}] Cognitive agent initialized with "
+            f"{len(manifest.capabilities)} capabilities (PostgreSQL support: {bool(company_config and prompt_service)})"
         )
     
     # ========================================================================
@@ -299,7 +334,7 @@ class CognitiveAgentBase(ABC):
     
     def set_prompt_service(self, service):
         """Inyecta el servicio de prompts."""
-        self._prompt_service = service
+        self.prompt_service = service
         logger.debug(f"[{self.agent_type.value}] PromptService injected")
     
     # ========================================================================
@@ -335,8 +370,278 @@ class CognitiveAgentBase(ABC):
         """
         pass
     
+    @abstractmethod
+    def _create_default_prompt_template(self) -> ChatPromptTemplate:
+        """
+        🆕 NUEVO MÉTODO ABSTRACTO
+        
+        Los agentes DEBEN implementar este método con su prompt hardcoded.
+        Este es el fallback cuando no hay prompts en PostgreSQL.
+        
+        IMPORTANTE: Debe incluir MessagesPlaceholder para historial.
+        
+        Ejemplo:
+            return ChatPromptTemplate.from_messages([
+                ("system", "Eres un agente de {company_name}..."),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{question}")
+            ])
+        
+        Returns:
+            ChatPromptTemplate con MessagesPlaceholder
+        """
+        pass
+    
     # ========================================================================
-    # MÉTODOS INTERNOS (HELPERS)
+    # 🆕 FUNCIONES DE POSTGRESQL (Migradas desde BaseAgent)
+    # ========================================================================
+    
+    def _get_agent_key(self) -> str:
+        """
+        Obtener clave del agente para PostgreSQL.
+        Mapea nombre de clase a clave esperada en DB.
+        """
+        class_name = self.__class__.__name__
+        
+        # Mapeo de clases a keys
+        mapping = {
+            "SupportAgent": "support",
+            "ScheduleAgent": "schedule",
+            "EmergencyAgent": "emergency",
+            "SalesAgent": "sales",
+            "PlanningAgent": "planning",
+            "AvailabilityAgent": "availability"
+        }
+        
+        return mapping.get(class_name, class_name.lower().replace("agent", ""))
+    
+    def _create_prompt_template(self) -> ChatPromptTemplate:
+        """
+        🆕 MIGRADO DESDE BASEAGENT
+        
+        Crear template con soporte para prompts personalizados desde PostgreSQL.
+        
+        JERARQUÍA DE CARGA:
+        1. PostgreSQL custom_prompts (Personalizado por empresa)
+        2. PostgreSQL default_prompts (Por defecto del repositorio)
+        3. Método _create_default_prompt_template() (Hardcoded en agente)
+        4. Fallback de emergencia
+        """
+        if not self.company_config or not self.prompt_service:
+            logger.warning(
+                f"[{self.agent_type.value}] No PostgreSQL support - using hardcoded prompt"
+            )
+            return self._create_default_prompt_template()
+        
+        company_id = self.company_config.company_id
+        agent_key = self._get_agent_key()
+        
+        logger.info(f"🔄 [{company_id}] Creating prompt template for {agent_key}")
+        
+        # 1. Intentar cargar prompt personalizado desde PostgreSQL
+        custom_template = self._load_custom_prompt_from_postgresql()
+        if custom_template:
+            self._prompt_source = "postgresql_custom"
+            logger.info(f"✅ [{company_id}] Using PostgreSQL custom prompt for {agent_key}")
+            return self._build_prompt_with_history(custom_template)
+        
+        # 2. Intentar cargar prompt por defecto desde PostgreSQL
+        default_template = self._load_default_prompt_from_postgresql()
+        if default_template:
+            self._prompt_source = "postgresql_default"
+            logger.info(f"✅ [{company_id}] Using PostgreSQL default prompt for {agent_key}")
+            return self._build_prompt_with_history(default_template)
+        
+        # 3. Fallback a prompt hardcoded del agente
+        try:
+            self._prompt_source = "hardcoded_agent"
+            logger.warning(f"⚠️ [{company_id}] Using hardcoded prompt for {agent_key}")
+            return self._create_default_prompt_template()
+        except Exception as e:
+            logger.error(f"💥 [{company_id}] Error creating default prompt: {e}")
+        
+        # 4. Fallback de emergencia
+        self._prompt_source = "emergency_fallback"
+        logger.error(f"🚨 [{company_id}] EMERGENCY FALLBACK for {agent_key}")
+        return self._create_emergency_prompt_template()
+    
+    def _load_custom_prompt_from_postgresql(self) -> Optional[str]:
+        """Cargar prompt personalizado desde PostgreSQL"""
+        try:
+            company_id = self.company_config.company_id
+            agent_key = self._get_agent_key()
+            
+            agents_data = self.prompt_service.get_company_prompts(company_id)
+            agent_data = agents_data.get(agent_key, {})
+            
+            is_custom = agent_data.get('is_custom', False)
+            source = agent_data.get('source', 'unknown')
+            
+            if (is_custom and 
+                source in ['custom', 'postgresql_custom'] and
+                agent_data.get('current_prompt')):
+                
+                logger.info(f"✅ [{company_id}] Custom prompt found for {agent_key}")
+                return agent_data['current_prompt']
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"💥 Error loading custom prompt from PostgreSQL: {e}")
+            return None
+    
+    def _load_default_prompt_from_postgresql(self) -> Optional[str]:
+        """Cargar prompt por defecto desde PostgreSQL"""
+        try:
+            company_id = self.company_config.company_id
+            agent_key = self._get_agent_key()
+            
+            agents_data = self.prompt_service.get_company_prompts(company_id)
+            agent_data = agents_data.get(agent_key, {})
+            
+            source = agent_data.get('source', 'unknown')
+            
+            if (source in ['default', 'postgresql_default'] and
+                agent_data.get('current_prompt')):
+                
+                logger.info(f"✅ [{company_id}] Default prompt found for {agent_key}")
+                return agent_data['current_prompt']
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"💥 Error loading default prompt from PostgreSQL: {e}")
+            return None
+    
+    def _build_prompt_with_history(self, template_str: str) -> ChatPromptTemplate:
+        """
+        🆕 NUEVO: Construir prompt con MessagesPlaceholder para historial
+        
+        Args:
+            template_str: Template string desde PostgreSQL
+        
+        Returns:
+            ChatPromptTemplate con soporte de historial
+        """
+        try:
+            # Construir prompt con historial
+            return ChatPromptTemplate.from_messages([
+                ("system", template_str),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{question}")
+            ])
+        except Exception as e:
+            logger.error(f"💥 Error building prompt with history: {e}")
+            # Fallback sin historial
+            return ChatPromptTemplate.from_template(template_str)
+    
+    def _create_emergency_prompt_template(self) -> ChatPromptTemplate:
+        """Prompt de emergencia cuando todo falla"""
+        emergency_template = """Eres un asistente útil de {company_name}.
+
+PREGUNTA: {question}
+
+Responde de manera profesional y útil."""
+        
+        return ChatPromptTemplate.from_messages([
+            ("system", emergency_template),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}")
+        ])
+    
+    def reload_prompt_template(self):
+        """
+        🆕 NUEVA FUNCIÓN: Recargar el template de prompt
+        Útil cuando se actualiza el prompt en PostgreSQL
+        """
+        self._current_prompt_template = None
+        self._prompt_source = None
+        logger.info(f"[{self.agent_type.value}] Prompt template reloaded")
+    
+    def save_custom_prompt(self, template: str, modified_by: str = "admin") -> bool:
+        """
+        🆕 NUEVA FUNCIÓN: Guardar prompt personalizado
+        
+        Args:
+            template: Nuevo template de prompt
+            modified_by: Usuario que modificó
+        
+        Returns:
+            bool: True si se guardó correctamente
+        """
+        if not self.prompt_service or not self.company_config:
+            logger.error("Cannot save prompt - no PostgreSQL support")
+            return False
+        
+        try:
+            agent_key = self._get_agent_key()
+            success = self.prompt_service.save_custom_prompt(
+                self.company_config.company_id,
+                agent_key,
+                template,
+                modified_by
+            )
+            
+            if success:
+                self.reload_prompt_template()
+                logger.info(f"✅ Custom prompt saved for {agent_key}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"💥 Error saving custom prompt: {e}")
+            return False
+    
+    def restore_default_prompt(self, modified_by: str = "admin") -> bool:
+        """
+        🆕 NUEVA FUNCIÓN: Restaurar prompt a default
+        
+        Args:
+            modified_by: Usuario que restauró
+        
+        Returns:
+            bool: True si se restauró correctamente
+        """
+        if not self.prompt_service or not self.company_config:
+            logger.error("Cannot restore prompt - no PostgreSQL support")
+            return False
+        
+        try:
+            agent_key = self._get_agent_key()
+            success = self.prompt_service.restore_default_prompt(
+                self.company_config.company_id,
+                agent_key,
+                modified_by
+            )
+            
+            if success:
+                self.reload_prompt_template()
+                logger.info(f"✅ Prompt restored to default for {agent_key}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"💥 Error restoring default prompt: {e}")
+            return False
+    
+    def get_current_prompt_info(self) -> Dict[str, Any]:
+        """
+        🆕 NUEVA FUNCIÓN: Obtener información del prompt actual
+        
+        Returns:
+            Dict con información del prompt
+        """
+        return {
+            "agent_name": self.__class__.__name__,
+            "agent_key": self._get_agent_key(),
+            "prompt_source": self._prompt_source,
+            "company_id": self.company_config.company_id if self.company_config else None,
+            "supports_postgresql": bool(self.prompt_service and self.company_config),
+            "supports_history": True
+        }
+    
+    # ========================================================================
+    # MÉTODOS INTERNOS (HELPERS ORIGINALES)
     # ========================================================================
     
     def _create_initial_state(self, inputs: dict) -> AgentState:
@@ -657,7 +962,8 @@ class CognitiveAgentBase(ABC):
             "errors_count": len(state.get("errors", [])),
             "warnings_count": len(state.get("warnings", [])),
             "success": len(state.get("errors", [])) == 0,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "prompt_source": self._prompt_source  # 🆕 NUEVO
         }
 
 
