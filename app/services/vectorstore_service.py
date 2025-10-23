@@ -1,5 +1,4 @@
 # app/services/vectorstore_service.py
-# MIGRADO A LANGGRAPH - Retrieval explícito pre-prompt
 
 from langchain_redis import RedisVectorStore
 from langchain.text_splitter import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
@@ -16,15 +15,7 @@ from typing import List, Dict, Any, Tuple, Optional
 logger = logging.getLogger(__name__)
 
 class VectorstoreService:
-    """
-    Servicio de vectorstore multi-tenant - Compatible con LangGraph
-    
-    🆕 CAMBIOS PARA LANGGRAPH:
-    - Retrieval debe hacerse ANTES de ejecutar PromptNode
-    - El agente llama a similarity_search_for_graph() explícitamente
-    - Los resultados se pasan como 'context' en extra_vars
-    - No más integración automática en prompts
-    """
+    """Servicio de vectorstore multi-tenant"""
     
     def __init__(self, company_id: str = None):
         self.company_id = company_id or "default"
@@ -32,6 +23,7 @@ class VectorstoreService:
         
         if not self.company_config:
             logger.warning(f"No config found for company {self.company_id}, using default")
+            # Usar configuración por defecto
             from app.config.company_config import CompanyConfig
             self.company_config = CompanyConfig(
                 company_id=self.company_id,
@@ -69,203 +61,22 @@ class VectorstoreService:
             logger.error(f"Error initializing vectorstore for {self.company_id}: {e}")
             raise
     
-    # ========================================================================
-    # 🆕 MÉTODOS PARA LANGGRAPH
-    # ========================================================================
-    
-    def similarity_search_for_graph(
-        self, 
-        query: str, 
-        k: int = 3,
-        return_format: str = "context_string"
-    ) -> Any:
-        """
-        🆕 MÉTODO PRINCIPAL PARA LANGGRAPH
-        
-        Realiza búsqueda de similitud y retorna resultados en formato
-        listo para pasar a PromptNode como extra_vars.
-        
-        Args:
-            query: Consulta de búsqueda
-            k: Número de documentos a retornar
-            return_format: 
-                - "context_string": String concatenado listo para prompt
-                - "context_list": Lista de diccionarios con metadata
-                - "documents": Objetos Document originales de LangChain
-        
-        Returns:
-            Según return_format:
-            - String formateado para inyectar en prompt
-            - Lista de diccionarios con content y metadata
-            - Lista de objetos Document
-        """
-        try:
-            logger.info(f"🔍 [{self.company_id}] RAG SEARCH FOR LANGGRAPH:")
-            logger.info(f"   → Query: {query[:100]}...")
-            logger.info(f"   → K: {k}")
-            logger.info(f"   → Return format: {return_format}")
-            
-            # Realizar búsqueda usando método interno
-            docs = self.search_by_company(query, company_id=self.company_id, k=k)
-            
-            if not docs:
-                logger.warning(f"   → No documents found")
-                if return_format == "context_string":
-                    return ""
-                elif return_format == "context_list":
-                    return []
-                else:
-                    return []
-            
-            logger.info(f"   → Documents found: {len(docs)}")
-            
-            # Formatear según el formato solicitado
-            if return_format == "context_string":
-                return self._format_docs_as_context_string(docs)
-            
-            elif return_format == "context_list":
-                return self._format_docs_as_context_list(docs)
-            
-            elif return_format == "documents":
-                return docs
-            
-            else:
-                logger.warning(f"   → Unknown format: {return_format}, returning context_string")
-                return self._format_docs_as_context_string(docs)
-                
-        except Exception as e:
-            logger.error(f"❌ [{self.company_id}] Error in similarity_search_for_graph: {e}")
-            if return_format == "context_string":
-                return ""
-            elif return_format == "context_list":
-                return []
-            else:
-                return []
-    
-    def _format_docs_as_context_string(self, docs: List[Any]) -> str:
-        """
-        Formatea documentos como un string concatenado listo para inyectar en prompt
-        """
-        if not docs:
-            return ""
-        
-        context_parts = []
-        for i, doc in enumerate(docs, 1):
-            content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-            metadata = getattr(doc, 'metadata', {})
-            
-            # Incluir información de metadata si está disponible
-            source_info = ""
-            if metadata.get('treatment'):
-                source_info = f"[Tratamiento: {metadata['treatment']}] "
-            elif metadata.get('section'):
-                source_info = f"[Sección: {metadata['section']}] "
-            
-            context_parts.append(f"Documento {i}: {source_info}{content}")
-        
-        formatted_context = "\n\n---\n\n".join(context_parts)
-        
-        logger.debug(f"   → Formatted context: {len(formatted_context)} chars")
-        return formatted_context
-    
-    def _format_docs_as_context_list(self, docs: List[Any]) -> List[Dict[str, Any]]:
-        """
-        Formatea documentos como lista de diccionarios con content y metadata
-        """
-        if not docs:
-            return []
-        
-        context_list = []
-        for doc in docs:
-            content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-            metadata = getattr(doc, 'metadata', {})
-            
-            context_list.append({
-                "content": content,
-                "metadata": metadata,
-                "length": len(content)
-            })
-        
-        logger.debug(f"   → Formatted context list: {len(context_list)} items")
-        return context_list
-    
-    def prepare_retrieval_context(
-        self, 
-        query: str, 
-        k: int = 3,
-        include_metadata: bool = True
-    ) -> Dict[str, Any]:
-        """
-        🆕 Prepara contexto de retrieval completo para pasar a LangGraph state
-        
-        Útil para nodos de retrieval que necesitan metadata adicional
-        además del contexto del documento.
-        
-        Returns:
-            {
-                "context": str,  # Texto formateado
-                "documents": List[Dict],  # Lista estructurada
-                "metadata": {
-                    "query": str,
-                    "documents_found": int,
-                    "company_id": str
-                }
-            }
-        """
-        try:
-            docs = self.search_by_company(query, company_id=self.company_id, k=k)
-            
-            result = {
-                "context": self._format_docs_as_context_string(docs),
-                "documents": self._format_docs_as_context_list(docs) if include_metadata else [],
-                "metadata": {
-                    "query": query,
-                    "documents_found": len(docs),
-                    "company_id": self.company_id,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }
-            
-            logger.info(f"✅ [{self.company_id}] Retrieval context prepared: {len(docs)} docs")
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ [{self.company_id}] Error preparing retrieval context: {e}")
-            return {
-                "context": "",
-                "documents": [],
-                "metadata": {
-                    "query": query,
-                    "documents_found": 0,
-                    "company_id": self.company_id,
-                    "error": str(e)
-                }
-            }
-    
-    # ========================================================================
-    # MÉTODOS LEGACY (mantener compatibilidad)
-    # ========================================================================
-    
     def get_retriever(self, k: int = 3):
-        """
-        ⚠️ LEGACY - Para compatibilidad con código antiguo
-        En LangGraph, preferir usar similarity_search_for_graph()
-        """
-        logger.warning(f"[{self.company_id}] Using legacy get_retriever() - consider migrating to similarity_search_for_graph()")
+        """Obtener retriever específico de la empresa"""
         return self.vectorstore.as_retriever(search_kwargs={"k": k})
     
     def search_by_company(self, query: str, company_id: str = None, k: int = 3) -> List[Any]:
-        """
-        Buscar documentos filtrados por empresa
-        MANTIENE FUNCIONALIDAD ORIGINAL - devolver objetos Document de LangChain
-        """
+        """Buscar documentos filtrados por empresa - CORREGIDO para devolver objetos LangChain"""
         try:
+            # 🆕 LOGS DE RAG DETALLADOS - INICIO
             target_company = company_id or self.company_id
             logger.info(f"🔍 [{target_company}] RAG SEARCH START:")
             logger.info(f"   → Query: {query[:100]}...")
             logger.info(f"   → Requested documents: {k}")
             logger.info(f"   → Target company: {target_company}")
             logger.info(f"   → Current company: {self.company_id}")
+            if hasattr(self, 'vectorstore_index'):
+                logger.info(f"   → Vectorstore index: {self.vectorstore_index}")
             
             # Verificar que coincida la empresa
             if target_company != self.company_id:
@@ -282,7 +93,7 @@ class VectorstoreService:
             
             logger.info(f"   → Initial documents retrieved: {len(docs)}")
             
-            # Filtrar por empresa pero mantener objetos Document de LangChain
+            # CORREGIDO: Filtrar por empresa pero mantener objetos Document de LangChain
             filtered_docs = []
             for doc in docs:
                 metadata = getattr(doc, 'metadata', {})
@@ -292,7 +103,7 @@ class VectorstoreService:
                 if doc_company == self.company_id:
                     filtered_docs.append(doc)
             
-            # Logs de resultados
+            # 🆕 LOGS DE RAG DETALLADOS - RESULTADOS
             logger.info(f"📄 [{self.company_id}] RAG RESULTS:")
             logger.info(f"   → Documents found after filtering: {len(filtered_docs)}")
             
@@ -303,15 +114,13 @@ class VectorstoreService:
                 logger.info(f"      Metadata: {metadata}")
             
             logger.info(f"✅ [{self.company_id}] RAG search completed successfully")
+            logger.info(f"Found {len(filtered_docs)} documents for company {self.company_id}")
             return filtered_docs
             
         except Exception as e:
             logger.error(f"❌ [{target_company if 'target_company' in locals() else 'unknown'}] RAG search error: {e}")
+            logger.error(f"Error searching documents for {self.company_id}: {e}")
             return []
-    
-    # ========================================================================
-    # MÉTODOS DE INDEXACIÓN (sin cambios)
-    # ========================================================================
     
     def add_texts(self, texts: List[str], metadatas: List[Dict[str, Any]] = None):
         """Agregar textos con metadata de empresa"""
@@ -340,6 +149,7 @@ class VectorstoreService:
     def create_chunks(self, text: str) -> Tuple[List[str], List[Dict[str, Any]]]:
         """Crear chunks con metadata específica de empresa"""
         try:
+            # Usar lógica existente pero agregar metadata de empresa
             processed_texts, metadatas = self._create_chunks_internal(text)
             
             # Enriquecer metadata
@@ -359,8 +169,9 @@ class VectorstoreService:
             return [], []
     
     def _create_chunks_internal(self, text: str) -> Tuple[List[str], List[Dict[str, Any]]]:
-        """Lógica interna de chunking (sin cambios)"""
+        """Lógica interna de chunking (reutilizada del código original)"""
         try:
+            # Create splitters
             markdown_splitter = MarkdownHeaderTextSplitter(
                 headers_to_split_on=[
                     ("##", "treatment"),
@@ -377,8 +188,10 @@ class VectorstoreService:
                 length_function=len
             )
             
+            # Normalize text
             normalized_text = self._normalize_text(text)
             
+            # Try markdown splitting first
             try:
                 chunks = markdown_splitter.split_text(normalized_text)
                 
@@ -402,6 +215,7 @@ class VectorstoreService:
                     for i, chunk in enumerate(text_chunks)
                 ]
             
+            # Process chunks and generate metadata
             processed_texts = []
             metadatas = []
             
@@ -457,10 +271,6 @@ class VectorstoreService:
             "processed_at": datetime.utcnow().isoformat()
         }
     
-    # ========================================================================
-    # MÉTODOS DE GESTIÓN (sin cambios)
-    # ========================================================================
-    
     def find_vectors_by_doc_id(self, doc_id: str) -> List[str]:
         """Encontrar vectores por doc_id específicos de la empresa"""
         pattern = f"{self.index_name}:*"
@@ -478,6 +288,7 @@ class VectorstoreService:
                 if metadata_str:
                     try:
                         metadata = json.loads(metadata_str)
+                        # Verificar tanto doc_id como company_id
                         if (metadata.get('doc_id') == doc_id and 
                             metadata.get('company_id') == self.company_id):
                             vectors_to_find.append(key)
@@ -501,9 +312,11 @@ class VectorstoreService:
     def check_health(self) -> Dict[str, Any]:
         """Verificar salud del vectorstore específico de empresa"""
         try:
+            # Get index info
             info = self.redis_client.ft(self.index_name).info()
             doc_count = info.get('num_docs', 0)
             
+            # Count stored documents for this company
             stored_keys = list(self.redis_client.scan_iter(match=f"{self.index_name}:*"))
             stored_count = len(stored_keys)
             
@@ -535,6 +348,8 @@ class VectorstoreService:
 def init_vectorstore(app):
     """Initialize vectorstore system for multi-tenant Flask app"""
     try:
+        # En el sistema multi-tenant, los vectorstores se inicializan 
+        # bajo demanda por cada empresa, no de forma global
         from app.config.company_config import get_company_manager
         
         company_manager = get_company_manager()
