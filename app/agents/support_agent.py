@@ -37,7 +37,6 @@ from app.agents._agent_tools import get_tools_for_agent
 
 # LangGraph
 from langgraph.graph import StateGraph, END
-from langchain.prompts import ChatPromptTemplate
 
 # Services
 from app.config.company_config import CompanyConfig
@@ -246,107 +245,105 @@ class SupportAgent(CognitiveAgentBase):
     
     def _categorize_issue_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 1: Categorizar tipo de problema/consulta.
+        Nodo 1: Categorizar el problema de soporte.
         """
         state["current_node"] = "categorize_issue"
         
-        question = state["question"].lower()
+        question = state["question"]
         
-        # Categorizar
+        # Clasificar tipo de problema
         category = self._classify_support_issue(question)
         urgency = self._assess_urgency(question)
-        
-        # Registrar razonamiento
-        reasoning_step = self._add_reasoning_step(
-            state,
-            NodeType.REASONING,
-            "Categorizing support issue",
-            thought=f"User asks: '{question[:100]}'",
-            decision=f"Category: {category}, Urgency: {urgency}",
-            confidence=0.8
-        )
-        
-        state["reasoning_steps"].append(reasoning_step)
         
         # Guardar en contexto
         state["context"]["category"] = category
         state["context"]["urgency"] = urgency
         
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.DECISION,
+            "Categorized support issue",
+            thought=f"Issue classified as {category} with {urgency} urgency",
+            decision=f"category={category}, urgency={urgency}"
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
+        
         logger.debug(
-            f"[{self.company_config.company_id}] Category: {category}, "
-            f"Urgency: {urgency}"
+            f"[{self.company_config.company_id}] Issue categorized: {category} ({urgency})"
         )
         
         return state
     
     def _search_knowledge_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 2: Buscar solución en knowledge base.
+        Nodo 2: Buscar en knowledge base.
         """
         state["current_node"] = "search_knowledge"
         
         question = state["question"]
         category = state["context"].get("category", "general")
         
-        # Buscar en RAG
+        # Construir query optimizada
+        search_query = self._build_support_query(question, category)
+        
+        # Buscar en vectorstore (si está disponible)
+        solutions = ""
+        
         if self._vectorstore_service:
             try:
-                # Construir query optimizada
-                rag_query = self._build_support_query(question, category)
-                
-                docs = self._vectorstore_service.search_by_company(
-                    rag_query,
-                    self.company_config.company_id,
+                docs = self._vectorstore_service.search(
+                    query=search_query,
+                    company_id=self.company_config.company_id,
                     k=3
                 )
                 
-                # Extraer soluciones
                 solutions = self._extract_solutions_from_docs(docs)
                 
-                state["vectorstore_context"] = solutions
-                
-                # Registrar razonamiento
-                reasoning_step = self._add_reasoning_step(
-                    state,
-                    NodeType.REASONING,
-                    "Searched knowledge base for solutions",
-                    observation=f"Found {len(docs)} relevant docs",
-                    confidence=0.9 if solutions else 0.3
-                )
-                
-                state["reasoning_steps"].append(reasoning_step)
-                
                 logger.debug(
-                    f"[{self.company_config.company_id}] RAG: {len(docs)} docs"
+                    f"[{self.company_config.company_id}] Found {len(docs)} docs from RAG"
                 )
                 
             except Exception as e:
-                logger.error(f"Error searching knowledge base: {e}")
-                state["warnings"].append(f"Knowledge search failed: {str(e)}")
-                state["vectorstore_context"] = self._get_default_support_info()
+                logger.error(f"Error searching vectorstore: {e}")
+                solutions = ""
         
-        else:
-            # No hay RAG, usar info default
-            state["vectorstore_context"] = self._get_default_support_info()
+        # Fallback: info por defecto
+        if not solutions:
+            solutions = self._get_default_support_info()
+        
+        # Guardar en contexto
+        state["context"]["solutions"] = solutions
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.TOOL_USE,
+            "Searched knowledge base",
+            observation=f"Found solutions: {len(solutions) > 0}"
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
         
         return state
     
     def _generate_response_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 3: Generar respuesta de soporte.
+        Nodo 3: Generar respuesta final.
         """
         state["current_node"] = "generate_response"
         
         category = state["context"].get("category", "general")
         urgency = state["context"].get("urgency", "normal")
-        solutions = state.get("vectorstore_context", "")
+        solutions = state["context"].get("solutions", "")
         
-        # Construir respuesta
+        # Generar respuesta usando LLM o fallback
         response = self._build_support_response(
-            category=category,
-            urgency=urgency,
-            solutions=solutions,
-            state=state
+            category,
+            urgency,
+            solutions,
+            state
         )
         
         state["response"] = response
@@ -363,7 +360,7 @@ class SupportAgent(CognitiveAgentBase):
         
         state["reasoning_steps"].append(reasoning_step)
         
-        logger.info(
+        logger.debug(
             f"[{self.company_config.company_id}] Support response generated"
         )
         
@@ -496,39 +493,11 @@ class SupportAgent(CognitiveAgentBase):
         state: AgentState
     ) -> str:
         """
-        Construir respuesta de soporte.
+        Construir respuesta de soporte usando _run_graph_prompt.
         """
         try:
-            # Usar LLM para respuesta natural
-            response_prompt = self._create_support_prompt()
-            
-            prompt_inputs = {
-                "category": category,
-                "urgency": urgency,
-                "solutions": solutions,
-                "question": state["question"],
-                "company_name": self.company_config.company_name,
-                "services": self.company_config.services
-            }
-            
-            response = (response_prompt | self.chat_model).invoke(prompt_inputs)
-            
-            if hasattr(response, 'content'):
-                return response.content
-            else:
-                return str(response)
-            
-        except Exception as e:
-            logger.error(f"Error generating support response with LLM: {e}")
-            
-            # Fallback programático
-            return self._build_programmatic_support_response(
-                category, urgency, solutions
-            )
-    
-    def _create_support_prompt(self) -> ChatPromptTemplate:
-        """Crear prompt para respuestas de soporte"""
-        template = """Eres un agente de soporte profesional de {company_name}.
+            # Preparar template
+            template = """Eres un agente de soporte profesional de {company_name}.
 
 CATEGORÍA DE CONSULTA: {category}
 URGENCIA: {urgency}
@@ -549,8 +518,34 @@ INSTRUCCIONES:
 6. Máximo 5 oraciones, conciso y accionable
 
 RESPUESTA DE SOPORTE:"""
-        
-        return ChatPromptTemplate.from_template(template)
+            
+            # Preparar variables
+            extra_vars = {
+                "category": category,
+                "urgency": urgency,
+                "solutions": solutions,
+                "question": state["question"],
+                "company_name": self.company_config.company_name,
+                "services": self.company_config.services
+            }
+            
+            # Usar _run_graph_prompt de base cognitiva
+            response_content = self._run_graph_prompt(
+                agent_key="support",
+                template=template,
+                extra_vars=extra_vars,
+                state=state
+            )
+            
+            return response_content
+            
+        except Exception as e:
+            logger.error(f"Error generating support response with LLM: {e}")
+            
+            # Fallback programático
+            return self._build_programmatic_support_response(
+                category, urgency, solutions
+            )
     
     def _build_programmatic_support_response(
         self,
