@@ -97,4 +97,3 @@ def build_router_graph(company_config):
     graph.add_edge("router", END)
 
     return graph
-
