@@ -352,7 +352,7 @@ class ScheduleAgent(CognitiveAgentBase):
             
             if self._vectorstore_service:
                 try:
-                    docs = self._vectorstore_service.search(
+                    docs = self._vectorstore_service.search_by_company(
                         query=search_query,
                         company_id=self.company_config.company_id,
                         k=2
