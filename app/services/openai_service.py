@@ -45,13 +45,27 @@ class OpenAIService:
         self.voice_enabled = current_app.config.get('VOICE_ENABLED', False)
         self.image_enabled = current_app.config.get('IMAGE_ENABLED', False)
     
-    def get_chat_model(self):
-        """Get LangChain ChatOpenAI model"""
+    def get_chat_model(self, model_name: Optional[str] = None, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
+        """
+        Get LangChain ChatOpenAI model with optional parameters.
+        
+        IMPORTANTE: Este método retorna un ChatOpenAI para usar en nodos del grafo,
+        NO para encadenar con prompts usando (prompt | model).
+        La ejecución LLM debe ocurrir dentro de nodos del StateGraph.
+        
+        Args:
+            model_name: Opcional, nombre del modelo a usar
+            temperature: Opcional, temperatura para la generación
+            max_tokens: Opcional, máximo de tokens
+        
+        Returns:
+            ChatOpenAI instance configurada
+        """
         return ChatOpenAI(
             api_key=self.api_key,
-            model=self.model_name,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature
+            model=model_name or self.model_name,
+            max_tokens=max_tokens or self.max_tokens,
+            temperature=temperature if temperature is not None else self.temperature
         )
     
     def get_embeddings(self):
@@ -71,7 +85,7 @@ class OpenAIService:
             raise
 
 
-    def validate_openai_setup() -> bool:
+    def validate_openai_setup(self) -> bool:
         """Validar configuración completa de OpenAI"""
         try:
             # Test de conexión básico
@@ -86,10 +100,21 @@ class OpenAIService:
             return False
     
     def generate_response(self, messages: list, **kwargs) -> str:
-        """Generate response using OpenAI Chat API"""
+        """
+        Generate response using OpenAI Chat API.
+        
+        Este método debe ser invocado desde nodos del grafo, no usando (prompt | model).
+        
+        Args:
+            messages: Lista de mensajes en formato OpenAI
+            **kwargs: Parámetros adicionales (model, max_tokens, temperature)
+        
+        Returns:
+            str: Contenido de la respuesta
+        """
         try:
             response = self.client.chat.completions.create(
-                model=self.model_name,
+                model=kwargs.get('model', self.model_name),
                 messages=messages,
                 max_tokens=kwargs.get('max_tokens', self.max_tokens),
                 temperature=kwargs.get('temperature', self.temperature)
@@ -100,6 +125,37 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {e}")
             raise
+    
+    def invoke_with_messages(self, messages: list, **kwargs) -> str:
+        """
+        Alias para generate_response, compatible con nodos del grafo.
+        
+        Args:
+            messages: Lista de mensajes en formato OpenAI/LangChain
+            **kwargs: Parámetros adicionales
+        
+        Returns:
+            str: Contenido de la respuesta
+        """
+        # Normalizar formato de mensajes si vienen de LangChain
+        normalized_messages = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                normalized_messages.append(msg)
+            elif hasattr(msg, 'type') and hasattr(msg, 'content'):
+                # Mensaje de LangChain
+                normalized_messages.append({
+                    "role": msg.type if msg.type in ['system', 'user', 'assistant'] else 'user',
+                    "content": msg.content
+                })
+            else:
+                logger.warning(f"Unknown message format: {type(msg)}")
+                normalized_messages.append({
+                    "role": "user",
+                    "content": str(msg)
+                })
+        
+        return self.generate_response(normalized_messages, **kwargs)
     
     def transcribe_audio(self, audio_file_path: str) -> str:
         """Transcribe audio file to text"""
