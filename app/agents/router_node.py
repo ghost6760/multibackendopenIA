@@ -48,7 +48,7 @@ def build_router_graph(company_config):
             try:
                 # Usar wrapper seguro del servicio OpenAI
                 # Puede devolver texto con JSON - intentamos parsearlo
-                response_text = openai_service.invoke_with_messages(messages, model=None)
+                response_text = openai_service.invoke_with_messages(messages)
                 
                 # Si viene como objeto ya parseado (raro) lo normalizamos
                 if isinstance(response_text, dict):
