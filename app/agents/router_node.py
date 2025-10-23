@@ -55,5 +55,10 @@ def build_router_graph(company_config):
         return state
 
     graph.add_node("router", _router_node)
+    
+    # ✅ AGREGAR ESTAS 3 LÍNEAS
+    from langgraph.graph import END
+    graph.set_entry_point("router")
+    graph.add_edge("router", END)
+    
     return graph
-
