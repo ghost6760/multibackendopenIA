@@ -172,6 +172,18 @@ class SupportAgent(CognitiveAgentBase):
                 f"🔍 [{self.company_config.company_id}] SupportAgent.invoke() "
                 f"- Question: {inputs.get('question', '')[:100]}..."
             )
+
+            # marcar q estamos invocando el grafo (evita reentrancia)
+            initial_state["_executing_graph"] = True
+            try:
+                final_state = self.compiled_graph.invoke(initial_state)
+            finally:
+                # eliminar la marca (si el compiled_graph la preservó como parte del state, manténlo)
+                try:
+                    if isinstance(final_state, dict):
+                        final_state.pop("_executing_graph", None)
+                except Exception:
+                    pass
             
             # Ejecutar grafo
             final_state = self.compiled_graph.invoke(initial_state)
