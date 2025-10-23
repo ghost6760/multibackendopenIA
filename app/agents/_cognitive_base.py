@@ -477,6 +477,7 @@ class CognitiveAgentBase(ABC):
         - Firma compatible: acepta agent_key y **kwargs (no rompe si se pasan args extra).
         - Normaliza `state` si viene como dict para evitar errores tipo "'dict' object has no attribute 'inputs'".
         - Si prompt_node es None intenta inferirlo desde kwargs o usa un fallback.
+        - Ejecuta el grafo llamando a self.graph.run(graph_inputs) si está disponible.
         - Devuelve un dict normalizado con keys 'text', 'raw' y 'metadata'.
         """
     
@@ -584,49 +585,54 @@ class CognitiveAgentBase(ABC):
         }
     
         # -------------------------
-        # 5) Invocar el grafo / LLM - aquí integramos con la implementación concreta
+        # 5) Invocar el grafo / LLM usando self.graph.run(graph_inputs)
         # -------------------------
+        raw_out = None
         try:
-            # Nota: en tu repo puede que la subclase (o graph.compile()) maneje la ejecución.
-            # Si tu implementación usa self.graph.invoke(...) o self.graph.run(...), llama ahí.
-            # Ejemplo (comentado):
-            # if hasattr(self, 'compiled_graph') and self.compiled_graph:
-            #     raw_out = self.compiled_graph.invoke(graph_inputs)
-            # else:
-            #     raw_out = {"note": "no graph available", "inputs": graph_inputs}
-    
-            # Por compatibilidad, devolvemos una estructura normalizada; sustituye la línea raw_out
-            raw_out = {"note": "placeholder - implement graph execution in subclass", "inputs": graph_inputs}
-    
-            # Construir texto de salida si la implementación concreta lo provee
-            text_out = ""
-            if isinstance(raw_out, dict) and raw_out.get("response"):
-                text_out = raw_out.get("response")
-            elif isinstance(raw_out, dict) and raw_out.get("text"):
-                text_out = raw_out.get("text")
-    
-            metadata = {
-                "prompt_length": len(graph_inputs["system_prompt"]),
-                "examples_count": len(graph_inputs["examples"]),
-                "history_messages": len(normalized_history),
-                "execution_timestamp": datetime.utcnow().isoformat()
-            }
-    
-            return {
-                "text": text_out,
-                "raw": raw_out,
-                "metadata": metadata
-            }
-    
+            if hasattr(self, "graph") and self.graph is not None and hasattr(self.graph, "run") and callable(getattr(self.graph, "run")):
+                try:
+                    raw_out = self.graph.run(graph_inputs)
+                except Exception as e_graph:
+                    logger.exception(f"[_run_graph_prompt] Error executing self.graph.run(): {e_graph}")
+                    raw_out = {"error": str(e_graph), "note": "graph.run failed"}
+            else:
+                logger.debug(f"[_run_graph_prompt] No graph available on agent {self.agent_type}. Skipping graph.run().")
+                raw_out = {"note": "no graph available", "inputs": graph_inputs}
         except Exception as e:
-            logger.exception(f"[_run_graph_prompt] Unexpected error executing graph/prompt: {e}")
-            return {
-                "text": "Error ejecutando el prompt.",
-                "raw": None,
-                "metadata": {"error": str(e), "error_timestamp": datetime.utcnow().isoformat()}
-            }
-
+            logger.exception(f"[_run_graph_prompt] Unexpected error while invoking graph.run: {e}")
+            raw_out = {"error": str(e), "note": "unexpected invocation error"}
     
+        # Construir texto de salida según lo que retorne raw_out
+        text_out = ""
+        try:
+            # raw_out puede ser dict, objeto o string según implementación del grafo
+            if isinstance(raw_out, dict):
+                # Prioridad: response -> text -> output -> result
+                for key in ("response", "text", "output", "result"):
+                    if raw_out.get(key):
+                        text_out = raw_out.get(key)
+                        break
+            elif isinstance(raw_out, str):
+                text_out = raw_out
+            else:
+                # objeto con atributo posible
+                text_out = getattr(raw_out, "response", "") or getattr(raw_out, "text", "") or ""
+        except Exception:
+            text_out = ""
+    
+        metadata = {
+            "prompt_length": len(graph_inputs["system_prompt"]),
+            "examples_count": len(graph_inputs["examples"]),
+            "history_messages": len(normalized_history),
+            "execution_timestamp": datetime.utcnow().isoformat()
+        }
+    
+        return {
+            "text": text_out,
+            "raw": raw_out,
+            "metadata": metadata
+        }
+
     # ========================================================================
     # ABSTRACT METHODS (Deben ser implementados por subclases)
     # ========================================================================
