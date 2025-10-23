@@ -2,7 +2,6 @@
 
 # Base cognitiva (núcleo LangGraph)
 from ._cognitive_base import CognitiveAgentBase, AgentState
-
 # Nodos o subgrafos LangGraph
 from .router_node import build_router_graph  # 🚀 reemplaza RouterAgent
 from .emergency_agent import EmergencyAgent
