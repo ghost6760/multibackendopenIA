@@ -38,7 +38,6 @@ from app.agents._agent_tools import get_tools_for_agent
 
 # LangGraph
 from langgraph.graph import StateGraph, END
-from langchain.prompts import ChatPromptTemplate
 
 # Services
 from app.config.company_config import CompanyConfig
@@ -121,8 +120,8 @@ class SalesAgent(CognitiveAgentBase):
         # Configuración cognitiva
         cognitive_config = CognitiveConfig(
             enable_reasoning_traces=True,
-            enable_tool_validation=False,  # No crítico
-            enable_guardrails=False,  # No requiere validación
+            enable_tool_validation=False,
+            enable_guardrails=False,
             max_reasoning_steps=8,
             require_confirmation_for_critical_actions=False,
             safe_fail_on_tool_error=True,
@@ -235,17 +234,7 @@ class SalesAgent(CognitiveAgentBase):
         workflow.set_entry_point("identify_product")
         
         workflow.add_edge("identify_product", "retrieve_product_info")
-        
-        # Condicional: necesita pricing o no
-        workflow.add_conditional_edges(
-            "retrieve_product_info",
-            self._needs_pricing,
-            {
-                "yes": "get_pricing",
-                "no": "generate_response"
-            }
-        )
-        
+        workflow.add_edge("retrieve_product_info", "get_pricing")
         workflow.add_edge("get_pricing", "generate_response")
         workflow.add_edge("generate_response", END)
         
@@ -261,126 +250,122 @@ class SalesAgent(CognitiveAgentBase):
     
     def _identify_product_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 1: Identificar producto/servicio mencionado.
+        Nodo 1: Identificar productos mencionados.
         """
         state["current_node"] = "identify_product"
         
-        question = state["question"].lower()
-        
-        # Identificar productos/servicios
-        products = self._extract_products_from_text(question, state["chat_history"])
+        question = state["question"]
         
         # Clasificar tipo de consulta
         inquiry_type = self._classify_sales_inquiry(question)
         
+        # Detectar productos mencionados
+        products = self._detect_products_in_query(question)
+        
+        # Guardar en contexto
+        state["context"]["inquiry_type"] = inquiry_type
+        state["context"]["products"] = products
+        
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
-            NodeType.REASONING,
-            "Identifying products and inquiry type",
-            thought=f"User asks: '{question[:100]}'",
-            observation=f"Products: {products}, Type: {inquiry_type}",
-            confidence=0.85
+            NodeType.DECISION,
+            "Identified sales inquiry",
+            thought=f"Type: {inquiry_type}, Products: {products}",
+            decision=f"inquiry_type={inquiry_type}"
         )
         
         state["reasoning_steps"].append(reasoning_step)
         
-        # Guardar en contexto
-        state["context"]["products"] = products
-        state["context"]["inquiry_type"] = inquiry_type
-        
         logger.debug(
-            f"[{self.company_config.company_id}] Products: {products}, "
-            f"Type: {inquiry_type}"
+            f"[{self.company_config.company_id}] Products identified: {products}"
         )
         
         return state
     
     def _retrieve_product_info_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 2: Recuperar información de productos desde RAG.
+        Nodo 2: Recuperar información de productos.
         """
         state["current_node"] = "retrieve_product_info"
         
-        products = state["context"].get("products", [])
         question = state["question"]
+        products = state["context"].get("products", [])
         
-        # Si no hay productos específicos, búsqueda general
-        if not products:
-            products = ["servicios", self.company_config.services]
+        # Construir query
+        search_query = self._build_product_query(products, question)
         
-        # Buscar en RAG
+        # Buscar en vectorstore
+        product_info = ""
+        
         if self._vectorstore_service:
             try:
-                # Construir query
-                rag_query = self._build_product_query(products, question)
-                
-                docs = self._vectorstore_service.search_by_company(
-                    rag_query,
-                    self.company_config.company_id,
+                docs = self._vectorstore_service.search(
+                    query=search_query,
+                    company_id=self.company_config.company_id,
                     k=4
                 )
                 
-                # Extraer info relevante
                 product_info = self._extract_product_info_from_docs(docs)
                 
-                state["vectorstore_context"] = product_info
-                
-                # Registrar razonamiento
-                reasoning_step = self._add_reasoning_step(
-                    state,
-                    NodeType.REASONING,
-                    "Retrieved product information from RAG",
-                    observation=f"Found {len(docs)} relevant docs",
-                    confidence=0.9 if product_info else 0.3
-                )
-                
-                state["reasoning_steps"].append(reasoning_step)
-                
                 logger.debug(
-                    f"[{self.company_config.company_id}] RAG: {len(docs)} docs retrieved"
+                    f"[{self.company_config.company_id}] Retrieved {len(docs)} product docs"
                 )
                 
             except Exception as e:
-                logger.error(f"Error retrieving product info: {e}")
-                state["warnings"].append(f"RAG retrieval failed: {str(e)}")
-                state["vectorstore_context"] = self._get_basic_product_info()
+                logger.error(f"Error searching vectorstore: {e}")
+                product_info = ""
         
-        else:
-            # No hay RAG, usar info básica
-            state["vectorstore_context"] = self._get_basic_product_info()
+        # Fallback
+        if not product_info:
+            product_info = self._get_basic_product_info()
+        
+        # Guardar en contexto
+        state["context"]["product_info"] = product_info
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.TOOL_USE,
+            "Retrieved product information",
+            observation=f"Info length: {len(product_info)} chars"
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
         
         return state
     
     def _get_pricing_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 3: Obtener información de precios (opcional).
+        Nodo 3: Obtener información de precios.
         """
         state["current_node"] = "get_pricing"
         
+        inquiry_type = state["context"].get("inquiry_type", "general")
+        product_info = state["context"].get("product_info", "")
         products = state["context"].get("products", [])
+        
+        # Solo buscar precios si es consulta de pricing
+        pricing_info = ""
+        
+        if inquiry_type == "pricing":
+            pricing_info = self._extract_pricing_from_context(
+                product_info,
+                products
+            )
+        
+        # Guardar en contexto
+        state["context"]["pricing_info"] = pricing_info
         
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
-            NodeType.REASONING,
-            "Gathering pricing information",
-            thought=f"User needs pricing for: {products}"
+            NodeType.DECISION,
+            "Checked pricing information",
+            observation=f"Pricing needed: {inquiry_type == 'pricing'}"
         )
         
         state["reasoning_steps"].append(reasoning_step)
-        
-        # Buscar info de precios en contexto RAG
-        pricing_info = self._extract_pricing_from_context(
-            state.get("vectorstore_context", ""),
-            products
-        )
-        
-        state["context"]["pricing_info"] = pricing_info
-        
-        logger.debug(
-            f"[{self.company_config.company_id}] Pricing info gathered"
-        )
         
         return state
     
@@ -392,16 +377,16 @@ class SalesAgent(CognitiveAgentBase):
         
         inquiry_type = state["context"].get("inquiry_type", "general")
         products = state["context"].get("products", [])
-        product_info = state.get("vectorstore_context", "")
+        product_info = state["context"].get("product_info", "")
         pricing_info = state["context"].get("pricing_info", "")
         
-        # Construir respuesta
+        # Generar respuesta
         response = self._build_sales_response(
-            inquiry_type=inquiry_type,
-            products=products,
-            product_info=product_info,
-            pricing_info=pricing_info,
-            state=state
+            inquiry_type,
+            products,
+            product_info,
+            pricing_info,
+            state
         )
         
         state["response"] = response
@@ -418,92 +403,30 @@ class SalesAgent(CognitiveAgentBase):
         
         state["reasoning_steps"].append(reasoning_step)
         
-        logger.info(
+        logger.debug(
             f"[{self.company_config.company_id}] Sales response generated"
         )
         
         return state
     
     # ========================================================================
-    # DECISIONES CONDICIONALES
-    # ========================================================================
-    
-    def _needs_pricing(self, state: AgentState) -> str:
-        """
-        Determinar si necesita información de precios.
-        
-        Returns:
-            "yes" o "no"
-        """
-        question = state["question"].lower()
-        inquiry_type = state["context"].get("inquiry_type", "general")
-        
-        # Keywords de pricing
-        pricing_keywords = [
-            "precio", "costo", "cuanto", "valor", "inversión",
-            "pagar", "cobran", "tarifa", "cotiz"
-        ]
-        
-        # Si el tipo es pricing o tiene keywords
-        if inquiry_type == "pricing":
-            return "yes"
-        
-        if any(kw in question for kw in pricing_keywords):
-            return "yes"
-        
-        return "no"
-    
-    # ========================================================================
     # HELPERS DE ANÁLISIS
     # ========================================================================
     
-    def _extract_products_from_text(
-        self,
-        text: str,
-        chat_history: List
-    ) -> List[str]:
-        """
-        Extraer productos/servicios mencionados.
-        """
+    def _detect_products_in_query(self, question: str) -> List[str]:
+        """Detectar productos mencionados en la query"""
+        # Implementación simple - puede mejorarse con NER
+        services_config = self.company_config.services
+        
         products = []
+        question_lower = question.lower()
         
-        # Palabras clave de productos/servicios
-        product_keywords = [
-            # Estética
-            "botox", "fillers", "rellenos", "bótox", "ácido hialurónico",
-            "toxina botulínica", "lifting", "plasma", "prp",
-            "peeling", "microdermoabrasión", "láser",
-            
-            # Dental
-            "limpieza", "blanqueamiento", "ortodoncia", "brackets",
-            "implante", "corona", "endodoncia", "extracción",
-            "carilla", "resina",
-            
-            # Médico general
-            "consulta", "valoración", "evaluación", "revisión",
-            "tratamiento", "procedimiento", "terapia",
-            
-            # Servicios generales
-            "servicio", "paquete", "plan", "programa"
-        ]
+        if isinstance(services_config, dict):
+            for service_name in services_config.keys():
+                if service_name.lower() in question_lower:
+                    products.append(service_name)
         
-        # Buscar en el texto
-        for keyword in product_keywords:
-            if keyword in text:
-                products.append(keyword)
-        
-        # Si no encontró productos específicos, usar servicios de la empresa
-        if not products and hasattr(self.company_config, 'services'):
-            services = self.company_config.services
-            if isinstance(services, str):
-                products.append(services)
-            elif isinstance(services, list):
-                products.extend(services)
-        
-        # Remover duplicados
-        products = list(set(products))
-        
-        return products[:3]  # Max 3 productos
+        return products if products else ["servicios generales"]
     
     def _classify_sales_inquiry(self, question: str) -> str:
         """
@@ -624,40 +547,11 @@ class SalesAgent(CognitiveAgentBase):
         state: AgentState
     ) -> str:
         """
-        Construir respuesta de ventas.
+        Construir respuesta de ventas usando _run_graph_prompt.
         """
         try:
-            # Usar LLM para respuesta natural
-            response_prompt = self._create_sales_prompt()
-            
-            prompt_inputs = {
-                "inquiry_type": inquiry_type,
-                "products": ", ".join(products) if products else "servicios generales",
-                "product_info": product_info,
-                "pricing_info": pricing_info,
-                "question": state["question"],
-                "company_name": self.company_config.company_name,
-                "services": self.company_config.services
-            }
-            
-            response = (response_prompt | self.chat_model).invoke(prompt_inputs)
-            
-            if hasattr(response, 'content'):
-                return response.content
-            else:
-                return str(response)
-            
-        except Exception as e:
-            logger.error(f"Error generating sales response with LLM: {e}")
-            
-            # Fallback programático
-            return self._build_programmatic_sales_response(
-                inquiry_type, products, product_info, pricing_info
-            )
-    
-    def _create_sales_prompt(self) -> ChatPromptTemplate:
-        """Crear prompt para respuestas de ventas"""
-        template = """Eres un asesor de ventas profesional de {company_name}.
+            # Preparar template
+            template = """Eres un asesor de ventas profesional de {company_name}.
 
 TIPO DE CONSULTA: {inquiry_type}
 PRODUCTOS/SERVICIOS: {products}
@@ -681,8 +575,35 @@ INSTRUCCIONES:
 6. Máximo 5-6 oraciones, conciso pero informativo
 
 RESPUESTA DE VENTAS:"""
-        
-        return ChatPromptTemplate.from_template(template)
+            
+            # Preparar variables
+            extra_vars = {
+                "inquiry_type": inquiry_type,
+                "products": ", ".join(products) if products else "servicios generales",
+                "product_info": product_info,
+                "pricing_info": pricing_info,
+                "question": state["question"],
+                "company_name": self.company_config.company_name,
+                "services": self.company_config.services
+            }
+            
+            # Usar _run_graph_prompt de base cognitiva
+            response_content = self._run_graph_prompt(
+                agent_key="sales",
+                template=template,
+                extra_vars=extra_vars,
+                state=state
+            )
+            
+            return response_content
+            
+        except Exception as e:
+            logger.error(f"Error generating sales response with LLM: {e}")
+            
+            # Fallback programático
+            return self._build_programmatic_sales_response(
+                inquiry_type, products, product_info, pricing_info
+            )
     
     def _build_programmatic_sales_response(
         self,
