@@ -326,7 +326,7 @@ class SalesAgent(CognitiveAgentBase):
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
-            NodeType.TOOL_USE,
+            NodeType.TOOL_EXECUTION,
             "Retrieved product information",
             observation=f"Info length: {len(product_info)} chars"
         )
