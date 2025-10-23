@@ -11,7 +11,6 @@ from app.services.vectorstore_service import VectorstoreService
 from app.services.agent_state_manager import AgentStateManager
 from app.services.prompt_service import get_prompt_service
 from app.models.conversation import ConversationManager
-import inspect
 import logging
 import json
 import time
@@ -257,56 +256,7 @@ class MultiAgentOrchestrator:
         logger.info(f"✅ [{self.company_id}] ToolExecutor configured")
         logger.info(f"   → Total tools: {len(available_tools)}")
         logger.info(f"   → Ready tools: {len(tools_ready)}")
-
-
-    def _make_concrete_subclass(self, agent_cls):
-        """
-        Si agent_cls es abstracto, devuelve una nueva subclase que implementa
-        `_create_default_prompt_template`. Si no es abstracto, devuelve agent_cls tal cual.
-        """
-        if not inspect.isabstract(agent_cls):
-            return agent_cls
     
-        logger.warning(f"[{self.company_id}] Agent class {agent_cls.__name__} is abstract — creating concrete shim")
-    
-        # Método que la subclase concretará
-        def _create_default_prompt_template(self):
-            # Intentar leer prompt estructurado desde prompt_service si está disponible
-            try:
-                company_id = getattr(self, 'company_config', {}).get('company_id') if hasattr(self, 'company_config') else getattr(self, 'company_id', None)
-                agent_key = getattr(self, 'agent_key', None) or agent_cls.__name__.lower()
-                if hasattr(self, 'prompt_service') and self.prompt_service:
-                    payload = self.prompt_service.get_prompt_payload(company_id, agent_key)
-                    if isinstance(payload, dict):
-                        return payload
-            except Exception as e:
-                logger.debug("Shim: error reading prompt payload: %s", e)
-    
-            # Fallback seguro: minimal structured_template
-            return {
-                "system": f"Agente {agent_cls.__name__} (shim) para company {getattr(self, 'company_id', '')}",
-                "examples": [],
-                "placeholders": {},
-                "meta": {"agent_key": agent_cls.__name__.lower(), "version": "shim-1"}
-            }
-    
-        NewName = f"{agent_cls.__name__}ConcreteShim"
-        NewCls = type(NewName, (agent_cls,), {"_create_default_prompt_template": _create_default_prompt_template})
-        return NewCls
-    
-    
-    def _safe_instantiate_agent(self, agent_cls, *args, **kwargs):
-        """
-        Instancia agent_cls; si falla por ser abstracto, genera un shim concreto y lo instancia.
-        """
-        try:
-            return agent_cls(*args, **kwargs)
-        except TypeError as te:
-            # Probable abstractmethod missing -> intentar shim dinámico
-            logger.warning(f"[{self.company_id}] TypeError instantiating {agent_cls}: {te}; attempting dynamic shim")
-            Concrete = self._make_concrete_subclass(agent_cls)
-            return Concrete(*args, **kwargs)
-        
     def _initialize_agents(self):
         """
         Inicializar todos los agentes con INYECCIÓN UNIFORME de servicios.
@@ -319,27 +269,27 @@ class MultiAgentOrchestrator:
         """
         try:
             # Router Agent
-            self.agents['router'] = self._safe_instantiate_agent(RouterAgent, self.company_config, self.openai_service)
+            self.agents['router'] = RouterAgent(self.company_config, self.openai_service)
             self._inject_cognitive_services(self.agents['router'], 'router')
             
             # Emergency Agent
-            self.agents['emergency'] = self._safe_instantiate_agent(EmergencyAgent, self.company_config, self.openai_service)
+            self.agents['emergency'] = EmergencyAgent(self.company_config, self.openai_service)
             self._inject_cognitive_services(self.agents['emergency'], 'emergency')
             
             # Sales Agent
-            self.agents['sales'] = self._safe_instantiate_agent(SalesAgent, self.company_config, self.openai_service)
+            self.agents['sales'] = SalesAgent(self.company_config, self.openai_service)
             self._inject_cognitive_services(self.agents['sales'], 'sales')
             
             # Support Agent
-            self.agents['support'] = self._safe_instantiate_agent(SupportAgent, self.company_config, self.openai_service)
+            self.agents['support'] = SupportAgent(self.company_config, self.openai_service)
             self._inject_cognitive_services(self.agents['support'], 'support')
             
             # Schedule Agent
-            self.agents['schedule'] = self._safe_instantiate_agent(ScheduleAgent, self.company_config, self.openai_service)
+            self.agents['schedule'] = ScheduleAgent(self.company_config, self.openai_service)
             self._inject_cognitive_services(self.agents['schedule'], 'schedule')
             
             # Availability Agent
-            self.agents['availability'] = self._safe_instantiate_agent(AvailabilityAgent, self.company_config, self.openai_service)
+            self.agents['availability'] = AvailabilityAgent(self.company_config, self.openai_service)
             self._inject_cognitive_services(self.agents['availability'], 'availability')
             
             # Conectar availability agent con schedule agent
@@ -350,7 +300,6 @@ class MultiAgentOrchestrator:
         except Exception as e:
             logger.error(f"[{self.company_id}] Error initializing agents: {e}")
             raise
-
     
     def _inject_cognitive_services(self, agent, agent_name: str):
         """
