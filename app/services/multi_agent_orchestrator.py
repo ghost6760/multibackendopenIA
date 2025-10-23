@@ -460,9 +460,91 @@ class MultiAgentOrchestrator:
         """
         Método principal con TELEMETRÍA DETALLADA.
         """
+        # Helper local: normalizar cualquier tipo de content a str
+        def _normalize_message_content(original_content) -> str:
+            try:
+                if original_content is None:
+                    return ""
+                if isinstance(original_content, str):
+                    return original_content
+    
+                # dict común (ej: salida de _run_graph_prompt)
+                if isinstance(original_content, dict):
+                    # Intentar campos usuales en orden de preferencia
+                    for key in ("text", "response", "result", "output"):
+                        val = original_content.get(key)
+                        if isinstance(val, str) and val.strip():
+                            return val
+                        if isinstance(val, dict):
+                            inner = val.get("text") or val.get("response")
+                            if isinstance(inner, str) and inner.strip():
+                                return inner
+    
+                    # 'raw' suele contener inputs/resultados del grafo
+                    raw = original_content.get("raw")
+                    if isinstance(raw, dict):
+                        # usar raw.inputs.question como último recurso útil
+                        inputs = raw.get("inputs", {})
+                        if isinstance(inputs, dict):
+                            q = inputs.get("question")
+                            if isinstance(q, str) and q.strip():
+                                return q
+    
+                    # metadata heurística
+                    meta = original_content.get("metadata")
+                    if isinstance(meta, dict):
+                        for k in ("generated_text", "text"):
+                            possible = meta.get(k)
+                            if isinstance(possible, str) and possible.strip():
+                                return possible
+    
+                    # si 'text' existe pero vacío, devolver su string coercionado
+                    if "text" in original_content and original_content["text"] is not None:
+                        try:
+                            return str(original_content["text"])
+                        except Exception:
+                            pass
+    
+                    # fallback JSON legible
+                    try:
+                        import json as _json
+                        return _json.dumps(original_content, ensure_ascii=False)
+                    except Exception:
+                        return str(original_content)
+    
+                # objeto con atributos (SDK objects)
+                if hasattr(original_content, "text") and isinstance(getattr(original_content, "text"), str):
+                    return getattr(original_content, "text")
+                if hasattr(original_content, "response") and isinstance(getattr(original_content, "response"), str):
+                    return getattr(original_content, "response")
+    
+                if hasattr(original_content, "data"):
+                    try:
+                        data_field = getattr(original_content, "data")
+                        if isinstance(data_field, (list, tuple)) and data_field:
+                            first = data_field[0]
+                            if isinstance(first, dict):
+                                for k in ("text", "response", "content", "page_content"):
+                                    if k in first and isinstance(first[k], str) and first[k].strip():
+                                        return first[k]
+                        elif isinstance(data_field, dict):
+                            for k in ("text", "response", "content"):
+                                if k in data_field and isinstance(data_field[k], str) and data_field[k].strip():
+                                    return data_field[k]
+                    except Exception:
+                        pass
+    
+                # último recurso: coerción a string
+                return str(original_content)
+            except Exception:
+                try:
+                    return str(original_content)
+                except Exception:
+                    return ""
+    
         # Generar execution_id
         execution_id = f"exec_{self.company_id}_{user_id}_{int(time.time() * 1000)}"
-        
+    
         # Iniciar métricas
         metrics = ExecutionMetrics(
             agent_name="orchestrator",
@@ -472,28 +554,28 @@ class MultiAgentOrchestrator:
             company_id=self.company_id,
             started_at=datetime.utcnow().isoformat()
         )
-        
+    
         try:
             # Procesar contexto multimedia
             processed_question = self._process_multimedia_context(question, media_type, media_context)
-            
+    
             if not processed_question or not processed_question.strip():
                 response = f"Por favor, envía un mensaje específico para poder ayudarte en {self.company_config.company_name}. 😊"
                 metrics.success = True
                 metrics.completed_at = datetime.utcnow().isoformat()
                 self._finalize_metrics(metrics)
                 return response, "support"
-            
+    
             if not user_id or not user_id.strip():
                 response = "Error interno: ID de usuario inválido."
                 metrics.success = False
                 metrics.errors.append("Invalid user_id")
                 self._finalize_metrics(metrics)
                 return response, "error"
-            
+    
             # Obtener historial de conversación
             chat_history = conversation_manager.get_chat_history(user_id, format_type="messages")
-            
+    
             # Preparar inputs
             inputs = {
                 "question": processed_question.strip(),
@@ -501,35 +583,50 @@ class MultiAgentOrchestrator:
                 "user_id": user_id,
                 "company_id": self.company_id
             }
-            
+    
             # ✅ Log de inicio con telemetría
             self._log_query_start(inputs, metrics)
-            
+    
             # Orquestar respuesta
             response, agent_used = self._orchestrate_response(inputs, metrics)
-            
-            # Guardar en conversación
+    
+            # Guardar en conversación (normalizando contenido antes)
+            # 1) user (ya es texto)
             conversation_manager.add_message(user_id, "user", processed_question)
-            conversation_manager.add_message(user_id, "assistant", response)
-            
+    
+            # 2) assistant (puede ser dict/obj/str) -> normalizar y añadir trazas
+            # Log debug del tipo y keys si es dict para trazabilidad
+            try:
+                original_type = type(response)
+                if isinstance(response, dict):
+                    keys = list(response.keys())
+                else:
+                    keys = None
+                logger.debug(f"[{self.company_id}] add_message will normalize assistant response of type {original_type}; keys={keys}")
+            except Exception:
+                logger.debug(f"[{self.company_id}] add_message will normalize assistant response; could not introspect keys")
+    
+            assistant_text = _normalize_message_content(response)
+            conversation_manager.add_message(user_id, "assistant", assistant_text)
+    
             # ✅ Finalizar métricas
             metrics.success = True
             metrics.completed_at = datetime.utcnow().isoformat()
             self._finalize_metrics(metrics)
-            
+    
             # ✅ Log de finalización
-            self._log_query_completion(agent_used, response, metrics)
-            
-            return response, agent_used
-            
+            self._log_query_completion(agent_used, assistant_text, metrics)
+    
+            return assistant_text, agent_used
+    
         except Exception as e:
             logger.exception(f"[{self.company_id}] Error in multi-agent system for user {user_id}")
-            
+    
             metrics.success = False
             metrics.errors.append(str(e))
             metrics.completed_at = datetime.utcnow().isoformat()
             self._finalize_metrics(metrics)
-            
+    
             error_response = f"Disculpa, tuve un problema técnico en {self.company_config.company_name}. Por favor intenta de nuevo. 🔧"
             return error_response, "error"
     
