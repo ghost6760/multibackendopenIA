@@ -35,47 +35,57 @@ def build_router_graph(company_config):
 
         # --- 2️⃣ Si hay duda, usa modelo LLM ---
         if confidence < 0.8:
-            system_prompt = (
-                f"Eres un clasificador de intenciones para {company_config.company_name}.\n"
-                "Categorías válidas: EMERGENCY, SALES, SCHEDULE, SUPPORT.\n"
-                "Devuelve JSON: { \"intent\": ..., \"confidence\": ..., \"reasoning\": ... }"
-            )
+            # Construir prompt que devuelva JSON con keys intent/confidence/reasoning
+            system_prompt = f"""
+            Eres un clasificador de intenciones para {company_config.company_name}.
+            Categorías válidas: EMERGENCY, SALES, SCHEDULE, SUPPORT.
+            Devuelve JSON EXACTO en una sola línea: {{ "intent": "...", "confidence": 0.0, "reasoning": "..." }}
+            """
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question}
             ]
             try:
-                response = openai_service.chat_completion(messages)
-
-                # Normalizar response: aceptar dict/obj con .data o str JSON
-                if isinstance(response, dict):
-                    data = response
-                elif hasattr(response, "data"):  # possible SDK object
-                    try:
-                        # response.data could be list-like
-                        data = response.data if isinstance(response.data, dict) else {}
-                    except Exception:
-                        data = {}
-                elif isinstance(response, str):
-                    try:
-                        data = json.loads(response)
-                    except Exception:
-                        # intentar extraer JSON embebido
-                        m = re.search(r"\{.*\}", response, flags=re.S)
-                        data = json.loads(m.group(0)) if m else {}
+                # Usar wrapper seguro del servicio OpenAI
+                # Puede devolver texto con JSON - intentamos parsearlo
+                response_text = openai_service.invoke_with_messages(messages, model=None)
+                
+                # Si viene como objeto ya parseado (raro) lo normalizamos
+                if isinstance(response_text, dict):
+                    data = response_text
                 else:
-                    # fallback defensivo
+                    # Intentar parsear JSON; si falla, buscar primera línea JSON en el texto
                     try:
-                        data = dict(response)
+                        data = json.loads(response_text)
                     except Exception:
-                        data = {}
-
-                intent_raw = data.get("intent") if isinstance(data, dict) else None
-                if isinstance(intent_raw, str):
-                    classification = intent_raw.lower()
-                confidence = data.get("confidence", confidence) or confidence
-                state_data["reasoning"] = data.get("reasoning", "")
-
+                        # Buscar JSON embebido (defensivo)
+                        import re
+                        m = re.search(r'(\{.*\})', str(response_text), re.DOTALL)
+                        if m:
+                            try:
+                                data = json.loads(m.group(1))
+                            except Exception:
+                                data = {}
+                        else:
+                            data = {}
+                
+                # Si parseamos bien, aplicar resultado
+                if data and isinstance(data, dict):
+                    classification = data.get("intent", classification).lower()
+                    confidence = float(data.get("confidence", confidence))
+                    # Guardar razonamiento si viene
+                    reasoning_text = data.get("reasoning") or data.get("explanation") or ""
+                    # LangGraph state in router_node uses state.data or state['data'] depending on impl.
+                    try:
+                        # Some state shapes expose .data
+                        if hasattr(state, "data"):
+                            state.data["reasoning"] = reasoning_text
+                        elif isinstance(state, dict):
+                            state.setdefault("data", {})["reasoning"] = reasoning_text
+                    except Exception:
+                        logger.debug("[RouterNode] could not set state.data.reasoning")
+                else:
+                    logger.warning("[RouterNode] LLM returned no JSON, falling back to keywords")
             except Exception as e:
                 logger.warning(f"[RouterNode] fallback to keyword routing: {e}")
 
