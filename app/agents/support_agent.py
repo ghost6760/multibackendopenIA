@@ -493,59 +493,48 @@ class SupportAgent(CognitiveAgentBase):
         state: AgentState
     ) -> str:
         """
-        Construir respuesta de soporte usando _run_graph_prompt.
+        Construir respuesta de soporte usando _run_graph_prompt con prompt_node.
         """
         try:
-            # Preparar template
-            template = """Eres un agente de soporte profesional de {company_name}.
-
-CATEGORÍA DE CONSULTA: {category}
-URGENCIA: {urgency}
-
-INFORMACIÓN DE DOCUMENTACIÓN:
-{solutions}
-
-PREGUNTA DEL USUARIO: {question}
-
-SERVICIOS: {services}
-
-INSTRUCCIONES:
-1. Responde de manera clara y útil
-2. Si hay soluciones en la documentación, úsalas
-3. Si no hay info completa, ofrece alternativas o contacto directo
-4. Mantén un tono profesional y empático
-5. Si es urgente, prioriza contacto directo
-6. Máximo 5 oraciones, conciso y accionable
-
-RESPUESTA DE SOPORTE:"""
-            
-            # Preparar variables
-            extra_vars = {
+            company_id = getattr(self.company_config, "company_id", None)
+            agent_key = "support_agent"
+    
+            # Construir prompt_node desde DB (PostgreSQL)
+            try:
+                prompt_node = self._build_prompt_node(company_id, agent_key, state)
+                logger.debug(f"[{company_id}] Prompt node loaded for {agent_key}")
+            except Exception as e:
+                logger.warning(f"[{company_id}] Failed to build prompt_node for {agent_key}: {e}")
+                prompt_node = None
+    
+            # Enriquecer estado con contexto adicional
+            state["context"].update({
                 "category": category,
                 "urgency": urgency,
                 "solutions": solutions,
-                "question": state["question"],
                 "company_name": self.company_config.company_name,
                 "services": self.company_config.services
-            }
-            
-            # Usar _run_graph_prompt de base cognitiva
-            response_content = self._run_graph_prompt(
-                agent_key="support",
-                template=template,
-                extra_vars=extra_vars,
-                state=state
+            })
+    
+            # Ejecutar grafo cognitivo con prompt_node
+            result = self._run_graph_prompt(
+                state,
+                prompt_node=prompt_node,
+                agent_key=agent_key
             )
-            
-            return response_content
-            
+    
+            response_text = (result or {}).get("text", "").strip()
+            if not response_text:
+                logger.warning(f"[{company_id}] Empty response_text, using fallback programmatic response")
+                response_text = self._build_programmatic_support_response(category, urgency, solutions)
+    
+            return response_text
+    
         except Exception as e:
-            logger.error(f"Error generating support response with LLM: {e}")
-            
+            logger.error(f"Error generating support response with LLM: {e}", exc_info=True)
             # Fallback programático
-            return self._build_programmatic_support_response(
-                category, urgency, solutions
-            )
+            return self._build_programmatic_support_response(category, urgency, solutions)
+
     
     def _build_programmatic_support_response(
         self,
