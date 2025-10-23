@@ -1,14 +1,16 @@
 """
-Base cognitiva para agentes LangGraph (Sin compatibilidad legacy).
+Base cognitiva compartida para agentes LangGraph.
 
-PRINCIPIOS:
-- NO normalizar ni transformar datos
-- Pasar state crudo a LangGraph
-- Devolver exactamente lo que graph.run() retorne
-- Fail-fast (no fallbacks silenciosos)
+Este módulo define la infraestructura común que todos los agentes cognitivos
+deben implementar, incluyendo tipos de estado, interfaces de nodos y contratos
+de ejecución.
+
+IMPORTANTE: Los agentes cognitivos mantienen los mismos nombres de clase y firmas
+públicas que sus versiones anteriores, pero internamente usan LangGraph para
+razonamiento, decisión y ejecución de tools.
 """
 
-from typing import TypedDict, Annotated, Any, Dict, List, Optional
+from typing import TypedDict, Annotated, Sequence, Any, Dict, List, Optional, Callable
 from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -49,6 +51,26 @@ class ExecutionStatus(str, Enum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    DEGRADED = "degraded"  # Éxito parcial con safe-fail
+
+
+class AgentCapability(Enum):
+    """Capacidades que puede tener un agente cognitivo"""
+    REASONING = "reasoning"  # Razonamiento multi-paso
+    TOOL_USE = "tool_use"  # Uso dinámico de herramientas
+    MEMORY = "memory"  # Memoria de corto/largo plazo
+    PLANNING = "planning"  # Planificación de acciones
+    REFLECTION = "reflection"  # Auto-evaluación
+    MULTIMODAL = "multimodal"  # Procesamiento de múltiples modalidades
+
+
+class DecisionType(Enum):
+    """Tipos de decisiones que toma un agente"""
+    TOOL_SELECTION = "tool_selection"
+    NEXT_ACTION = "next_action"
+    RESPONSE_GENERATION = "response_generation"
+    ESCALATION = "escalation"
+    TERMINATION = "termination"
 
 
 # ============================================================================
@@ -76,7 +98,7 @@ class ToolResult(TypedDict):
 class ReasoningStep(TypedDict):
     """Un paso de razonamiento del agente."""
     step_id: str
-    node_type: str
+    node_type: str  # NodeType
     description: str
     thought: str
     action: Optional[str]
@@ -88,36 +110,73 @@ class ReasoningStep(TypedDict):
 
 class AgentState(TypedDict):
     """
-    Estado base para agentes LangGraph.
+    Estado base que todos los agentes cognitivos deben mantener.
     
-    NO incluye lógica de normalización - solo estructura de datos.
-    Los nodos del grafo son responsables de interpretar los datos.
+    Este estado se pasa entre nodos del grafo LangGraph y permite:
+    - Razonamiento multi-paso
+    - Debugging y observabilidad
+    - Reentrancia y recuperación de errores
+    - Telemetría detallada
     """
-    # Core inputs (pasados directamente desde invocación)
-    prompt_payload: Dict[str, Any]  # JSONB desde PromptService
-    input_state: Dict[str, Any]     # Datos de entrada sin procesar
+    # Inputs originales (obligatorios)
+    question: str
+    chat_history: List[Dict[str, str]]
+    user_id: str
+    company_id: Optional[str]
     
-    # Execution metadata
-    agent_type: str
+    # Estado de ejecución
+    agent_type: str  # AgentType
     execution_id: str
-    company_id: int
-    agent_key: str
+    status: str  # ExecutionStatus
+    current_node: str
     
-    # Tracking
+    # Razonamiento y decisiones
     reasoning_steps: Annotated[List[ReasoningStep], operator.add]
     tools_called: Annotated[List[ToolCall], operator.add]
     tool_results: Annotated[List[ToolResult], operator.add]
     
-    # Context (información runtime adicional)
-    context: Dict[str, Any]
+    # Contexto y memoria
+    context: Dict[str, Any]  # Información adicional recuperada
+    intermediate_results: Dict[str, Any]  # Resultados parciales
     
-    # Control flow
+    # Herramientas disponibles
+    tools_available: List[str]
+    
+    # Decisiones tomadas
+    decisions: List[Dict[str, Any]]
+    confidence_scores: Dict[str, float]
+    
+    # Contexto específico por tipo de agente
+    vectorstore_context: Optional[str]
+    calendar_context: Optional[Dict]
+    
+    # Output final
+    response: Optional[str]
+    
+    # Metadata y telemetría
+    metadata: Dict[str, Any]
+    errors: Annotated[List[str], operator.add]
+    warnings: Annotated[List[str], operator.add]
+    
+    # Control de flujo
     should_continue: bool
     current_step: int
+    retry_count: int
     
     # Timestamps
     started_at: str
     completed_at: Optional[str]
+
+
+class ToolExecutionRecord(TypedDict):
+    """Registro de ejecución de una herramienta (legacy compatible)"""
+    tool_name: str
+    inputs: Dict[str, Any]
+    output: Any
+    success: bool
+    error: Optional[str]
+    latency_ms: float
+    timestamp: str
 
 
 # ============================================================================
@@ -125,16 +184,32 @@ class AgentState(TypedDict):
 # ============================================================================
 
 @dataclass
+class AgentCapabilityDef:
+    """Define una capacidad de un agente."""
+    name: str
+    description: str
+    tools_required: List[str]
+    priority: int = 0
+    enabled: bool = True
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AgentManifest:
     """
     Manifest de capacidades y configuración de un agente.
+    
+    Define qué puede hacer el agente, qué tools necesita,
+    prioridades y metadata operativa.
     """
-    agent_type: str
+    agent_type: str  # AgentType
     display_name: str
     description: str
+    capabilities: List[AgentCapabilityDef]
     required_tools: List[str]
     optional_tools: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
+    priority: int = 0
     max_retries: int = 3
     timeout_seconds: int = 30
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -143,34 +218,36 @@ class AgentManifest:
 @dataclass
 class CognitiveConfig:
     """Configuración para el motor cognitivo de un agente."""
+    enable_reasoning_traces: bool = True
+    enable_tool_validation: bool = True
+    enable_guardrails: bool = True
     max_reasoning_steps: int = 10
-    enable_tracing: bool = True
-    fail_fast: bool = True  # Fail-fast en errores críticos
+    reasoning_temperature: float = 0.7
+    require_confirmation_for_critical_actions: bool = True
+    safe_fail_on_tool_error: bool = True
+    persist_state: bool = True
 
 
 # ============================================================================
-# BASE CLASS (Minimalista)
+# INTERFACES BASE
 # ============================================================================
 
 class CognitiveAgentBase(ABC):
     """
-    Clase base minimalista para agentes LangGraph.
+    Clase base abstracta para agentes cognitivos.
     
-    Responsabilidades:
-    1. Construir state inicial desde prompt_payload + input_state
-    2. Invocar graph.run(state)
-    3. Devolver output crudo del grafo
-    
-    NO normaliza, NO transforma, NO hace fallbacks automáticos.
+    IMPORTANTE: Las subclases DEBEN:
+    1. Mantener el mismo nombre de clase que sus versiones anteriores
+    2. Implementar invoke(inputs: dict) -> str
+    3. Mantener métodos de inyección: set_vectorstore_service(), etc.
+    4. Usar LangGraph internamente para el grafo de decisión
     """
     
     def __init__(
         self,
         agent_type: AgentType,
         manifest: AgentManifest,
-        config: CognitiveConfig,
-        prompt_service,
-        graph=None
+        config: CognitiveConfig
     ):
         """
         Inicializa el agente cognitivo.
@@ -179,204 +256,477 @@ class CognitiveAgentBase(ABC):
             agent_type: Tipo de agente
             manifest: Manifest de capacidades
             config: Configuración cognitiva
-            prompt_service: Servicio de prompts (requerido)
-            graph: Implementación de LangGraph (StateGraph runner)
         """
         self.agent_type = agent_type
         self.manifest = manifest
         self.config = config
-        self._prompt_service = prompt_service
-        self._graph = graph
         
-        if not self._prompt_service:
-            raise ValueError("prompt_service is required")
+        # Servicios inyectados (inicialmente None)
+        self._tool_executor = None
+        self._vectorstore_service = None
+        self._prompt_service = None
+        self._state_manager = None
+        self._condition_evaluator = None
         
         logger.info(
-            f"[{agent_type.value}] CognitiveAgent initialized "
-            f"(LangGraph mode - no legacy support)"
+            f"[{agent_type.value}] Cognitive agent initialized with "
+            f"{len(manifest.capabilities)} capabilities"
         )
     
-    def set_graph(self, graph):
+    # ========================================================================
+    # DEPENDENCY INJECTION (Compatible con arquitectura existente)
+    # ========================================================================
+    
+    def set_prompt_service(self, service):
+        """Inyectar servicio de prompts."""
+        self._prompt_service = service
+        logger.debug(f"[{self.agent_type.value}] Prompt service injected")
+    
+    def set_vectorstore_service(self, service):
+        """Inyectar servicio de vectorstore."""
+        self._vectorstore_service = service
+        logger.debug(f"[{self.agent_type.value}] Vectorstore service injected")
+    
+    def set_tool_executor(self, executor):
+        """Inyectar ejecutor de tools."""
+        self._tool_executor = executor
+        logger.debug(f"[{self.agent_type.value}] Tool executor injected")
+    
+    def set_state_manager(self, manager):
+        """Inyectar gestor de estado."""
+        self._state_manager = manager
+        logger.debug(f"[{self.agent_type.value}] State manager injected")
+    
+    def set_condition_evaluator(self, evaluator):
+        """Inyectar evaluador de condiciones."""
+        self._condition_evaluator = evaluator
+        logger.debug(f"[{self.agent_type.value}] Condition evaluator injected")
+    
+    # ========================================================================
+    # PROMPT NODE CONSTRUCTION (NUEVO - Reemplaza ChatPromptTemplate)
+    # ========================================================================
+    
+    def _normalize_chat_history(
+        self, 
+        chat_history: List[Any]
+    ) -> List[Dict[str, str]]:
         """
-        Inyectar implementación del grafo LangGraph.
+        Normalizar chat_history a formato estándar List[{"role", "content"}].
         
         Args:
-            graph: Objeto con método .run(state) -> Any
+            chat_history: Historial en cualquier formato
+        
+        Returns:
+            Lista normalizada de mensajes con role y content
         """
-        self._graph = graph
-        logger.debug(f"[{self.agent_type.value}] Graph injected")
+        normalized = []
+        
+        if not chat_history:
+            return []
+        
+        for msg in chat_history:
+            if isinstance(msg, dict):
+                # Ya está en formato dict
+                if "role" in msg and "content" in msg:
+                    normalized.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+                elif "type" in msg and "content" in msg:
+                    # Formato alternativo con type
+                    role = "user" if msg["type"] == "human" else "assistant"
+                    normalized.append({
+                        "role": role,
+                        "content": msg["content"]
+                    })
+            elif hasattr(msg, "type") and hasattr(msg, "content"):
+                # Objetos tipo LangChain Message
+                role = "user" if msg.type == "human" else "assistant"
+                normalized.append({
+                    "role": role,
+                    "content": msg.content
+                })
+            else:
+                logger.warning(
+                    f"[{self.agent_type.value}] Skipping unrecognized message format: {type(msg)}"
+                )
+        
+        return normalized
     
-    # ========================================================================
-    # CORE METHODS (Minimalista)
-    # ========================================================================
-    
-    def _build_langgraph_state(
+    def _build_prompt_node(
         self,
-        company_id: int,
+        company_id: str,
         agent_key: str,
-        input_state: Dict[str, Any]
+        state: AgentState
     ) -> Dict[str, Any]:
         """
-        Construir state para LangGraph.
+        Construir nodo de prompt nativo desde prompt_service.
         
-        Obtiene prompt_payload desde PromptService y lo combina con input_state.
-        NO transforma ni normaliza - pasa datos tal cual.
+        Este método reemplaza completamente la construcción de ChatPromptTemplate
+        y obtiene la estructura del prompt desde el servicio centralizado.
         
         Args:
             company_id: ID de la empresa
-            agent_key: Key del agente
-            input_state: Estado de entrada (chat_history, user_id, etc.)
+            agent_key: Key del agente (ej. 'sales_agent', 'router_agent')
+            state: Estado actual del agente
         
         Returns:
-            Dict con estructura:
-            {
-                'prompt_payload': {...},  # JSONB desde DB
-                'input_state': {...}      # Datos crudos de entrada
+            Dict con estructura de prompt: {
+                'system': str,
+                'examples': List[Dict],
+                'placeholders': Dict,
+                'meta': Dict
+            }
+        """
+        if not self._prompt_service:
+            logger.warning(
+                f"[{self.agent_type.value}] No prompt service available, using fallback"
+            )
+            return {
+                'system': f"Eres un asistente para {agent_key}.",
+                'examples': [],
+                'placeholders': {},
+                'meta': {'source': 'fallback'}
             }
         
-        Raises:
-            RuntimeError: Si no encuentra prompt_payload (fail-fast)
-        """
-        # Obtener prompt payload
-        payload = self._prompt_service.get_prompt_payload(company_id, agent_key)
-        
-        if payload is None:
-            error_msg = (
-                f"No prompt payload found for company_id={company_id}, "
-                f"agent_key={agent_key}. Cannot proceed."
+        try:
+            # Obtener payload estructurado desde prompt_service
+            prompt_payload = self._prompt_service.get_prompt_payload(
+                company_id, 
+                agent_key
             )
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-        
-        # Construir execution ID
-        import uuid
-        execution_id = f"{agent_key}_{uuid.uuid4().hex[:8]}"
-        
-        # Construir state para LangGraph
-        lg_state: AgentState = {
-            # Core data (sin transformaciones)
-            "prompt_payload": payload,
-            "input_state": input_state,
             
-            # Metadata
+            if not prompt_payload:
+                logger.warning(
+                    f"[{self.agent_type.value}] No prompt payload found for "
+                    f"{company_id}/{agent_key}, using fallback"
+                )
+                return {
+                    'system': f"Eres un asistente para {agent_key}.",
+                    'examples': [],
+                    'placeholders': {},
+                    'meta': {'source': 'fallback'}
+                }
+            
+            logger.debug(
+                f"[{self.agent_type.value}] Prompt payload loaded for {agent_key}: "
+                f"system={len(prompt_payload.get('system', ''))} chars, "
+                f"examples={len(prompt_payload.get('examples', []))}"
+            )
+            
+            return prompt_payload
+            
+        except Exception as e:
+            logger.error(
+                f"[{self.agent_type.value}] Error building prompt node: {e}",
+                exc_info=True
+            )
+            return {
+                'system': f"Eres un asistente para {agent_key}.",
+                'examples': [],
+                'placeholders': {},
+                'meta': {'source': 'error_fallback', 'error': str(e)}
+            }
+    
+    def _run_graph_prompt(
+        self,
+        state: AgentState,
+        prompt_node: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Ejecutar StateGraph con prompt estructurado.
+        
+        Este método reemplaza la ejecución directa del LLM con ChatPromptTemplate
+        y usa el grafo de decisión de LangGraph comenzando con el nodo de prompt.
+        
+        Args:
+            state: Estado actual del agente
+            prompt_node: Nodo de prompt construido con _build_prompt_node
+        
+        Returns:
+            Dict normalizado: {
+                'text': str,  # Respuesta generada
+                'raw': Any,   # Output crudo del grafo
+                'metadata': Dict  # Metadatos de ejecución
+            }
+        """
+        try:
+            # Normalizar chat_history
+            normalized_history = self._normalize_chat_history(
+                state.get("chat_history", [])
+            )
+            
+            # Construir inputs para el grafo
+            graph_inputs = {
+                "system_prompt": prompt_node.get("system", ""),
+                "examples": prompt_node.get("examples", []),
+                "placeholders": prompt_node.get("placeholders", {}),
+                "chat_history": normalized_history,
+                "question": state.get("question", ""),
+                "context": state.get("context", {}),
+                "metadata": {
+                    **state.get("metadata", {}),
+                    "prompt_source": prompt_node.get("meta", {}).get("source", "unknown")
+                }
+            }
+            
+            # NOTA: La implementación real del StateGraph.run() debe ser
+            # proporcionada por las subclases concretas de agentes.
+            # Este es un placeholder que muestra la estructura esperada.
+            
+            # Las subclases deberán implementar:
+            # result = self.graph.run(graph_inputs)
+            
+            # Por ahora, retornamos estructura normalizada
+            logger.info(
+                f"[{self.agent_type.value}] Graph prompt ready with "
+                f"{len(normalized_history)} history messages"
+            )
+            
+            return {
+                'text': "",  # Será llenado por la implementación real
+                'raw': graph_inputs,
+                'metadata': {
+                    'prompt_length': len(graph_inputs['system_prompt']),
+                    'examples_count': len(graph_inputs['examples']),
+                    'history_messages': len(normalized_history),
+                    'execution_timestamp': datetime.utcnow().isoformat()
+                }
+            }
+            
+        except Exception as e:
+            logger.error(
+                f"[{self.agent_type.value}] Error running graph prompt: {e}",
+                exc_info=True
+            )
+            return {
+                'text': "Error ejecutando el prompt.",
+                'raw': None,
+                'metadata': {
+                    'error': str(e),
+                    'error_timestamp': datetime.utcnow().isoformat()
+                }
+            }
+    
+    # ========================================================================
+    # ABSTRACT METHODS (Deben ser implementados por subclases)
+    # ========================================================================
+    
+    @abstractmethod
+    def _build_graph(self):
+        """
+        Construir el grafo LangGraph del agente.
+        
+        Las subclases deben implementar este método para definir:
+        - Nodos del grafo
+        - Edges y condiciones
+        - Flujo de ejecución
+        
+        Deben usar _build_prompt_node y _run_graph_prompt para manejar prompts.
+        """
+        pass
+    
+    @abstractmethod
+    def invoke(self, inputs: dict) -> str:
+        """
+        Método público de invocación del agente (compatible con legacy).
+        
+        Args:
+            inputs: Dict con:
+                - question: str
+                - chat_history: List
+                - user_id: str
+                - company_id: str (opcional)
+        
+        Returns:
+            str: Respuesta del agente
+        """
+        pass
+    
+    # ========================================================================
+    # STATE MANAGEMENT
+    # ========================================================================
+    
+    def _initialize_state(
+        self,
+        question: str,
+        chat_history: List,
+        user_id: str,
+        company_id: Optional[str] = None,
+        **kwargs
+    ) -> AgentState:
+        """
+        Inicializar estado del agente.
+        
+        Args:
+            question: Pregunta del usuario
+            chat_history: Historial de conversación
+            user_id: ID del usuario
+            company_id: ID de la empresa (opcional)
+            **kwargs: Campos adicionales
+        
+        Returns:
+            AgentState inicializado
+        """
+        import uuid
+        
+        execution_id = f"{self.agent_type.value}_{uuid.uuid4().hex[:8]}"
+        
+        state: AgentState = {
+            # Inputs
+            "question": question,
+            "chat_history": chat_history or [],
+            "user_id": user_id,
+            "company_id": company_id,
+            
+            # Execution
             "agent_type": self.agent_type.value,
             "execution_id": execution_id,
-            "company_id": company_id,
-            "agent_key": agent_key,
+            "status": ExecutionStatus.PENDING.value,
+            "current_node": "init",
             
-            # Tracking
+            # Reasoning
             "reasoning_steps": [],
             "tools_called": [],
             "tool_results": [],
             
             # Context
-            "context": {
-                "request_timestamp": datetime.utcnow().isoformat(),
-                "prompt_version": payload.get('meta', {}).get('version'),
-                "prompt_source": payload.get('meta', {}).get('source')
-            },
+            "context": kwargs.get("context", {}),
+            "intermediate_results": {},
+            
+            # Tools
+            "tools_available": self.manifest.required_tools,
+            
+            # Decisions
+            "decisions": [],
+            "confidence_scores": {},
+            
+            # Agent-specific context
+            "vectorstore_context": kwargs.get("vectorstore_context"),
+            "calendar_context": kwargs.get("calendar_context"),
+            
+            # Output
+            "response": None,
+            
+            # Metadata
+            "metadata": kwargs.get("metadata", {}),
+            "errors": [],
+            "warnings": [],
             
             # Control
             "should_continue": True,
             "current_step": 0,
+            "retry_count": 0,
             
             # Timestamps
             "started_at": datetime.utcnow().isoformat(),
             "completed_at": None
         }
         
-        logger.debug(
-            f"[{self.agent_type.value}] Built LangGraph state: "
-            f"execution_id={execution_id}, "
-            f"prompt_version={lg_state['context'].get('prompt_version')}"
+        return state
+    
+    def _should_continue_execution(self, state: AgentState) -> bool:
+        """
+        Determinar si el agente debe continuar ejecutándose.
+        
+        Args:
+            state: Estado actual
+        
+        Returns:
+            bool: True si debe continuar
+        """
+        # Verificar errores críticos
+        if state.get("status") == ExecutionStatus.FAILED.value:
+            return False
+        
+        # Verificar si ya hay respuesta
+        if state.get("response"):
+            return False
+        
+        # Verificar límite de pasos
+        max_steps = self.config.max_reasoning_steps
+        if state.get("current_step", 0) >= max_steps:
+            logger.warning(
+                f"[{self.agent_type.value}] Max steps reached ({max_steps})"
+            )
+            return False
+        
+        # Verificar flag explícito
+        return state.get("should_continue", True)
+    
+    def _build_response_from_state(self, state: AgentState) -> str:
+        """
+        Construye la respuesta final desde el estado.
+        
+        Args:
+            state: Estado final
+        
+        Returns:
+            str: Respuesta formateada
+        """
+        if state.get("response"):
+            return state["response"]
+        
+        # Safe-fail: generar respuesta de degradación
+        return self._generate_degraded_response(state)
+    
+    def _format_final_response(self, state: AgentState) -> str:
+        """
+        Formatear respuesta final del agente (método legacy compatible).
+        
+        Args:
+            state: Estado final
+        
+        Returns:
+            String con respuesta formateada
+        """
+        return self._build_response_from_state(state)
+    
+    def _generate_degraded_response(self, state: AgentState) -> str:
+        """
+        Genera una respuesta de degradación cuando algo falla.
+        
+        Args:
+            state: Estado actual
+        
+        Returns:
+            str: Respuesta de safe-fail
+        """
+        errors = state.get("errors", [])
+        if errors:
+            logger.error(f"[{self.agent_type.value}] Errors during execution: {errors}")
+        
+        return (
+            "Lo siento, no pude procesar completamente tu solicitud en este momento. "
+            "¿Podrías reformular tu pregunta o intentarlo de nuevo?"
         )
-        
-        return lg_state
     
-    def run_graph(
-        self,
-        company_id: int,
-        agent_key: str,
-        input_state: Dict[str, Any]
-    ) -> Any:
+    def _get_telemetry(self, state: AgentState) -> Dict[str, Any]:
         """
-        Ejecutar grafo LangGraph.
-        
-        Construye el state, invoca graph.run(state) y devuelve el resultado
-        EXACTO sin transformaciones ni envoltorios.
+        Obtener telemetría de la ejecución.
         
         Args:
-            company_id: ID de la empresa
-            agent_key: Key del agente
-            input_state: Estado de entrada crudo
+            state: Estado final
         
         Returns:
-            Resultado exacto de graph.run(state)
-        
-        Raises:
-            RuntimeError: Si no hay grafo configurado o si falla ejecución
+            Dict con métricas
         """
-        if not self._graph:
-            raise RuntimeError(
-                f"[{self.agent_type.value}] No graph configured. "
-                "Call set_graph() before run_graph()."
-            )
-        
-        try:
-            # 1. Construir state (puede lanzar RuntimeError si no hay prompt)
-            lg_state = self._build_langgraph_state(company_id, agent_key, input_state)
-            
-            logger.info(
-                f"[{self.agent_type.value}] Starting graph execution: "
-                f"execution_id={lg_state['execution_id']}"
-            )
-            
-            # 2. Ejecutar grafo (sync o async según implementación)
-            result = self._graph.run(lg_state)
-            
-            logger.info(
-                f"[{self.agent_type.value}] Graph execution completed: "
-                f"execution_id={lg_state['execution_id']}"
-            )
-            
-            # 3. Devolver resultado EXACTO (sin wrapping)
-            return result
-            
-        except RuntimeError:
-            # Re-raise RuntimeError con contexto adicional
-            raise
-        except Exception as e:
-            error_msg = (
-                f"[{self.agent_type.value}] Graph execution failed: "
-                f"company_id={company_id}, agent_key={agent_key}, error={e}"
-            )
-            logger.error(error_msg, exc_info=True)
-            
-            if self.config.fail_fast:
-                raise RuntimeError(error_msg) from e
-            else:
-                # Re-raise original exception
-                raise
-    
-    # ========================================================================
-    # ABSTRACT METHODS
-    # ========================================================================
-    
-    @abstractmethod
-    def invoke(self, inputs: Dict[str, Any]) -> Any:
-        """
-        Método público de invocación del agente.
-        
-        Las subclases implementan este método para mantener compatibilidad
-        con la interfaz pública, pero internamente llaman a run_graph().
-        
-        Args:
-            inputs: Dict con inputs de invocación
-        
-        Returns:
-            Resultado de la ejecución del agente
-        """
-        pass
+        return {
+            "agent_name": self.agent_type.value,
+            "agent_type": self.__class__.__name__,
+            "execution_id": state.get("execution_id"),
+            "user_id": state.get("user_id"),
+            "company_id": state.get("company_id"),
+            "reasoning_steps": len(state.get("reasoning_steps", [])),
+            "tools_used": [t["tool_name"] for t in state.get("tool_results", [])],
+            "total_latency_ms": sum(
+                t.get("latency_ms", 0) for t in state.get("tool_results", [])
+            ),
+            "errors_count": len(state.get("errors", [])),
+            "warnings_count": len(state.get("warnings", [])),
+            "success": len(state.get("errors", [])) == 0,
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 
 # ============================================================================
@@ -385,8 +735,8 @@ class CognitiveAgentBase(ABC):
 
 def create_reasoning_node(
     name: str,
-    reasoning_fn
-) -> callable:
+    reasoning_fn: Callable[[AgentState], AgentState]
+) -> Callable:
     """
     Factory para crear nodos de razonamiento.
     
@@ -398,24 +748,8 @@ def create_reasoning_node(
         Función de nodo para LangGraph
     """
     def node(state: AgentState) -> AgentState:
+        state["current_node"] = name
         state["current_step"] = state.get("current_step", 0) + 1
-        
-        # Agregar reasoning step
-        step: ReasoningStep = {
-            "step_id": f"{name}_{state['current_step']}",
-            "node_type": NodeType.REASONING.value,
-            "description": f"Node: {name}",
-            "thought": "",
-            "action": None,
-            "observation": None,
-            "decision": None,
-            "confidence": None,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        state["reasoning_steps"].append(step)
-        
-        # Ejecutar lógica del nodo
         return reasoning_fn(state)
     
     return node
@@ -424,8 +758,8 @@ def create_reasoning_node(
 def create_tool_node(
     name: str,
     tool_executor,
-    tool_selection_fn
-) -> callable:
+    tool_selection_fn: Callable[[AgentState], List[str]]
+) -> Callable:
     """
     Factory para crear nodos de ejecución de tools.
     
@@ -438,22 +772,22 @@ def create_tool_node(
         Función de nodo para LangGraph
     """
     def node(state: AgentState) -> AgentState:
+        state["current_node"] = name
         state["current_step"] = state.get("current_step", 0) + 1
         tools_to_execute = tool_selection_fn(state)
         
         for tool_name in tools_to_execute:
             # Registrar llamada
-            tool_call: ToolCall = {
-                "tool_name": tool_name,
-                "arguments": {},
-                "timestamp": datetime.utcnow().isoformat(),
-                "node_id": name
-            }
-            
-            state["tools_called"].append(tool_call)
+            tool_call = ToolCall(
+                tool_name=tool_name,
+                arguments={},  # Extraer de state según el tool
+                timestamp=datetime.utcnow().isoformat(),
+                node_id=name
+            )
             
             # Aquí se ejecutaría la tool con tool_executor
-            # La implementación real debe ser provista por el caller
+            # La implementación real se hace en agent_tools_service.py
+            pass
         
         return state
     
@@ -474,7 +808,7 @@ def validate_agent_state(state: AgentState) -> bool:
     Returns:
         True si es válido
     """
-    required_fields = ["prompt_payload", "input_state", "agent_key", "company_id"]
+    required_fields = ["question", "user_id"]
     
     for field in required_fields:
         if field not in state:
@@ -482,6 +816,33 @@ def validate_agent_state(state: AgentState) -> bool:
             return False
     
     return True
+
+
+def merge_states(base_state: AgentState, updates: Dict[str, Any]) -> AgentState:
+    """
+    Mergear actualizaciones en el estado base.
+    
+    Args:
+        base_state: Estado base
+        updates: Actualizaciones a aplicar
+    
+    Returns:
+        Estado mergeado
+    """
+    merged = base_state.copy()
+    
+    for key, value in updates.items():
+        if isinstance(value, list) and key in merged and isinstance(merged[key], list):
+            # Para listas, extender
+            merged[key].extend(value)
+        elif isinstance(value, dict) and key in merged and isinstance(merged[key], dict):
+            # Para dicts, mergear
+            merged[key].update(value)
+        else:
+            # Para otros, reemplazar
+            merged[key] = value
+    
+    return merged
 
 
 def get_execution_metrics(state: AgentState) -> Dict[str, Any]:
@@ -495,26 +856,19 @@ def get_execution_metrics(state: AgentState) -> Dict[str, Any]:
         Dict con métricas
     """
     started = datetime.fromisoformat(state["started_at"])
-    completed = (
-        datetime.fromisoformat(state["completed_at"]) 
-        if state.get("completed_at") 
-        else datetime.utcnow()
-    )
+    completed = datetime.fromisoformat(state["completed_at"]) if state.get("completed_at") else datetime.utcnow()
     
     return {
         "execution_id": state["execution_id"],
         "agent_type": state["agent_type"],
-        "agent_key": state["agent_key"],
-        "company_id": state["company_id"],
+        "status": state["status"],
         "latency_ms": (completed - started).total_seconds() * 1000,
-        "reasoning_steps": len(state.get("reasoning_steps", [])),
-        "tools_used": len(state.get("tools_called", [])),
-        "tools_succeeded": sum(
-            1 for r in state.get("tool_results", []) if r.get("success")
-        ),
-        "tools_failed": sum(
-            1 for r in state.get("tool_results", []) if not r.get("success")
-        )
+        "reasoning_steps": len(state["reasoning_steps"]),
+        "tools_used": len(state["tools_called"]),
+        "tools_succeeded": sum(1 for r in state["tool_results"] if r.get("success")),
+        "tools_failed": sum(1 for r in state["tool_results"] if not r.get("success")),
+        "errors_count": len(state["errors"]),
+        "warnings_count": len(state["warnings"])
     }
 
 
@@ -527,14 +881,18 @@ __all__ = [
     "AgentType",
     "NodeType",
     "ExecutionStatus",
+    "AgentCapability",
+    "DecisionType",
     
     # TypedDicts
     "AgentState",
     "ToolCall",
     "ToolResult",
     "ReasoningStep",
+    "ToolExecutionRecord",
     
     # Dataclasses
+    "AgentCapabilityDef",
     "AgentManifest",
     "CognitiveConfig",
     
@@ -547,5 +905,6 @@ __all__ = [
     
     # Utils
     "validate_agent_state",
+    "merge_states",
     "get_execution_metrics"
 ]
