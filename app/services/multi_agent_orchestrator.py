@@ -3,8 +3,10 @@
 from typing import Dict, Any, List, Optional, Tuple
 from app.config.company_config import CompanyConfig, get_company_config
 from app.agents import (
-    RouterAgent, EmergencyAgent, SalesAgent, 
-    SupportAgent, ScheduleAgent, AvailabilityAgent
+    build_router_graph,  # 🚀 reemplazo moderno del RouterAgent
+    EmergencyAgent, SalesAgent, 
+    SupportAgent, ScheduleAgent, 
+    AvailabilityAgent, PlanningAgent
 )
 from app.services.openai_service import OpenAIService
 from app.services.vectorstore_service import VectorstoreService
@@ -259,47 +261,52 @@ class MultiAgentOrchestrator:
     
     def _initialize_agents(self):
         """
-        Inicializar todos los agentes con INYECCIÓN UNIFORME de servicios.
+        Inicializar todos los agentes cognitivos con INYECCIÓN UNIFORME de servicios.
         
-        ✅ FASE 1: Cada agente recibe:
-           - openai_service
-           - prompt_service
-           - state_manager
-           - condition_evaluator (para guard rails)
+        ✅ FASE 1: LangGraph-ready
+           - RouterNode reemplaza RouterAgent
+           - Cada agente recibe:
+             * openai_service
+             * prompt_service
+             * state_manager
+             * condition_evaluator
         """
         try:
-            # Router Agent
-            self.agents['router'] = RouterAgent(self.company_config, self.openai_service)
-            self._inject_cognitive_services(self.agents['router'], 'router')
-            
-            # Emergency Agent
-            self.agents['emergency'] = EmergencyAgent(self.company_config, self.openai_service)
-            self._inject_cognitive_services(self.agents['emergency'], 'emergency')
-            
-            # Sales Agent
-            self.agents['sales'] = SalesAgent(self.company_config, self.openai_service)
-            self._inject_cognitive_services(self.agents['sales'], 'sales')
-            
-            # Support Agent
-            self.agents['support'] = SupportAgent(self.company_config, self.openai_service)
-            self._inject_cognitive_services(self.agents['support'], 'support')
-            
-            # Schedule Agent
-            self.agents['schedule'] = ScheduleAgent(self.company_config, self.openai_service)
-            self._inject_cognitive_services(self.agents['schedule'], 'schedule')
-            
-            # Availability Agent
-            self.agents['availability'] = AvailabilityAgent(self.company_config, self.openai_service)
-            self._inject_cognitive_services(self.agents['availability'], 'availability')
-            
-            # Conectar availability agent con schedule agent
-            self.agents['availability'].set_schedule_agent(self.agents['schedule'])
-            
-            logger.info(f"[{self.company_id}] All agents initialized with cognitive services")
-            
+            from app.agents import (
+                build_router_graph,
+                EmergencyAgent, SalesAgent,
+                SupportAgent, ScheduleAgent,
+                AvailabilityAgent, PlanningAgent
+            )
+
+            # ✅ 1. Crear Router Graph (nuevo reemplazo de RouterAgent)
+            self.agents["router_graph"] = build_router_graph(self.company_config)
+            logger.info(f"[{self.company_id}] RouterNode graph initialized successfully")
+
+            # ✅ 2. Inicializar los agentes cognitivos
+            agent_classes = {
+                "emergency": EmergencyAgent,
+                "sales": SalesAgent,
+                "support": SupportAgent,
+                "schedule": ScheduleAgent,
+                "availability": AvailabilityAgent,
+                "planner": PlanningAgent
+            }
+
+            for name, cls in agent_classes.items():
+                self.agents[name] = cls(self.company_config, self.openai_service)
+                self._inject_cognitive_services(self.agents[name], name)
+
+            # ✅ 3. Conectar dependencias internas (ej: availability → schedule)
+            if "availability" in self.agents and "schedule" in self.agents:
+                self.agents["availability"].set_schedule_agent(self.agents["schedule"])
+
+            logger.info(f"[{self.company_id}] All cognitive agents initialized with cognitive services (LangGraph mode)")
+
         except Exception as e:
             logger.error(f"[{self.company_id}] Error initializing agents: {e}")
             raise
+
     
     def _inject_cognitive_services(self, agent, agent_name: str):
         """
@@ -575,41 +582,39 @@ class MultiAgentOrchestrator:
             return question
     
     def _orchestrate_response(self, inputs: Dict[str, Any], metrics: ExecutionMetrics) -> Tuple[str, str]:
-        """Orquestador principal que coordina los agentes"""
+        """Orquestador principal que coordina los agentes mediante RouterNode (LangGraph)"""
         try:
-            # Clasificar intención con Router Agent
-            router_response = self.agents['router'].invoke(inputs)
-            
-            try:
-                classification = json.loads(router_response)
-                intent = classification.get("intent", "SUPPORT")
-                confidence = classification.get("confidence", 0.5)
-                
-                logger.info(f"[{self.company_id}] Intent classified: {intent} (confidence: {confidence})")
-                
-            except json.JSONDecodeError:
-                intent = "SUPPORT"
-                confidence = 0.3
-                logger.warning(f"[{self.company_id}] Router response was not valid JSON, defaulting to SUPPORT")
-            
-            # ✅ Registrar en métricas
+            from app.agents._cognitive_base import AgentState
+
+            # 🧭 1. Ejecutar Router Graph (clasificación inicial)
+            router_graph = self.agents.get("router_graph")
+            if not router_graph:
+                raise RuntimeError("RouterGraph not initialized")
+
+            state = AgentState(inputs=inputs)
+            router_graph.set_entry_point("router")
+            result = router_graph.run(state)
+
+            intent = result.data.get("intent", "support").upper()
+            logger.info(f"[{self.company_id}] RouterNode classified intent: {intent}")
+
+            # 🧩 2. Registrar trazas cognitivas
             metrics.reasoning_steps += 1
             metrics.reasoning_traces.append({
-                "step": "classification",
+                "step": "router_node_classification",
                 "intent": intent,
-                "confidence": confidence
+                "timestamp": datetime.utcnow().isoformat()
             })
-            
-            # Seleccionar y ejecutar agente apropiado
-            response = self._execute_selected_agent(intent, confidence, inputs, metrics)
-            
+
+            # 🧠 3. Seleccionar y ejecutar agente correspondiente
+            response = self._execute_selected_agent(intent, 1.0, inputs, metrics)
             return response, intent.lower()
-            
+
         except Exception as e:
             logger.error(f"[{self.company_id}] Error in orchestration: {e}")
             metrics.errors.append(f"Orchestration error: {str(e)}")
-            # Fallback al support agent
-            return self.agents['support'].invoke(inputs), "support"
+            return self.agents["support"].invoke(inputs), "support"
+
     
     def _execute_selected_agent(self, intent: str, confidence: float, 
                                 inputs: Dict[str, Any], metrics: ExecutionMetrics) -> str:
