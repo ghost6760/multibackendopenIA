@@ -56,7 +56,62 @@ def get_inputs_from(obj) -> Dict[str, Any]:
         return {}
     except Exception:
         return {}
-        
+
+def get_state_data(state) -> Dict[str, Any]:
+    """
+    Devuelve un dict mutable que representa el 'data' del state.
+    - Si state es dict: se asegura state['data'] existe y es dict.
+    - Si state es objeto con atributo .data: lo usa (crea si no existe).
+    Devuelve siempre un dict.
+    """
+    try:
+        if isinstance(state, dict):
+            if "data" not in state or not isinstance(state["data"], dict):
+                state["data"] = {}
+            return state["data"]
+        # objeto con atributo
+        if not hasattr(state, "data") or not isinstance(getattr(state, "data"), dict):
+            try:
+                setattr(state, "data", {})
+            except Exception:
+                # fallback: devolver dict temporal (no persistirá en objeto si no puede setear)
+                return {}
+        return getattr(state, "data")
+    except Exception:
+        return {}
+
+def set_state_field(state, key: str, value: Any) -> None:
+    """
+    Establece una clave de primer nivel en state de forma defensiva.
+    Si state es dict => state[key] = value
+    Si state es objeto => setattr(state, key, value) (safe)
+    """
+    try:
+        if isinstance(state, dict):
+            state[key] = value
+        else:
+            try:
+                setattr(state, key, value)
+            except Exception:
+                # si no se puede, intentar usar data si es dict
+                data = get_state_data(state)
+                if isinstance(data, dict):
+                    data[key] = value
+    except Exception:
+        # no crashear si no puede escribir
+        logger.debug(f"[{getattr(state,'company_id', 'unknown')}] set_state_field failed for key {key}")
+
+def get_state_field(state, key: str, default=None):
+    """
+    Leer campo de primer nivel del state de forma defensiva.
+    """
+    try:
+        if isinstance(state, dict):
+            return state.get(key, default)
+        return getattr(state, key, default)
+    except Exception:
+        return default
+
 # ============================================================================
 # ENUMS Y CONSTANTES
 # ============================================================================
@@ -1196,5 +1251,8 @@ __all__ = [
     # Utils
     "validate_agent_state",
     "merge_states",
-    "get_execution_metrics"
+    "get_execution_metrics",
+    "get_state_data",
+    "set_state_field",
+    "get_state_field"
 ]
