@@ -690,6 +690,134 @@ class CognitiveAgentBase(ABC):
         
         # Verificar flag explícito
         return state.get("should_continue", True)
+
+    def _validate_inputs(self, inputs: dict):
+        """
+        Validar inputs mínimos requeridos.
+        
+        Args:
+            inputs: Dict con inputs del usuario
+        
+        Raises:
+            ValueError si faltan campos obligatorios
+        """
+        required_fields = ["question", "user_id"]
+        
+        for field in required_fields:
+            if field not in inputs:
+                logger.error(
+                    f"[{self.agent_type.value}] Missing required field: {field}"
+                )
+                raise ValueError(f"Missing required field: {field}")
+            
+            if not inputs[field] or not str(inputs[field]).strip():
+                logger.error(
+                    f"[{self.agent_type.value}] Field '{field}' is empty"
+                )
+                raise ValueError(f"Field '{field}' cannot be empty")
+        
+        # Validar chat_history si existe
+        if "chat_history" in inputs and inputs["chat_history"] is not None:
+            if not isinstance(inputs["chat_history"], list):
+                logger.error(
+                    f"[{self.agent_type.value}] chat_history must be a list, got {type(inputs['chat_history'])}"
+                )
+                raise ValueError("chat_history must be a list")
+        
+        logger.debug(
+            f"[{self.agent_type.value}] Inputs validated successfully"
+        )
+    
+    def _create_initial_state(self, inputs: dict) -> AgentState:
+        """
+        Crear estado inicial desde dict de inputs (método de conveniencia).
+        
+        Este método es un wrapper de _initialize_state que acepta un dict
+        de inputs y extrae los campos necesarios.
+        
+        Args:
+            inputs: Dict con al menos:
+                - question: str
+                - user_id: str
+                - chat_history: List (opcional)
+                - company_id: str (opcional)
+                - Otros campos opcionales
+        
+        Returns:
+            AgentState inicializado
+        """
+        # Extraer campos principales
+        question = inputs.get("question", "")
+        user_id = inputs.get("user_id", "")
+        chat_history = inputs.get("chat_history", [])
+        company_id = inputs.get("company_id")
+        
+        # Extraer campos adicionales
+        extra_kwargs = {
+            k: v for k, v in inputs.items() 
+            if k not in ["question", "chat_history", "user_id", "company_id"]
+        }
+        
+        # Llamar a _initialize_state
+        return self._initialize_state(
+            question=question,
+            chat_history=chat_history,
+            user_id=user_id,
+            company_id=company_id,
+            **extra_kwargs
+        )
+    
+    def _add_reasoning_step(
+        self,
+        state: AgentState,
+        node_type: NodeType,
+        description: str,
+        thought: str = "",
+        action: Optional[str] = None,
+        observation: Optional[str] = None,
+        decision: Optional[str] = None,
+        confidence: Optional[float] = None
+    ) -> ReasoningStep:
+        """
+        Crear un paso de razonamiento para agregar al estado.
+        
+        Este método helper facilita la creación de ReasoningStep con
+        campos automáticos como step_id y timestamp.
+        
+        Args:
+            state: Estado actual del agente
+            node_type: Tipo de nodo (REASONING, TOOL_EXECUTION, etc.)
+            description: Descripción del paso
+            thought: Pensamiento/razonamiento
+            action: Acción tomada (opcional)
+            observation: Observación/resultado (opcional)
+            decision: Decisión tomada (opcional)
+            confidence: Score de confianza (opcional)
+        
+        Returns:
+            ReasoningStep completo
+        """
+        import uuid
+        
+        step_id = f"{state.get('execution_id', 'unknown')}_{uuid.uuid4().hex[:8]}"
+        
+        reasoning_step: ReasoningStep = {
+            "step_id": step_id,
+            "node_type": node_type.value if isinstance(node_type, NodeType) else str(node_type),
+            "description": description,
+            "thought": thought,
+            "action": action,
+            "observation": observation,
+            "decision": decision,
+            "confidence": confidence,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        logger.debug(
+            f"[{self.agent_type.value}] Created reasoning step: {description}"
+        )
+        
+        return reasoning_step
     
     def _build_response_from_state(self, state: AgentState) -> str:
         """
