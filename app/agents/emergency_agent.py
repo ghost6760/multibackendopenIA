@@ -42,7 +42,6 @@ from app.agents._agent_tools import get_tools_for_agent
 
 # LangGraph
 from langgraph.graph import StateGraph, END
-from langchain.prompts import ChatPromptTemplate
 
 # Services
 from app.config.company_config import CompanyConfig
