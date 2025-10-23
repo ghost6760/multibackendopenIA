@@ -2,7 +2,6 @@
 # Mantiene BaseAgent - NO migrar a cognitivo (es clasificación simple)
 
 from app.agents.base_agent import BaseAgent
-from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from typing import Dict, Any
 import json
@@ -23,13 +22,12 @@ class RouterAgent(BaseAgent):
     
     def _initialize_agent(self):
         """Inicializar configuración del router"""
-        self.prompt_template = self._create_prompt_template()
-        self.chain = self.prompt_template | self.chat_model | StrOutputParser()
+        # No usar ChatPromptTemplate, construir prompt directamente
+        self.chain = self.chat_model | StrOutputParser()
     
-    def _create_default_prompt_template(self) -> ChatPromptTemplate:
-        """Crear template de prompts por defecto"""
-        return ChatPromptTemplate.from_messages([
-            ("system", f"""Eres un clasificador de intenciones para {self.company_config.company_name}.
+    def _build_router_prompt(self, question: str) -> str:
+        """Construir prompt de clasificación directamente como string"""
+        return f"""Eres un clasificador de intenciones para {self.company_config.company_name}.
 
 SERVICIOS: {self.company_config.services}
 
@@ -56,16 +54,14 @@ ANALIZA el mensaje y clasifica en UNA categoría:
 - Cualquier otra consulta
 
 RESPONDE SOLO en formato JSON:
-{{{{
+{{
     "intent": "EMERGENCY|SALES|SCHEDULE|SUPPORT",
     "confidence": 0.0-1.0,
     "keywords": ["palabra1", "palabra2"],
     "reasoning": "breve explicación"
-}}}}
+}}
 
-Mensaje: {{question}}"""),
-            ("human", "{question}")
-        ])
+Mensaje: {question}"""
     
     def invoke(self, inputs: Dict[str, Any]) -> str:
         """
@@ -88,12 +84,14 @@ Mensaje: {{question}}"""),
                     "reasoning": "Empty question"
                 })
             
+            # Construir prompt directamente
+            prompt = self._build_router_prompt(question)
+            
             # Ejecutar clasificación
-            response = self.chain.invoke({
-                "question": question,
-                "company_name": self.company_config.company_name,
-                "services": self.company_config.services
-            })
+            response = self.chain.invoke([
+                {"role": "system", "content": "You are a intent classifier."},
+                {"role": "user", "content": prompt}
+            ])
             
             # Validar JSON
             try:
