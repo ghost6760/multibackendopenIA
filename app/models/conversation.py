@@ -1,7 +1,8 @@
+# app/models/conversation.py
+# MIGRADO A LANGGRAPH - SIN DEPENDENCIAS DE LANGCHAIN
+
 from app.services.redis_service import get_redis_client
 from app.config.company_config import get_company_config
-from langchain_community.chat_message_histories import RedisChatMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
 import logging
 import json
 import time
@@ -10,7 +11,7 @@ from typing import Dict, Any, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 class ConversationManager:
-    """Gestión modularizada de conversaciones multi-tenant"""
+    """Gestión modularizada de conversaciones multi-tenant - Compatible con LangGraph"""
     
     def __init__(self, company_id: str = None, max_messages: int = 10):
         self.company_id = company_id or "default"
@@ -24,86 +25,16 @@ class ConversationManager:
         
         self.redis_client = get_redis_client()
         self.max_messages = max_messages
-        self.message_histories = {}
         
         logger.info(f"ConversationManager initialized for company: {self.company_id}")
     
     def _create_user_id(self, contact_id: str) -> str:
         """Generate standardized user ID with company prefix"""
-        # Agregar prefijo de empresa para evitar colisiones
         base_user_id = contact_id
         if not contact_id.startswith("chatwoot_contact_"):
             base_user_id = f"chatwoot_contact_{contact_id}"
         
-        # Agregar prefijo de empresa
         return f"{self.company_id}_{base_user_id}"
-    
-    def get_chat_history(self, user_id: str, format_type: str = "dict"):
-        """Get chat history in specified format with company isolation"""
-        if not user_id:
-            return [] if format_type == "dict" else None
-        
-        try:
-            # Asegurar que user_id tenga prefijo de empresa
-            company_user_id = self._ensure_company_prefix(user_id)
-            
-            # 🆕 LOGS DE REDIS RECOVERY
-            history_key = f"{self.redis_prefix}{company_user_id}"
-            logger.debug(f"📚 [{self.company_id}] Retrieving chat history:")
-            logger.debug(f"   → User: {user_id}")
-            logger.debug(f"   → Redis key: {history_key}")
-            
-            # Verificar si existe en Redis
-            exists_in_redis = self.redis_client.exists(history_key)
-            logger.debug(f"   → Exists in Redis: {exists_in_redis}")
-            
-            redis_history = self._get_or_create_redis_history(company_user_id)
-            messages = redis_history.messages
-            
-            logger.debug(f"   → Messages found: {len(messages)}")
-            if messages:
-                logger.debug(f"   → Last message: {messages[-1].content[:50]}..." if messages else "No messages")
-            
-            if format_type == "langchain":
-                return redis_history
-            elif format_type == "messages":
-                return redis_history.messages
-            elif format_type == "dict":
-                return [
-                    {
-                        "role": "user" if isinstance(msg, HumanMessage) else "assistant",
-                        "content": msg.content
-                    }
-                    for msg in messages
-                ]
-            
-        except Exception as e:
-            logger.error(f"[{self.company_id}] Error getting chat history: {e}")
-            return [] if format_type == "dict" else None
-    
-    def add_message(self, user_id: str, role: str, content: str) -> bool:
-        """Add message to history with company isolation"""
-        if not user_id or not content.strip():
-            return False
-        
-        try:
-            company_user_id = self._ensure_company_prefix(user_id)
-            history = self._get_or_create_redis_history(company_user_id)
-            
-            if role == "user":
-                history.add_user_message(content)
-            elif role == "assistant":
-                history.add_ai_message(content)
-            
-            self._apply_message_window(company_user_id)
-            
-            # Log con contexto de empresa
-            logger.debug(f"[{self.company_id}] Message added for user {company_user_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"[{self.company_id}] Error adding message: {e}")
-            return False
     
     def _ensure_company_prefix(self, user_id: str) -> str:
         """Asegurar que user_id tenga prefijo de empresa"""
@@ -111,45 +42,208 @@ class ConversationManager:
             return f"{self.company_id}_{user_id}"
         return user_id
     
-    def _get_or_create_redis_history(self, user_id: str):
-        """Get or create Redis chat history with company-specific key"""
-        if user_id not in self.message_histories:
-            from flask import current_app
-            redis_url = current_app.config['REDIS_URL']
-            
-            # Clave específica de empresa
-            session_key = f"{self.redis_prefix}{user_id}"
-            
-            self.message_histories[user_id] = RedisChatMessageHistory(
-                session_id=session_key,
-                url=redis_url,
-                key_prefix="",  # Ya incluido en session_id
-                ttl=604800  # 7 días
-            )
-        
-        return self.message_histories[user_id]
+    def _get_redis_key(self, user_id: str) -> str:
+        """Generar la clave Redis completa para un usuario"""
+        company_user_id = self._ensure_company_prefix(user_id)
+        return f"{self.redis_prefix}{company_user_id}"
     
-    def _apply_message_window(self, user_id: str):
-        """Apply sliding window to messages"""
-        try:
-            history = self.message_histories.get(user_id)
-            if not history:
-                return
+    def get_chat_history_for_graph(self, conversation_id: str) -> List[Dict[str, str]]:
+        """
+        🆕 FUNCIÓN PARA LANGGRAPH
+        Lee el historial de Redis y lo retorna en formato normalizado
+        para usar con LangGraph StateGraph.
+        
+        Args:
+            conversation_id: ID de la conversación (user_id)
             
-            messages = history.messages
-            if len(messages) > self.max_messages:
-                messages_to_keep = messages[-self.max_messages:]
-                history.clear()
-                for message in messages_to_keep:
-                    history.add_message(message)
+        Returns:
+            List[{"role": "user"|"assistant", "content": str}]
+        """
+        if not conversation_id:
+            return []
+        
+        try:
+            company_user_id = self._ensure_company_prefix(conversation_id)
+            history_key = self._get_redis_key(conversation_id)
+            
+            logger.debug(f"📚 [{self.company_id}] Reading chat history for LangGraph:")
+            logger.debug(f"   → Conversation ID: {conversation_id}")
+            logger.debug(f"   → Redis key: {history_key}")
+            
+            # Leer directamente de Redis sin usar RedisChatMessageHistory
+            if not self.redis_client.exists(history_key):
+                logger.debug(f"   → No history found in Redis")
+                return []
+            
+            # Redis almacena mensajes como lista en formato JSON
+            messages_raw = self.redis_client.lrange(history_key, 0, -1)
+            
+            normalized_messages = []
+            for msg_bytes in messages_raw:
+                try:
+                    msg_data = json.loads(msg_bytes)
+                    
+                    # Normalizar formato independientemente de cómo se almacenó
+                    if isinstance(msg_data, dict):
+                        # Detectar tipo de mensaje
+                        msg_type = msg_data.get('type', '')
+                        content = msg_data.get('data', {}).get('content', '')
+                        
+                        # Normalizar role
+                        if msg_type == 'human' or msg_data.get('role') == 'user':
+                            role = 'user'
+                        elif msg_type == 'ai' or msg_data.get('role') == 'assistant':
+                            role = 'assistant'
+                        else:
+                            # Fallback: si no hay tipo claro, intentar inferir
+                            role = msg_data.get('role', 'user')
+                        
+                        if content:
+                            normalized_messages.append({
+                                "role": role,
+                                "content": content
+                            })
+                
+                except json.JSONDecodeError as e:
+                    logger.warning(f"   → Failed to parse message: {e}")
+                    continue
+            
+            logger.debug(f"   → Normalized messages: {len(normalized_messages)}")
+            if normalized_messages:
+                logger.debug(f"   → Last message: {normalized_messages[-1]['content'][:50]}...")
+            
+            return normalized_messages
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error getting chat history for graph: {e}")
+            return []
+    
+    def get_chat_history(self, user_id: str, format_type: str = "dict") -> Any:
+        """
+        LEGACY - Mantener compatibilidad con código existente
+        Get chat history in specified format with company isolation
+        """
+        if not user_id:
+            return [] if format_type in ["dict", "messages"] else None
+        
+        try:
+            company_user_id = self._ensure_company_prefix(user_id)
+            history_key = self._get_redis_key(user_id)
+            
+            logger.debug(f"📚 [{self.company_id}] Retrieving chat history (legacy):")
+            logger.debug(f"   → User: {user_id}")
+            logger.debug(f"   → Redis key: {history_key}")
+            
+            exists_in_redis = self.redis_client.exists(history_key)
+            logger.debug(f"   → Exists in Redis: {exists_in_redis}")
+            
+            if not exists_in_redis:
+                return [] if format_type in ["dict", "messages"] else None
+            
+            # Usar la nueva función normalizada
+            messages = self.get_chat_history_for_graph(user_id)
+            
+            logger.debug(f"   → Messages found: {len(messages)}")
+            if messages:
+                logger.debug(f"   → Last message: {messages[-1]['content'][:50]}...")
+            
+            if format_type == "dict":
+                return messages
+            elif format_type == "messages":
+                # Convertir a formato de objetos si es necesario
+                # (para compatibilidad con código legacy que espera objetos)
+                return messages
+            elif format_type == "langchain":
+                # Para compatibilidad legacy - retornar None ya que no usamos LangChain
+                logger.warning(f"   → 'langchain' format requested but not supported in LangGraph mode")
+                return None
+            
+            return messages
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error getting chat history: {e}")
+            return [] if format_type in ["dict", "messages"] else None
+    
+    def add_message(self, user_id: str, role: str, content: str) -> bool:
+        """
+        Add message to history with company isolation
+        MANTIENE EL FORMATO DE ALMACENAMIENTO ORIGINAL EN REDIS
+        """
+        if not user_id or not content.strip():
+            return False
+        
+        try:
+            company_user_id = self._ensure_company_prefix(user_id)
+            history_key = self._get_redis_key(user_id)
+            
+            # Crear mensaje en formato compatible con RedisChatMessageHistory
+            # para no romper historiales existentes
+            if role == "user":
+                message_data = {
+                    "type": "human",
+                    "data": {
+                        "content": content,
+                        "additional_kwargs": {},
+                        "type": "human"
+                    }
+                }
+            elif role == "assistant":
+                message_data = {
+                    "type": "ai",
+                    "data": {
+                        "content": content,
+                        "additional_kwargs": {},
+                        "type": "ai"
+                    }
+                }
+            else:
+                logger.warning(f"Unknown role: {role}, defaulting to user")
+                message_data = {
+                    "type": "human",
+                    "data": {
+                        "content": content,
+                        "additional_kwargs": {},
+                        "type": "human"
+                    }
+                }
+            
+            # Agregar mensaje a Redis
+            self.redis_client.rpush(history_key, json.dumps(message_data))
+            
+            # Aplicar ventana de mensajes
+            self._apply_message_window_direct(history_key)
+            
+            # Establecer TTL (7 días)
+            self.redis_client.expire(history_key, 604800)
+            
+            logger.debug(f"[{self.company_id}] Message added for user {company_user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error adding message: {e}")
+            return False
+    
+    def _apply_message_window_direct(self, history_key: str):
+        """Aplicar ventana deslizante directamente en Redis"""
+        try:
+            total_messages = self.redis_client.llen(history_key)
+            if total_messages > self.max_messages:
+                # Eliminar mensajes antiguos
+                messages_to_remove = total_messages - self.max_messages
+                for _ in range(messages_to_remove):
+                    self.redis_client.lpop(history_key)
                     
         except Exception as e:
             logger.error(f"[{self.company_id}] Error applying message window: {e}")
     
+    def _apply_message_window(self, user_id: str):
+        """LEGACY - mantener compatibilidad"""
+        history_key = self._get_redis_key(user_id)
+        self._apply_message_window_direct(history_key)
+    
     def list_conversations(self, page: int = 1, page_size: int = 50) -> Dict[str, Any]:
         """List conversations specific to company"""
         try:
-            # Buscar solo conversaciones de esta empresa
             pattern = f"{self.redis_prefix}*"
             all_keys = self.redis_client.keys(pattern)
             
@@ -201,7 +295,7 @@ class ConversationManager:
                 return None
             
             company_user_id = self._ensure_company_prefix(user_id)
-            messages = self.get_chat_history(company_user_id, format_type="dict")
+            messages = self.get_chat_history_for_graph(user_id)
             
             if not messages:
                 return None
@@ -213,7 +307,7 @@ class ConversationManager:
             # Get last activity timestamp
             last_updated = None
             try:
-                history_key = f"{self.redis_prefix}{company_user_id}"
+                history_key = self._get_redis_key(user_id)
                 if self.redis_client.exists(history_key):
                     last_updated = time.time()
             except:
@@ -221,8 +315,8 @@ class ConversationManager:
             
             return {
                 "company_id": self.company_id,
-                "user_id": user_id,  # Sin prefijo para interfaz
-                "full_user_id": company_user_id,  # Con prefijo para identificación
+                "user_id": user_id,
+                "full_user_id": company_user_id,
                 "message_count": len(messages),
                 "user_message_count": len(user_messages),
                 "assistant_message_count": len(assistant_messages),
@@ -242,23 +336,11 @@ class ConversationManager:
                 return False
             
             company_user_id = self._ensure_company_prefix(user_id)
+            history_key = self._get_redis_key(user_id)
             
-            # Clear from message histories cache
-            if company_user_id in self.message_histories:
-                history = self.message_histories[company_user_id]
-                history.clear()
-                del self.message_histories[company_user_id]
-            
-            # Clear from Redis directly
-            history_key = f"{self.redis_prefix}{company_user_id}"
-            
-            keys_to_delete = []
+            # Clear from Redis
             if self.redis_client.exists(history_key):
-                keys_to_delete.append(history_key)
-            
-            # Delete all related keys
-            if keys_to_delete:
-                self.redis_client.delete(*keys_to_delete)
+                self.redis_client.delete(history_key)
             
             logger.info(f"[{self.company_id}] Cleared conversation for user {user_id}")
             return True
@@ -270,7 +352,6 @@ class ConversationManager:
     def get_conversation_stats(self) -> Dict[str, Any]:
         """Get conversation statistics for this company"""
         try:
-            # Get conversations specific to this company
             pattern = f"{self.redis_prefix}*"
             all_keys = self.redis_client.keys(pattern)
             
@@ -282,7 +363,7 @@ class ConversationManager:
                 try:
                     if key.startswith(self.redis_prefix):
                         user_id = key[len(self.redis_prefix):]
-                        messages = self.get_chat_history(user_id, format_type="dict")
+                        messages = self.get_chat_history_for_graph(user_id)
                         if messages:
                             total_messages += len(messages)
                             active_conversations += 1
