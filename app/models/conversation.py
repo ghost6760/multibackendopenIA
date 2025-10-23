@@ -169,9 +169,60 @@ class ConversationManager:
         Add message to history with company isolation
         MANTIENE EL FORMATO DE ALMACENAMIENTO ORIGINAL EN REDIS
         """
+        # Defensive normalization: ensure content is a string to avoid AttributeError on .strip()
+        try:
+            original_content = content  # Mantener referencia para debug
+    
+            # If content is None, normalize to empty string
+            if content is None:
+                content = ""
+            # If content is not a string, try to extract common keys (dict from agents) or coerce to str
+            elif not isinstance(content, str):
+                try:
+                    if isinstance(content, dict):
+                        # Prefer explicit textual keys in this order
+                        content = (
+                            content.get("text")
+                            or content.get("response")
+                            or content.get("result")
+                            or content.get("output")
+                            or content.get("raw")
+                        )
+                        # If we found a nested dict in 'raw' or similar, try to extract text there too
+                        if isinstance(content, dict):
+                            content = (
+                                content.get("text")
+                                or content.get("response")
+                                or str(content)
+                            )
+                        # If still not a string, coerce to string representation
+                        if content is None:
+                            content = ""
+                        elif not isinstance(content, str):
+                            content = str(content)
+                    else:
+                        # Non-dict non-string object: coerce to string
+                        content = str(content)
+                except Exception:
+                    # On any unexpected issue, coerce to string as last resort
+                    content = str(content)
+        except Exception:
+            # Safety net: ensure content is a string
+            content = str(content)
+    
+        # 🔍 DEBUG: Log type and keys of original content (before normalization)
+        try:
+            logger.debug(
+                f"[{self.company_id}] add_message normalized content from type {type(original_content)}; "
+                f"keys={list(original_content.keys()) if isinstance(original_content, dict) else None}"
+            )
+        except Exception:
+            logger.debug(f"[{self.company_id}] add_message could not inspect original_content safely")
+    
+        # If user_id missing or content empty after normalization, bail out
         if not user_id or not content.strip():
             return False
-        
+    
         try:
             company_user_id = self._ensure_company_prefix(user_id)
             history_key = self._get_redis_key(user_id)
@@ -222,6 +273,7 @@ class ConversationManager:
         except Exception as e:
             logger.error(f"[{self.company_id}] Error adding message: {e}")
             return False
+
     
     def _apply_message_window_direct(self, history_key: str):
         """Aplicar ventana deslizante directamente en Redis"""
