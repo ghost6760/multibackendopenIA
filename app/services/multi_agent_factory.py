@@ -49,11 +49,17 @@ class MultiAgentFactory:
                 openai_service=self._openai_service
             )
             
-            # ✅ 1. Crear y configurar vectorstore específico
+            # ✅ 1. Inyectar PromptService
+            from app.services import get_prompt_service
+            prompt_service = get_prompt_service()
+            orchestrator.set_prompt_service(prompt_service)
+            logger.info(f"  → Prompt service injected for {company_id}")
+            
+            # ✅ 2. Crear y configurar vectorstore específico
             vectorstore_service = self._get_vectorstore_service(company_id)
             orchestrator.set_vectorstore_service(vectorstore_service)
             
-            # ✅ 2. Crear y configurar tool_executor con todos los servicios
+            # ✅ 3. Crear y configurar tool_executor con todos los servicios
             tool_executor = self._create_tool_executor(company_id, vectorstore_service)
             orchestrator.set_tool_executor(tool_executor)
             
@@ -62,10 +68,6 @@ class MultiAgentFactory:
             
             logger.info(f"✅ Created orchestrator for {company_id} with all services")
             return orchestrator
-            
-        except Exception as e:
-            logger.error(f"Error creating orchestrator for {company_id}: {e}")
-            return None
     
     def _create_tool_executor(self, company_id: str, vectorstore_service: VectorstoreService) -> ToolExecutor:
         """
