@@ -15,6 +15,41 @@ logger = logging.getLogger(__name__)
 
 bp = Blueprint('documents', __name__)
 
+def _normalize_document(doc) -> tuple:
+    """
+    Normalizar acceso a documentos de diferentes fuentes.
+    
+    Args:
+        doc: Documento de LangChain, dict, o cualquier otro formato
+    
+    Returns:
+        tuple: (content, metadata)
+    """
+    # Método 1: Atributos de LangChain Document
+    content = getattr(doc, "page_content", None)
+    metadata = getattr(doc, "metadata", None)
+    
+    # Método 2: Dict con page_content
+    if content is None and isinstance(doc, dict):
+        content = doc.get("page_content")
+    
+    # Método 3: Dict con content
+    if content is None and isinstance(doc, dict):
+        content = doc.get("content")
+    
+    # Método 4: Fallback a string
+    if content is None:
+        content = str(doc) if doc else ""
+    
+    # Normalizar metadata
+    if metadata is None and isinstance(doc, dict):
+        metadata = doc.get("metadata", {})
+    
+    if metadata is None:
+        metadata = {}
+    
+    return content, metadata
+
 def _get_company_id_from_request() -> str:
     """Extraer company_id de headers o usar por defecto"""
     # Método 1: Header específico
@@ -316,19 +351,8 @@ def search_documents():
         api_results = []
         for i, doc in enumerate(document_results):
             try:
-                # Manejar diferentes tipos de objetos resultado
-                if hasattr(doc, 'page_content'):
-                    # Objeto Document de LangChain
-                    content = getattr(doc, 'page_content', '')
-                    metadata = getattr(doc, 'metadata', {})
-                elif isinstance(doc, dict):
-                    # Dict resultado de fallback
-                    content = doc.get('content', '')
-                    metadata = doc.get('metadata', {})
-                else:
-                    logger.warning(f"[{company_id}] Unknown document type: {type(doc)}")
-                    content = str(doc)
-                    metadata = {}
+                # Usar función helper para normalizar acceso a documentos
+                content, metadata = _normalize_document(doc)
                 
                 # Crear resultado API estandarizado
                 api_result = {
