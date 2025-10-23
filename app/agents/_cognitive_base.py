@@ -429,10 +429,12 @@ class CognitiveAgentBase(ABC):
             }
     
     def _run_graph_prompt(
-        self,
-        state: AgentState,
-        prompt_node: Dict[str, Any]
-    ) -> Dict[str, Any]:
+            self,
+            state: AgentState,
+            prompt_node: Dict[str, Any],
+            agent_key: str = None,
+            **kwargs
+        ) -> Dict[str, Any]:
         """
         Ejecutar StateGraph con prompt estructurado.
         
