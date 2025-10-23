@@ -102,28 +102,36 @@ class OpenAIService:
     def generate_response(self, messages: list, **kwargs) -> str:
         """
         Generate response using OpenAI Chat API.
-        
-        Este método debe ser invocado desde nodos del grafo, no usando (prompt | model).
-        
-        Args:
-            messages: Lista de mensajes en formato OpenAI
-            **kwargs: Parámetros adicionales (model, max_tokens, temperature)
-        
-        Returns:
-            str: Contenido de la respuesta
+        Ensures a valid model is always passed to the underlying client.
         """
         try:
+            # Use explicit model from kwargs if truthy, otherwise fallback to configured model_name
+            model_to_use = kwargs.get('model') or self.model_name
+
             response = self.client.chat.completions.create(
-                model=kwargs.get('model', self.model_name),
+                model=model_to_use,
                 messages=messages,
                 max_tokens=kwargs.get('max_tokens', self.max_tokens),
                 temperature=kwargs.get('temperature', self.temperature)
             )
-            
-            return response.choices[0].message.content
-            
+
+            # Safety: attempt to extract content robustly
+            try:
+                return response.choices[0].message.content
+            except Exception:
+                # Try alternative structure if SDK returns different shape
+                if hasattr(response, "choices") and len(response.choices) > 0:
+                    choice = response.choices[0]
+                    # handle possible different attr names
+                    if hasattr(choice, "message") and hasattr(choice.message, "content"):
+                        return choice.message.content
+                    if hasattr(choice, "text"):
+                        return choice.text
+                # Last resort: convert to string
+                return str(response)
+
         except Exception as e:
-            logger.error(f"Error generating OpenAI response: {e}")
+            logger.error(f"Error generating OpenAI response: {e}", exc_info=True)
             raise
     
     def invoke_with_messages(self, messages: list, **kwargs) -> str:
