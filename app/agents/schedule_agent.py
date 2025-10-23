@@ -373,7 +373,7 @@ class ScheduleAgent(CognitiveAgentBase):
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
-            NodeType.TOOL_USE,
+            NodeType.TOOL_EXECUTION,
             "Retrieved context from RAG",
             observation=f"Context length: {len(rag_context)} chars"
         )
@@ -413,7 +413,7 @@ class ScheduleAgent(CognitiveAgentBase):
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
-            NodeType.TOOL_USE,
+            NodeType.TOOL_EXECUTION,
             "Executed scheduling tools",
             observation=f"Tools executed: {list(tool_results.keys())}"
         )
