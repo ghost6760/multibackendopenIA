@@ -591,27 +591,81 @@ class MultiAgentOrchestrator:
             if not router_graph:
                 raise RuntimeError("RouterGraph not initialized")
     
-            state = AgentState(inputs=inputs)
+            # ✅ Crear state como dict de AgentState
+            state: AgentState = {
+                # Inputs originales (obligatorios)
+                "question": inputs.get("question", ""),
+                "chat_history": inputs.get("chat_history", []),
+                "user_id": inputs.get("user_id", ""),
+                "company_id": inputs.get("company_id", self.company_id),
+                
+                # Estado de ejecución
+                "agent_type": "router",
+                "execution_id": metrics.execution_id,
+                "status": "pending",
+                "current_node": "router",
+                
+                # Razonamiento y decisiones
+                "reasoning_steps": [],
+                "tools_called": [],
+                "tool_results": [],
+                
+                # Contexto y memoria
+                "context": {},
+                "intermediate_results": {},
+                
+                # Herramientas disponibles
+                "tools_available": [],
+                
+                # Decisiones tomadas
+                "decisions": [],
+                "confidence_scores": {},
+                
+                # Contexto específico por tipo de agente
+                "vectorstore_context": None,
+                "calendar_context": None,
+                
+                # Output final
+                "response": None,
+                
+                # Metadata y telemetría
+                "metadata": {},
+                "errors": [],
+                "warnings": [],
+                
+                # Control de flujo
+                "should_continue": True,
+                "current_step": 0,
+                "retry_count": 0,
+                
+                # Timestamps
+                "started_at": metrics.started_at,
+                "completed_at": None
+            }
             
-            # ✅ FIX: Compilar y luego invocar
-            compiled_router = router_graph.compile()  # Agregar esta línea
-            result = compiled_router.invoke(state)     # Cambiar .run() por .invoke()
+            # Compilar y ejecutar router
+            compiled_router = router_graph.compile()
+            result = compiled_router.invoke(state)
+    
+            # ✅ CORREGIDO: Acceder a result como dict, no como .data
+            intent = result.get("context", {}).get("intent", "support").upper()
+            confidence = result.get("context", {}).get("confidence", 0.5)
             
-            intent = result.data.get("intent", "support").upper()
-            logger.info(f"[{self.company_id}] RouterNode classified intent: {intent}")
-
+            logger.info(f"[{self.company_id}] RouterNode classified intent: {intent} (confidence: {confidence})")
+    
             # 🧩 2. Registrar trazas cognitivas
             metrics.reasoning_steps += 1
             metrics.reasoning_traces.append({
                 "step": "router_node_classification",
                 "intent": intent,
+                "confidence": confidence,
                 "timestamp": datetime.utcnow().isoformat()
             })
-
+    
             # 🧠 3. Seleccionar y ejecutar agente correspondiente
-            response = self._execute_selected_agent(intent, 1.0, inputs, metrics)
+            response = self._execute_selected_agent(intent, confidence, inputs, metrics)
             return response, intent.lower()
-
+    
         except Exception as e:
             logger.error(f"[{self.company_id}] Error in orchestration: {e}")
             metrics.errors.append(f"Orchestration error: {str(e)}")
