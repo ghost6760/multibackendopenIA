@@ -20,7 +20,43 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
+# -------------------------
+# Helper defensivo para inputs
+# -------------------------
+def get_inputs_from(obj) -> Dict[str, Any]:
+    """
+    Obtener 'inputs' de forma defensiva.
+    - Si obj tiene atributo 'inputs' lo devuelve.
+    - Si obj es dict devuelve obj.get('inputs', {})
+    - Si obj es None devuelve {}
+    - Si obj expone .get lo usa como fallback.
+    Devuelve siempre un dict (vacío por defecto).
+    """
+    try:
+        if obj is None:
+            return {}
+        # Si es un objeto con atributo 'inputs'
+        if hasattr(obj, "inputs"):
+            val = getattr(obj, "inputs")
+            if isinstance(val, dict):
+                return val
+            # intentar convertir a dict si es tipo mapeable
+            try:
+                return dict(val) if val is not None else {}
+            except Exception:
+                return {}
+        # Si es dict
+        if isinstance(obj, dict):
+            v = obj.get("inputs", {})
+            return v if isinstance(v, dict) else {}
+        # Si tiene .get (tipo mapping)
+        if hasattr(obj, "get"):
+            v = obj.get("inputs", None)
+            return v if isinstance(v, dict) else {}
+        return {}
+    except Exception:
+        return {}
+        
 # ============================================================================
 # ENUMS Y CONSTANTES
 # ============================================================================
