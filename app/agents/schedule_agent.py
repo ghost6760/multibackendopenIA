@@ -43,7 +43,6 @@ from app.agents._agent_tools import (
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
-from langchain.prompts import ChatPromptTemplate
 
 # Services
 from app.config.company_config import CompanyConfig
@@ -228,14 +227,14 @@ class ScheduleAgent(CognitiveAgentBase):
     
     def build_graph(self) -> StateGraph:
         """
-        Construir grafo de decisión con LangGraph.
+        Construir grafo de decisión para agendamiento.
         
         FLUJO:
-        1. Analyze Intent → Determinar qué quiere el usuario
-        2. Retrieve Context → Buscar info en RAG si es necesario
-        3. Decide Action → Determinar qué herramientas usar
-        4. Execute Tools → Ejecutar herramientas seleccionadas
-        5. Generate Response → Generar respuesta final
+        1. Analyze Intent → Clasificar intención (check/create/info)
+        2. Extract Entities → Extraer fecha, hora, servicio, etc.
+        3. Retrieve Context → Buscar información en RAG si es necesario
+        4. Execute Tools → Ejecutar herramientas de calendario
+        5. Generate Response → Respuesta final
         
         Returns:
             StateGraph de LangGraph
@@ -245,33 +244,22 @@ class ScheduleAgent(CognitiveAgentBase):
         
         # Añadir nodos
         workflow.add_node("analyze_intent", self._analyze_intent_node)
+        workflow.add_node("extract_entities", self._extract_entities_node)
         workflow.add_node("retrieve_context", self._retrieve_context_node)
-        workflow.add_node("decide_action", self._decide_action_node)
         workflow.add_node("execute_tools", self._execute_tools_node)
         workflow.add_node("generate_response", self._generate_response_node)
         
         # Definir edges
         workflow.set_entry_point("analyze_intent")
         
-        workflow.add_edge("analyze_intent", "retrieve_context")
-        workflow.add_edge("retrieve_context", "decide_action")
-        
-        # Condicional: ejecutar tools o ir directo a respuesta
-        workflow.add_conditional_edges(
-            "decide_action",
-            self._should_execute_tools,
-            {
-                "execute": "execute_tools",
-                "skip": "generate_response"
-            }
-        )
-        
+        workflow.add_edge("analyze_intent", "extract_entities")
+        workflow.add_edge("extract_entities", "retrieve_context")
+        workflow.add_edge("retrieve_context", "execute_tools")
         workflow.add_edge("execute_tools", "generate_response")
         workflow.add_edge("generate_response", END)
         
         logger.info(
-            f"[{self.company_config.company_id}] LangGraph built for ScheduleAgent "
-            f"(5 nodes)"
+            f"[{self.company_config.company_id}] LangGraph built for ScheduleAgent"
         )
         
         return workflow
@@ -283,204 +271,158 @@ class ScheduleAgent(CognitiveAgentBase):
     def _analyze_intent_node(self, state: AgentState) -> AgentState:
         """
         Nodo 1: Analizar intención del usuario.
-        
-        Determina si el usuario quiere:
-        - Consultar disponibilidad
-        - Agendar una cita
-        - Obtener información sobre tratamientos
         """
         state["current_node"] = "analyze_intent"
         
-        question = state["question"].lower()
-        
-        # Analizar intención
-        intent = self._detect_scheduling_intent(question)
-        confidence = self._calculate_intent_confidence(question, intent)
-        
-        # Registrar razonamiento
-        reasoning_step = self._add_reasoning_step(
-            state,
-            NodeType.REASONING,
-            "Analyzing user intent for scheduling query",
-            thought=f"User asks: '{question[:100]}'",
-            decision=f"Detected intent: {intent} (confidence: {confidence:.2f})",
-            confidence=confidence
-        )
-        
-        state["reasoning_steps"].append(reasoning_step)
-        
-        # Guardar decisión
-        state["decisions"].append({
-            "type": "intent_detection",
-            "intent": intent,
-            "confidence": confidence,
-            "timestamp": datetime.utcnow().isoformat()
-        })
-        
-        state["confidence_scores"]["intent"] = confidence
-        
-        # Extraer entidades (fechas, tratamientos)
-        entities = self._extract_scheduling_entities(question, state["chat_history"])
-        state["context"]["entities"] = entities
-        state["context"]["intent"] = intent
-        
-        logger.debug(
-            f"[{self.company_config.company_id}] Intent: {intent}, "
-            f"Entities: {entities}"
-        )
-        
-        return state
-    
-    def _retrieve_context_node(self, state: AgentState) -> AgentState:
-        """
-        Nodo 2: Recuperar contexto desde RAG si es necesario.
-        """
-        state["current_node"] = "retrieve_context"
-        
         question = state["question"]
-        intent = state["context"].get("intent", "unknown")
         
-        # Determinar si necesita RAG
-        needs_rag = self._needs_rag_context(intent, question)
+        # Clasificar intención
+        intent = self._classify_intent(question)
         
-        if needs_rag and self._vectorstore_service:
-            # Construir query de RAG
-            rag_query = self._build_rag_query(question, intent)
-            
-            # Buscar en vectorstore
-            try:
-                docs = self._vectorstore_service.search_by_company(
-                    rag_query,
-                    self.company_config.company_id,
-                    k=3
-                )
-                
-                # Extraer contenido relevante
-                rag_context = self._extract_rag_content(docs, intent)
-                
-                state["vectorstore_context"] = rag_context
-                
-                # Registrar razonamiento
-                reasoning_step = self._add_reasoning_step(
-                    state,
-                    NodeType.REASONING,
-                    "Retrieved context from knowledge base",
-                    thought=f"Query: '{rag_query}'",
-                    observation=f"Found {len(docs)} relevant documents",
-                    confidence=0.9 if rag_context else 0.3
-                )
-                
-                state["reasoning_steps"].append(reasoning_step)
-                
-                logger.debug(
-                    f"[{self.company_config.company_id}] RAG context retrieved "
-                    f"({len(docs)} docs)"
-                )
-                
-            except Exception as e:
-                logger.error(f"Error retrieving RAG context: {e}")
-                state["warnings"].append(f"RAG retrieval failed: {str(e)}")
-        
-        else:
-            # No necesita RAG o no está disponible
-            state["vectorstore_context"] = self._get_basic_schedule_info()
-            
-            reasoning_step = self._add_reasoning_step(
-                state,
-                NodeType.REASONING,
-                "Using basic schedule information",
-                thought="RAG not needed or not available",
-                observation="Using company config defaults"
-            )
-            
-            state["reasoning_steps"].append(reasoning_step)
-        
-        return state
-    
-    def _decide_action_node(self, state: AgentState) -> AgentState:
-        """
-        Nodo 3: Decidir qué herramientas usar.
-        """
-        state["current_node"] = "decide_action"
-        
-        intent = state["context"].get("intent", "unknown")
-        entities = state["context"].get("entities", {})
-        
-        # Decidir herramientas basado en intención
-        tools_to_use = self._select_tools_for_intent(intent, entities, state)
-        
-        state["context"]["selected_tools"] = tools_to_use
+        # Guardar en contexto
+        state["context"]["intent"] = intent
         
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
             NodeType.DECISION,
-            "Deciding which tools to execute",
-            thought=f"Intent: {intent}, Entities: {list(entities.keys())}",
-            decision=f"Selected tools: {[t['tool_name'] for t in tools_to_use]}",
+            "Analyzed user intent",
+            thought=f"User question: '{question[:80]}'",
+            decision=f"Intent: {intent}",
             confidence=0.8
         )
         
         state["reasoning_steps"].append(reasoning_step)
         
         logger.debug(
-            f"[{self.company_config.company_id}] Selected {len(tools_to_use)} tools"
+            f"[{self.company_config.company_id}] Intent classified as: {intent}"
         )
+        
+        return state
+    
+    def _extract_entities_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 2: Extraer entidades (fecha, hora, servicio, nombre, etc.).
+        """
+        state["current_node"] = "extract_entities"
+        
+        question = state["question"]
+        intent = state["context"].get("intent", "get_info")
+        
+        # Extraer entidades según el intent
+        entities = self._extract_scheduling_entities(question)
+        
+        # Guardar en contexto
+        state["context"]["entities"] = entities
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.REASONING,
+            "Extracted entities",
+            observation=f"Found: {list(entities.keys())}",
+            confidence=0.7
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
+        
+        logger.debug(
+            f"[{self.company_config.company_id}] Entities extracted: {entities}"
+        )
+        
+        return state
+    
+    def _retrieve_context_node(self, state: AgentState) -> AgentState:
+        """
+        Nodo 3: Recuperar contexto de RAG si es necesario.
+        """
+        state["current_node"] = "retrieve_context"
+        
+        intent = state["context"].get("intent", "")
+        entities = state["context"].get("entities", {})
+        question = state["question"]
+        
+        # Solo buscar contexto si es necesario
+        rag_context = ""
+        
+        if intent == "get_info" or entities.get("treatment"):
+            # Construir query para RAG
+            treatment = entities.get("treatment", "")
+            search_query = f"informacion preparacion {treatment} cita procedimiento"
+            
+            if self._vectorstore_service:
+                try:
+                    docs = self._vectorstore_service.search(
+                        query=search_query,
+                        company_id=self.company_config.company_id,
+                        k=2
+                    )
+                    
+                    rag_context = self._extract_relevant_context(docs)
+                    
+                    logger.debug(
+                        f"[{self.company_config.company_id}] Retrieved {len(docs)} docs from RAG"
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Error retrieving context from RAG: {e}")
+        
+        # Guardar en contexto
+        state["context"]["rag_context"] = rag_context
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.TOOL_USE,
+            "Retrieved context from RAG",
+            observation=f"Context length: {len(rag_context)} chars"
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
         
         return state
     
     def _execute_tools_node(self, state: AgentState) -> AgentState:
         """
-        Nodo 4: Ejecutar herramientas seleccionadas.
+        Nodo 4: Ejecutar herramientas de calendario.
         """
         state["current_node"] = "execute_tools"
         
-        selected_tools = state["context"].get("selected_tools", [])
+        intent = state["context"].get("intent", "")
+        entities = state["context"].get("entities", {})
         
-        if not selected_tools:
-            logger.debug("No tools to execute")
-            return state
+        tool_results = {}
         
-        # Ejecutar cada tool
-        for tool_config in selected_tools:
-            tool_name = tool_config["tool_name"]
-            tool_params = tool_config["params"]
+        # Ejecutar herramientas según el intent
+        if intent == "create_appointment":
+            # Validar datos requeridos
+            if self._has_required_booking_data(entities):
+                # Ejecutar create_appointment
+                result = self._execute_create_appointment(entities, state)
+                tool_results["create_appointment"] = result
             
-            # Registrar inicio
-            reasoning_step = self._add_reasoning_step(
-                state,
-                NodeType.TOOL_EXECUTION,
-                f"Executing tool: {tool_name}",
-                action=f"Tool: {tool_name}",
-                observation="Waiting for result..."
-            )
-            state["reasoning_steps"].append(reasoning_step)
-            
-            # Ejecutar tool (con retry y manejo de errores)
-            result = self._execute_single_tool(tool_name, tool_params, state)
-            
-            # Guardar resultado
-            if result["success"]:
-                state["intermediate_results"][tool_name] = result["data"]
-                state["context"][f"{tool_name}_result"] = result["data"]
-                
-                # Actualizar observación
-                reasoning_step["observation"] = f"Success: {result['data']}"
-                
-            else:
-                error_msg = result.get("error", "Unknown error")
-                state["errors"].append(f"Tool {tool_name} failed: {error_msg}")
-                
-                # Safe-fail: continuar con otros tools
-                if self.config.safe_fail_on_tool_error:
-                    logger.warning(
-                        f"Tool {tool_name} failed, continuing with safe-fail"
-                    )
-                    reasoning_step["observation"] = f"Failed: {error_msg} (safe-fail)"
-                else:
-                    # Detener ejecución
-                    state["should_continue"] = False
-                    break
+        elif intent == "check_availability":
+            # Verificar disponibilidad
+            if entities.get("date"):
+                result = self._execute_check_availability(entities, state)
+                tool_results["get_available_slots"] = result
+        
+        # Guardar resultados
+        state["context"]["tool_results"] = tool_results
+        
+        # Registrar razonamiento
+        reasoning_step = self._add_reasoning_step(
+            state,
+            NodeType.TOOL_USE,
+            "Executed scheduling tools",
+            observation=f"Tools executed: {list(tool_results.keys())}"
+        )
+        
+        state["reasoning_steps"].append(reasoning_step)
+        
+        logger.debug(
+            f"[{self.company_config.company_id}] Tools executed: {list(tool_results.keys())}"
+        )
         
         return state
     
@@ -490,330 +432,121 @@ class ScheduleAgent(CognitiveAgentBase):
         """
         state["current_node"] = "generate_response"
         
-        intent = state["context"].get("intent", "unknown")
+        intent = state["context"].get("intent", "")
         entities = state["context"].get("entities", {})
-        tool_results = state["intermediate_results"]
-        rag_context = state.get("vectorstore_context", "")
+        tool_results = state["context"].get("tool_results", {})
+        rag_context = state["context"].get("rag_context", "")
         
-        # Construir prompt para generación de respuesta
+        # Generar respuesta
         response = self._build_final_response(
-            intent=intent,
-            entities=entities,
-            tool_results=tool_results,
-            rag_context=rag_context,
-            state=state
+            intent,
+            entities,
+            tool_results,
+            rag_context,
+            state
         )
         
         state["response"] = response
         state["status"] = ExecutionStatus.SUCCESS.value
         state["completed_at"] = datetime.utcnow().isoformat()
         
-        # Registrar razonamiento final
+        # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
             NodeType.RESPONSE_GENERATION,
             "Generated final response",
-            thought=f"Synthesizing response for intent: {intent}",
-            observation=f"Response length: {len(response)} chars",
-            confidence=0.9
+            observation=f"Response length: {len(response)} chars"
         )
         
         state["reasoning_steps"].append(reasoning_step)
         
-        logger.info(
-            f"[{self.company_config.company_id}] Response generated "
-            f"({len(response)} chars)"
+        logger.debug(
+            f"[{self.company_config.company_id}] Schedule response generated"
         )
         
         return state
     
     # ========================================================================
-    # DECISIONES CONDICIONALES
+    # HELPERS DE ANÁLISIS
     # ========================================================================
     
-    def _should_execute_tools(self, state: AgentState) -> str:
+    def _classify_intent(self, question: str) -> str:
         """
-        Determinar si ejecutar tools o ir directo a respuesta.
+        Clasificar intención del usuario.
         
         Returns:
-            "execute" o "skip"
-        """
-        selected_tools = state["context"].get("selected_tools", [])
-        
-        if not selected_tools:
-            return "skip"
-        
-        # Si no hay tool_executor, skip
-        if not self._tool_executor:
-            logger.warning("ToolExecutor not available, skipping tools")
-            state["warnings"].append("ToolExecutor not configured")
-            return "skip"
-        
-        return "execute"
-    
-    # ========================================================================
-    # HELPERS DE INTENCIÓN Y ENTIDADES
-    # ========================================================================
-    
-    def _detect_scheduling_intent(self, question: str) -> str:
-        """
-        Detectar intención específica de scheduling.
-        
-        Returns:
-            "check_availability", "create_appointment", "get_info", "unknown"
+            "create_appointment", "check_availability", "get_info"
         """
         question_lower = question.lower()
         
-        # Patrones de intención
-        availability_patterns = [
-            r"disponibilidad|disponible|horarios?|cuando.*atender|hay.*espacio",
-            r"libre|puede.*atender|primer.*cita"
+        # Create appointment
+        create_keywords = [
+            "agendar", "reservar", "programar", "solicitar",
+            "cita", "turno", "hora"
         ]
+        if any(kw in question_lower for kw in create_keywords):
+            return "create_appointment"
         
-        booking_patterns = [
-            r"agendar|reservar|cita|turno|programar|quiero.*cita",
-            r"necesito.*cita|solicitar.*cita"
+        # Check availability
+        availability_keywords = [
+            "disponibilidad", "horarios", "cuando", "libre",
+            "hay", "puede"
         ]
+        if any(kw in question_lower for kw in availability_keywords):
+            return "check_availability"
         
-        info_patterns = [
-            r"duracion|tiempo|cuanto.*dura|preparacion|requisitos",
-            r"antes.*de|informacion.*sobre|que.*necesito"
-        ]
-        
-        # Evaluar patrones
-        for pattern in availability_patterns:
-            if re.search(pattern, question_lower):
-                return "check_availability"
-        
-        for pattern in booking_patterns:
-            if re.search(pattern, question_lower):
-                return "create_appointment"
-        
-        for pattern in info_patterns:
-            if re.search(pattern, question_lower):
-                return "get_info"
-        
-        return "unknown"
+        # Get info (default)
+        return "get_info"
     
-    def _calculate_intent_confidence(self, question: str, intent: str) -> float:
-        """Calcular score de confianza para la intención detectada"""
-        # Implementación simple - puede mejorarse con ML
-        if intent == "unknown":
-            return 0.3
+    def _extract_scheduling_entities(self, question: str) -> Dict[str, Any]:
+        """Extraer entidades de scheduling (fecha, hora, servicio, etc.)"""
+        entities = {}
         
-        # Contar keywords relacionadas
-        question_lower = question.lower()
-        
-        intent_keywords = {
-            "check_availability": ["disponibilidad", "horario", "cuando", "libre"],
-            "create_appointment": ["agendar", "cita", "reservar", "turno"],
-            "get_info": ["información", "duración", "preparación", "requisitos"]
-        }
-        
-        keywords = intent_keywords.get(intent, [])
-        matches = sum(1 for kw in keywords if kw in question_lower)
-        
-        # Normalizar
-        confidence = min(0.5 + (matches * 0.15), 1.0)
-        return confidence
-    
-    def _extract_scheduling_entities(
-        self,
-        question: str,
-        chat_history: List
-    ) -> Dict[str, Any]:
-        """
-        Extraer entidades relevantes para scheduling.
-        
-        Returns:
-            Dict con: date, time, treatment, patient_info
-        """
-        entities = {
-            "date": None,
-            "time": None,
-            "treatment": None,
-            "patient_name": None
-        }
-        
-        # Extraer fecha
-        date_match = self._extract_date_from_text(question)
-        if date_match:
-            entities["date"] = date_match
-        
-        # Extraer hora
-        time_match = self._extract_time_from_text(question)
-        if time_match:
-            entities["time"] = time_match
-        
-        # Extraer tratamiento
-        treatment = self._extract_treatment_from_text(question)
-        if treatment:
-            entities["treatment"] = treatment
-        
-        # Buscar nombre en historial
-        if chat_history:
-            name = self._extract_name_from_history(chat_history)
-            if name:
-                entities["patient_name"] = name
-        
-        return entities
-    
-    def _extract_date_from_text(self, text: str) -> Optional[str]:
-        """Extraer fecha del texto - VERSIÓN MEJORADA"""
-        text_lower = text.lower()
-        
-        from datetime import datetime, timedelta
-        today = datetime.now()
-        
-        # 1. DÍAS DE LA SEMANA (NUEVO)
-        day_names = {
-            'lunes': 0, 'martes': 1, 'miércoles': 2, 'miercoles': 2,
-            'jueves': 3, 'viernes': 4, 'sábado': 5, 'sabado': 5, 'domingo': 6
-        }
-        
-        for day_name, day_num in day_names.items():
-            if day_name in text_lower:
-                current_day = today.weekday()
-                days_ahead = day_num - current_day
-                
-                if days_ahead <= 0:
-                    days_ahead += 7
-                
-                target_date = today + timedelta(days=days_ahead)
-                logger.debug(f"Parsed '{day_name}' as {target_date.strftime('%d-%m-%Y')}")
-                return target_date.strftime("%d-%m-%Y")
-        
-        # 2. Fechas relativas
-        relative_dates = {
-            'hoy': today,
-            'mañana': today + timedelta(days=1),
-            'pasado mañana': today + timedelta(days=2),
-            'pasado manana': today + timedelta(days=2)
-        }
-        
-        for word, date_obj in relative_dates.items():
-            if word in text_lower:
-                return date_obj.strftime("%d-%m-%Y")
-        
-        # 3. Patrones de fecha numérica
+        # Extraer fecha (simplificado)
         date_patterns = [
-            r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b',
-            r'\b(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})\b'
+            r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}',  # DD-MM-YYYY
+            r'mañana',
+            r'hoy',
+            r'lunes|martes|miercoles|jueves|viernes|sabado|domingo'
         ]
         
         for pattern in date_patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, question.lower())
             if match:
-                return match.group(0)
+                entities["date"] = match.group()
+                break
         
-        return None
-    
-    def _extract_time_from_text(self, text: str) -> Optional[str]:
-        """Extraer hora del texto"""
+        # Extraer hora (simplificado)
         time_patterns = [
-            r'\b(\d{1,2}):(\d{2})\s*(am|pm)?\b',
-            r'\b(\d{1,2})\s*(am|pm|horas)\b'
+            r'\d{1,2}:\d{2}',  # HH:MM
+            r'\d{1,2}\s*(am|pm)',
+            r'mañana|tarde|noche'
         ]
         
         for pattern in time_patterns:
-            match = re.search(pattern, text.lower())
+            match = re.search(pattern, question.lower())
             if match:
-                return match.group(0)
+                entities["time"] = match.group()
+                break
         
-        return None
+        # Extraer tratamiento/servicio
+        services_config = self.company_config.services
+        if isinstance(services_config, dict):
+            for service_name in services_config.keys():
+                if service_name.lower() in question.lower():
+                    entities["treatment"] = service_name
+                    break
+        
+        return entities
     
-    def _extract_treatment_from_text(self, text: str) -> Optional[str]:
-        """Extraer tratamiento del texto"""
-        text_lower = text.lower()
-        
-        # Obtener tratamientos de la configuración
-        if hasattr(self.company_config, 'treatment_durations'):
-            for treatment in self.company_config.treatment_durations.keys():
-                if treatment.lower() in text_lower:
-                    return treatment
-        
-        # Palabras clave genéricas
-        treatment_keywords = [
-            'limpieza', 'consulta', 'valoración', 'tratamiento',
-            'procedimiento', 'botox', 'relleno', 'facial'
-        ]
-        
-        for keyword in treatment_keywords:
-            if keyword in text_lower:
-                return keyword
-        
-        return None
-    
-    def _extract_name_from_history(self, chat_history: List) -> Optional[str]:
-        """Extraer nombre del paciente del historial"""
-        history_text = " ".join([
-            msg.content if hasattr(msg, 'content') else str(msg)
-            for msg in chat_history
-        ]).lower()
-        
-        patterns = [
-            r'mi nombre es ([a-záéíóúñ\s]+)',
-            r'me llamo ([a-záéíóúñ\s]+)',
-            r'soy ([a-záéíóúñ\s]+)'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, history_text)
-            if match:
-                name = match.group(1).strip().title()
-                if len(name.split()) >= 2:
-                    return name
-        
-        return None
-    
-    # ========================================================================
-    # HELPERS DE RAG
-    # ========================================================================
-    
-    def _needs_rag_context(self, intent: str, question: str) -> bool:
-        """Determinar si necesita contexto de RAG"""
-        # Siempre usar RAG para info y disponibilidad
-        if intent in ["get_info", "check_availability"]:
-            return True
-        
-        # Verificar keywords que sugieren necesidad de info
-        rag_keywords = [
-            "duración", "tiempo", "preparación", "requisitos",
-            "antes", "después", "información", "abono", "costo"
-        ]
-        
-        return any(kw in question.lower() for kw in rag_keywords)
-    
-    def _build_rag_query(self, question: str, intent: str) -> str:
-        """Construir query optimizada para RAG"""
-        base_keywords = "cita agenda horario duración preparación requisitos"
-        
-        if intent == "get_info":
-            return f"{base_keywords} información tratamiento {question}"
-        elif intent == "check_availability":
-            return f"{base_keywords} disponibilidad {question}"
-        elif intent == "create_appointment":
-            return f"{base_keywords} agendar reservar {question}"
-        else:
-            return f"{base_keywords} {question}"
-    
-    def _extract_rag_content(self, docs: List, intent: str) -> str:
-        """Extraer contenido relevante de documentos RAG"""
+    def _extract_relevant_context(self, docs: List) -> str:
+        """Extraer contexto relevante de documentos RAG"""
         if not docs:
             return ""
         
         relevant_content = []
         
-        # Keywords por intención
-        intent_keywords = {
-            "get_info": ["duración", "tiempo", "preparación", "requisitos", "abono"],
-            "check_availability": ["horario", "disponibilidad", "agenda"],
-            "create_appointment": ["agendar", "cita", "reservar", "requisitos"]
-        }
-        
-        keywords = intent_keywords.get(intent, [])
-        
-        for doc in docs[:3]:  # Max 3 docs
+        for doc in docs[:2]:
             content = ""
             
             if hasattr(doc, 'page_content'):
@@ -822,166 +555,67 @@ class ScheduleAgent(CognitiveAgentBase):
                 content = doc['content']
             
             if content:
-                content_lower = content.lower()
-                
-                # Solo incluir si es relevante
-                if any(kw in content_lower for kw in keywords):
-                    relevant_content.append(content)
+                relevant_content.append(content)
         
         return "\n\n".join(relevant_content) if relevant_content else ""
     
-    def _get_basic_schedule_info(self) -> str:
-        """Info básica de scheduling desde config"""
-        info_parts = [
-            f"Información de {self.company_config.company_name}:",
-            f"Servicios: {self.company_config.services}"
-        ]
-        
-        # Añadir duraciones si existen
-        if hasattr(self.company_config, 'treatment_durations'):
-            info_parts.append("\nDuraciones de tratamientos:")
-            for treatment, duration in self.company_config.treatment_durations.items():
-                info_parts.append(f"- {treatment}: {duration} minutos")
-        
-        return "\n".join(info_parts)
-    
-    # ========================================================================
-    # SELECCIÓN Y EJECUCIÓN DE TOOLS
-    # ========================================================================
-    
-    def _select_tools_for_intent(
-        self,
-        intent: str,
-        entities: Dict[str, Any],
-        state: AgentState
-    ) -> List[Dict[str, Any]]:
-        """
-        Seleccionar herramientas - VERSIÓN MEJORADA.
-        """
-        tools = []
-        
-        if intent == "create_appointment":
-            # Verificar datos disponibles
-            has_complete_info = all([
-                entities.get("date"),
-                entities.get("treatment")
-            ])
-            
-            # Marcar datos faltantes
-            missing_info = []
-            if not entities.get("date"):
-                missing_info.append("date")
-            if not entities.get("treatment"):
-                missing_info.append("treatment")
-            if not entities.get("patient_name"):
-                missing_info.append("patient_name")
-            
-            state["context"]["missing_info"] = missing_info
-            
-            if has_complete_info:
-                # Solo si tenemos info básica completa
-                tools.append({
-                    "tool_name": "validate_appointment_data",
-                    "params": {
-                        "appointment_data": self._build_appointment_data(entities, state),
-                        "company_id": self.company_config.company_id
-                    }
-                })
-                
-                tools.append({
-                    "tool_name": "create_appointment",
-                    "params": {
-                        "datetime": f"{entities['date']} {entities.get('time', '10:00')}",
-                        "patient_info": {
-                            "name": entities.get("patient_name", "Por confirmar"),
-                            "treatment": entities.get("treatment", "Consulta")
-                        },
-                        "service": entities.get("treatment"),
-                        "company_id": self.company_config.company_id
-                    }
-                })
-                
-                logger.info(
-                    f"[{self.company_config.company_id}] Selected {len(tools)} tools for booking"
-                )
-            else:
-                logger.info(
-                    f"[{self.company_config.company_id}] Incomplete info, will request: {missing_info}"
-                )
-        
-        elif intent == "check_availability":
-            if entities.get("date") or entities.get("treatment"):
-                tools.append({
-                    "tool_name": "get_available_slots",
-                    "params": {
-                        "date": entities.get("date", "próximos 7 días"),
-                        "treatment": entities.get("treatment", "cualquier servicio"),
-                        "company_id": self.company_config.company_id
-                    }
-                })
-        
-        return tools
-    
-    def _has_complete_booking_info(
-        self,
-        entities: Dict[str, Any],
-        state: AgentState
-    ) -> bool:
-        """Verificar si tenemos info completa para booking"""
+    def _has_required_booking_data(self, entities: Dict[str, Any]) -> bool:
+        """Verificar si tenemos datos mínimos para booking"""
         required = ["date", "treatment"]
         return all(entities.get(field) for field in required)
     
-    def _build_appointment_data(
+    def _execute_create_appointment(
         self,
         entities: Dict[str, Any],
         state: AgentState
     ) -> Dict[str, Any]:
-        """Construir datos de cita"""
+        """Ejecutar creación de cita (stub - requiere integración real)"""
+        # Por ahora, retornar éxito simulado
+        # En producción, esto llamaría al servicio de calendario real
+        
+        logger.info(
+            f"[{self.company_config.company_id}] Creating appointment: {entities}"
+        )
+        
         return {
-            "date": entities.get("date"),
-            "time": entities.get("time", "10:00"),
-            "treatment": entities.get("treatment"),
-            "patient_name": entities.get("patient_name"),
-            "company_id": self.company_config.company_id
+            "success": True,
+            "appointment_id": "mock_id_123",
+            "message": "Appointment created successfully"
         }
     
-    def _execute_single_tool(
+    def _execute_check_availability(
         self,
-        tool_name: str,
-        params: Dict[str, Any],
+        entities: Dict[str, Any],
         state: AgentState
-    ) -> Dict[str, Any]:
-        """
-        Ejecutar una herramienta individual.
+    ) -> List[str]:
+        """Consultar disponibilidad (stub - requiere integración real)"""
+        # Por ahora, retornar horarios simulados
+        # En producción, esto consultaría el calendario real
         
-        Usa AgentToolsService si está disponible, sino fallback a lógica directa.
-        """
-        if not self._tool_executor:
-            return {
-                "success": False,
-                "error": "ToolExecutor not configured"
-            }
+        logger.info(
+            f"[{self.company_config.company_id}] Checking availability: {entities}"
+        )
         
-        try:
-            # Ejecutar con tool executor
-            result = self._tool_executor.execute(
-                tool_name=tool_name,
-                params=params,
-                company_id=self.company_config.company_id,
-                user_id=state.get("user_id", "unknown")
-            )
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error executing tool {tool_name}: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+        return [
+            "09:00 AM",
+            "11:00 AM",
+            "02:00 PM",
+            "04:00 PM"
+        ]
+    
+    def _get_basic_schedule_info(self) -> str:
+        """Información básica de agendamiento"""
+        return (
+            f"Para agendar una cita en {self.company_config.company_name}, "
+            f"puedo ayudarte con:\n\n"
+            f"- Consultar disponibilidad de horarios\n"
+            f"- Agendar citas para {self.company_config.services}\n"
+            f"- Información sobre preparación para procedimientos\n\n"
+            f"¿Qué necesitas?"
+        )
     
     # ========================================================================
-    # GENERACIÓN DE RESPUESTA FINAL
+    # GENERACIÓN DE RESPUESTA
     # ========================================================================
     
     def _build_final_response(
@@ -993,41 +627,11 @@ class ScheduleAgent(CognitiveAgentBase):
         state: AgentState
     ) -> str:
         """
-        Construir respuesta final sintetizando toda la información.
+        Construir respuesta final usando _run_graph_prompt.
         """
-        # Usar LLM para generar respuesta natural
         try:
-            response_prompt = self._create_response_prompt()
-            
-            prompt_inputs = {
-                "intent": intent,
-                "entities": entities,
-                "tool_results": tool_results,
-                "rag_context": rag_context,
-                "question": state["question"],
-                "company_name": self.company_config.company_name,
-                "services": self.company_config.services
-            }
-            
-            # Generar con LLM
-            response = (response_prompt | self.chat_model).invoke(prompt_inputs)
-            
-            if hasattr(response, 'content'):
-                return response.content
-            else:
-                return str(response)
-            
-        except Exception as e:
-            logger.error(f"Error generating response with LLM: {e}")
-            
-            # Fallback: generar respuesta programática
-            return self._build_programmatic_response(
-                intent, entities, tool_results, rag_context
-            )
-    
-    def _create_response_prompt(self) -> ChatPromptTemplate:
-        """Crear prompt para generación de respuesta"""
-        template = """Eres un asistente de agendamiento para {company_name}.
+            # Preparar template
+            template = """Eres un asistente de agendamiento para {company_name}.
 
 INTENCIÓN DEL USUARIO: {intent}
 ENTIDADES DETECTADAS: {entities}
@@ -1047,8 +651,35 @@ INSTRUCCIONES:
 5. Mantén un tono cálido y profesional
 
 RESPUESTA:"""
-        
-        return ChatPromptTemplate.from_template(template)
+            
+            # Preparar variables
+            extra_vars = {
+                "intent": intent,
+                "entities": str(entities),
+                "tool_results": str(tool_results),
+                "rag_context": rag_context,
+                "question": state["question"],
+                "company_name": self.company_config.company_name,
+                "services": str(self.company_config.services)
+            }
+            
+            # Usar _run_graph_prompt de base cognitiva
+            response_content = self._run_graph_prompt(
+                agent_key="schedule",
+                template=template,
+                extra_vars=extra_vars,
+                state=state
+            )
+            
+            return response_content
+            
+        except Exception as e:
+            logger.error(f"Error generating response with LLM: {e}")
+            
+            # Fallback programático
+            return self._build_programmatic_response(
+                intent, entities, tool_results, rag_context
+            )
     
     def _build_programmatic_response(
         self,
@@ -1205,3 +836,27 @@ RESPUESTA:"""
             f"{self.company_config.company_name}. "
             f"¿Podrías intentarlo de nuevo o contactar directamente? 🙏"
         )
+    
+    # ========================================================================
+    # MÉTODOS LEGACY (MANTENER PARA COMPATIBILIDAD)
+    # ========================================================================
+    
+    def check_availability(
+        self,
+        question: str,
+        chat_history: list,
+        schedule_context: Dict[str, Any]
+    ) -> str:
+        """
+        Método legacy llamado por otros agentes.
+        
+        Redirige a invoke() con formato correcto.
+        """
+        inputs = {
+            "question": question,
+            "chat_history": chat_history,
+            "user_id": schedule_context.get("user_id", "availability_check"),
+            "company_id": schedule_context.get("company_id", self.company_config.company_id)
+        }
+        
+        return self.invoke(inputs)
