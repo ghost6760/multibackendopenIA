@@ -39,7 +39,7 @@ class StructuredPromptMigrationManager:
         }
         
         self.valid_companies = ['benova', 'spa_wellness', 'medispa', 'dental_clinic']
-        self.valid_agents = ['router_agent', 'sales_agent', 'support_agent', 
+        self.valid_agents = ['sales_agent', 'support_agent', 
                             'emergency_agent', 'schedule_agent']
     
     def run_complete_migration(self) -> Dict[str, Any]:
