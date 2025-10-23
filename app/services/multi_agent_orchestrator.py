@@ -585,16 +585,18 @@ class MultiAgentOrchestrator:
         """Orquestador principal que coordina los agentes mediante RouterNode (LangGraph)"""
         try:
             from app.agents._cognitive_base import AgentState
-
+    
             # 🧭 1. Ejecutar Router Graph (clasificación inicial)
             router_graph = self.agents.get("router_graph")
             if not router_graph:
                 raise RuntimeError("RouterGraph not initialized")
-
+    
             state = AgentState(inputs=inputs)
-            router_graph.set_entry_point("router")
-            result = router_graph.run(state)
-
+            
+            # ✅ FIX: Compilar y luego invocar
+            compiled_router = router_graph.compile()  # Agregar esta línea
+            result = compiled_router.invoke(state)     # Cambiar .run() por .invoke()
+            
             intent = result.data.get("intent", "support").upper()
             logger.info(f"[{self.company_id}] RouterNode classified intent: {intent}")
 
