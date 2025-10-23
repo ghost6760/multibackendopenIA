@@ -513,7 +513,7 @@ class CognitiveAgentBase(ABC):
     # ========================================================================
     
     @abstractmethod
-    def _build_graph(self):
+    def build_graph(self):
         """
         Construir el grafo LangGraph del agente.
         
