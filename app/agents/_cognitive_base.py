@@ -624,7 +624,44 @@ class CognitiveAgentBase(ABC):
         }
         
         return state
-    
+
+    def _validate_inputs(self, inputs: dict):
+        """
+        Validar inputs mínimos requeridos.
+        
+        Args:
+            inputs: Dict con inputs del usuario
+        
+        Raises:
+            ValueError si faltan campos obligatorios
+        """
+        required_fields = ["question", "user_id"]
+        
+        for field in required_fields:
+            if field not in inputs:
+                logger.error(
+                    f"[{self.agent_type.value}] Missing required field: {field}"
+                )
+                raise ValueError(f"Missing required field: {field}")
+            
+            if not inputs[field] or not str(inputs[field]).strip():
+                logger.error(
+                    f"[{self.agent_type.value}] Field '{field}' is empty"
+                )
+                raise ValueError(f"Field '{field}' cannot be empty")
+        
+        # Validar chat_history si existe
+        if "chat_history" in inputs and inputs["chat_history"] is not None:
+            if not isinstance(inputs["chat_history"], list):
+                logger.error(
+                    f"[{self.agent_type.value}] chat_history must be a list, got {type(inputs['chat_history'])}"
+                )
+                raise ValueError("chat_history must be a list")
+        
+        logger.debug(
+            f"[{self.agent_type.value}] Inputs validated successfully"
+        )
+        
     def _should_continue_execution(self, state: AgentState) -> bool:
         """
         Determinar si el agente debe continuar ejecutándose.
