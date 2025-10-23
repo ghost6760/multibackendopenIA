@@ -2,6 +2,7 @@
 from langgraph.graph import StateGraph
 from app.agents._cognitive_base import AgentState
 from app.services.openai_service import OpenAIService
+from app.agents._cognitive_base import get_inputs_from
 import logging, json
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,8 @@ def build_router_graph(company_config):
     openai_service = OpenAIService()
 
     def _router_node(state: AgentState) -> AgentState:
-        question = state.inputs.get("question", "")
+        inputs = get_inputs_from(state)
+        question = inputs.get("question", "")
         classification = "support"
         confidence = 0.5
 
