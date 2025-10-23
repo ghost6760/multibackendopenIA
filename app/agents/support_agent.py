@@ -319,7 +319,7 @@ class SupportAgent(CognitiveAgentBase):
         # Registrar razonamiento
         reasoning_step = self._add_reasoning_step(
             state,
-            NodeType.TOOL_USE,
+            NodeType.TOOL_EXECUTION,
             "Searched knowledge base",
             observation=f"Found solutions: {len(solutions) > 0}"
         )
