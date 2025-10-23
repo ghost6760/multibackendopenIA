@@ -483,7 +483,6 @@ class MultiAgentOrchestrator:
                     # 'raw' suele contener inputs/resultados del grafo
                     raw = original_content.get("raw")
                     if isinstance(raw, dict):
-                        # usar raw.inputs.question como último recurso útil
                         inputs = raw.get("inputs", {})
                         if isinstance(inputs, dict):
                             q = inputs.get("question")
@@ -595,7 +594,6 @@ class MultiAgentOrchestrator:
             conversation_manager.add_message(user_id, "user", processed_question)
     
             # 2) assistant (puede ser dict/obj/str) -> normalizar y añadir trazas
-            # Log debug del tipo y keys si es dict para trazabilidad
             try:
                 original_type = type(response)
                 if isinstance(response, dict):
