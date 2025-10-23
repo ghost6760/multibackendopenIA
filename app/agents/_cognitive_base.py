@@ -521,172 +521,137 @@ class CognitiveAgentBase(ABC):
 
     def _run_graph_prompt(
             self,
-            state,                     # puede venir como AgentState (TypedDict) o como dict -> lo normalizamos
-            prompt_node: Optional[Dict[str, Any]] = None,
-            agent_key: Optional[str] = None,
+            state: AgentState,
+            prompt_node: Dict[str, Any],
+            agent_key: str = None,
             **kwargs
         ) -> Dict[str, Any]:
         """
-        Ejecutar StateGraph/Prompt con defensas y compatibilidad.
-    
-        - Firma compatible: acepta agent_key y **kwargs (no rompe si se pasan args extra).
-        - Normaliza `state` si viene como dict para evitar errores tipo "'dict' object has no attribute 'inputs'".
-        - Si prompt_node es None intenta inferirlo desde kwargs o usa un fallback.
-        - Ejecuta el grafo llamando a self.graph.run(graph_inputs) si está disponible.
-        - Devuelve un dict normalizado con keys 'text', 'raw' y 'metadata'.
+        Ejecutar StateGraph con prompt estructurado y fallback seguro.
+        - Normaliza state si es dict.
+        - Ejecuta self.graph.run(graph_inputs) si está disponible.
+        - Devuelve diccionario: {'text','raw','metadata'}
         """
-    
-        # -------------------------
-        # 1) Tracing: registrar agent_key si se pasa (debug)
-        # -------------------------
         try:
-            if agent_key:
-                try:
-                    logger.debug(f"[_run_graph_prompt] called with agent_key={agent_key}")
-                except Exception:
-                    # no fallar por logging
-                    pass
-        except Exception:
-            pass
+            logger.debug(f"[_run_graph_prompt] called with agent_key={agent_key}")
     
-        # -------------------------
-        # 2) Normalizar `state` para que sea un dict con claves mínimas esperadas
-        # -------------------------
-        try:
-            # Si ya es dict, normalizamos campos faltantes
+            # --- Normalizar state si vino como dict u objeto con 'inputs' ---
             if isinstance(state, dict):
-                state = {
-                    "question": state.get("question", "") if isinstance(state.get("question", ""), str) else str(state.get("question", "")),
-                    "chat_history": state.get("chat_history", []) or [],
-                    "user_id": state.get("user_id", state.get("user", "unknown")),
-                    "company_id": state.get("company_id", None),
-                    "context": state.get("context", {}) or {},
-                    "metadata": state.get("metadata", {}) or {},
-                    "reasoning_steps": state.get("reasoning_steps", []) or [],
-                    "tools_called": state.get("tools_called", []) or [],
-                    "tool_results": state.get("tool_results", []) or [],
-                    "errors": state.get("errors", []) or [],
-                    "warnings": state.get("warnings", []) or [],
-                    "response": state.get("response", None),
-                    "current_node": state.get("current_node", "init"),
-                    "current_step": state.get("current_step", 0),
-                    "started_at": state.get("started_at", None),
-                    "completed_at": state.get("completed_at", None),
+                # extraer los campos principales y reconstruir AgentState parcial
+                inputs_from_state = get_inputs_from(state)
+                # conservar el state dict / pero asegurar keys usadas más abajo
+                norm_state = state.copy()
+                norm_state.setdefault("chat_history", inputs_from_state.get("chat_history", []))
+                norm_state.setdefault("question", inputs_from_state.get("question", ""))
+                norm_state.setdefault("context", inputs_from_state.get("context", {}))
+                state = norm_state  # sustituimos localmente
+                logger.debug(f"[_run_graph_prompt] normalized incoming state dict; question_len={len(state.get('question',''))}")
+    
+            # Normalizar chat_history
+            normalized_history = self._normalize_chat_history(
+                state.get("chat_history", [])
+            )
+    
+            # Construir inputs para el grafo
+            graph_inputs = {
+                "system_prompt": (prompt_node or {}).get("system", ""),
+                "examples": (prompt_node or {}).get("examples", []),
+                "placeholders": (prompt_node or {}).get("placeholders", {}),
+                "chat_history": normalized_history,
+                "question": state.get("question", ""),
+                "context": state.get("context", {}),
+                "metadata": {
+                    **state.get("metadata", {}),
+                    "prompt_source": (prompt_node or {}).get("meta", {}).get("source", "unknown")
                 }
-            else:
-                # Si es un objeto, intentar extraer atributos (fallback seguro)
+            }
+    
+            # Log minimal para trazabilidad
+            logger.info(
+                f"[{self.agent_type.value}] Graph prompt ready for agent_key={agent_key} "
+                f"history_len={len(normalized_history)} examples={len(graph_inputs['examples'])}"
+            )
+    
+            # --- 1) Intentar ejecutar grafo (LangGraph) si existe ---
+            graph_result = None
+            if hasattr(self, "graph") and self.graph:
+                # si el grafo expone run/compile/invoke
                 try:
-                    normal = {}
-                    for k in ("question","chat_history","user_id","company_id","context","metadata",
-                              "reasoning_steps","tools_called","tool_results","errors","warnings",
-                              "response","current_node","current_step","started_at","completed_at"):
-                        val = getattr(state, k, None)
-                        if val is None:
-                            if k in ("chat_history","reasoning_steps","tools_called","tool_results","errors","warnings"):
-                                normal[k] = []
-                            elif k in ("context","metadata"):
-                                normal[k] = {}
-                            else:
-                                normal[k] = None
-                        else:
-                            normal[k] = val
-                    state = normal
-                except Exception:
-                    state = {"question": "", "chat_history": [], "context": {}, "user_id": "unknown"}
-        except Exception:
-            # Nunca permitir que la normalización explote
-            state = {"question": "", "chat_history": [], "context": {}, "user_id": "unknown"}
-    
-        # -------------------------
-        # 3) Manejo de prompt_node ausente o mal formado
-        # -------------------------
-        if prompt_node is None:
-            try:
-                prompt_node = kwargs.get("prompt_node", None)
-            except Exception:
-                prompt_node = None
-    
-        if not isinstance(prompt_node, dict):
-            logger.warning(f"[_run_graph_prompt] prompt_node is None or malformed for agent {agent_key}; using fallback.")
-            prompt_node = {"name": "fallback_prompt", "system": "", "examples": [], "placeholders": {}, "meta": {"source": "fallback"}}
-    
-        # -------------------------
-        # 4) Construir inputs para el grafo / prompt
-        # -------------------------
-        # Normalizar chat history usando helper ya presente en la clase
-        try:
-            normalized_history = self._normalize_chat_history(state.get("chat_history", []))
-        except Exception:
-            normalized_history = []
-    
-        # Usar helper get_inputs_from para evitar errores con prompt_node.inputs
-        try:
-            prompt_inputs = get_inputs_from(prompt_node)
-        except Exception:
-            prompt_inputs = {}
-    
-        graph_inputs = {
-            "system_prompt": prompt_node.get("system", ""),
-            "examples": prompt_node.get("examples", []),
-            "placeholders": prompt_node.get("placeholders", {}),
-            "chat_history": normalized_history,
-            "question": state.get("question", ""),
-            "context": state.get("context", {}),
-            "metadata": {
-                **(state.get("metadata", {}) or {}),
-                "prompt_source": prompt_node.get("meta", {}).get("source", "unknown")
-            },
-            "inputs": prompt_inputs
-        }
-    
-        # -------------------------
-        # 5) Invocar el grafo / LLM usando self.graph.run(graph_inputs)
-        # -------------------------
-        raw_out = None
-        try:
-            if hasattr(self, "graph") and self.graph is not None and hasattr(self.graph, "run") and callable(getattr(self.graph, "run")):
-                try:
-                    raw_out = self.graph.run(graph_inputs)
-                except Exception as e_graph:
-                    logger.exception(f"[_run_graph_prompt] Error executing self.graph.run(): {e_graph}")
-                    raw_out = {"error": str(e_graph), "note": "graph.run failed"}
+                    if hasattr(self.graph, "run"):
+                        logger.debug(f"[_run_graph_prompt] Running self.graph.run() for agent {agent_key}")
+                        graph_result = self.graph.run(graph_inputs)
+                    elif hasattr(self.graph, "invoke"):
+                        logger.debug(f"[_run_graph_prompt] Running self.graph.invoke() for agent {agent_key}")
+                        graph_result = self.graph.invoke(graph_inputs)
+                    elif hasattr(self.graph, "compile") and hasattr(self, "compiled_graph") and self.compiled_graph:
+                        logger.debug(f"[_run_graph_prompt] Running compiled_graph.invoke() for agent {agent_key}")
+                        graph_result = self.compiled_graph.invoke(graph_inputs)
+                    else:
+                        logger.debug(f"[_run_graph_prompt] No runnable method found on graph for agent {agent_key}.")
+                except Exception as e:
+                    logger.error(f"[{self.agent_type.value}] Error executing graph.run(): {e}", exc_info=True)
+                    graph_result = None
             else:
                 logger.debug(f"[_run_graph_prompt] No graph available on agent {self.agent_type}. Skipping graph.run().")
-                raw_out = {"note": "no graph available", "inputs": graph_inputs}
-        except Exception as e:
-            logger.exception(f"[_run_graph_prompt] Unexpected error while invoking graph.run: {e}")
-            raw_out = {"error": str(e), "note": "unexpected invocation error"}
     
-        # Construir texto de salida según lo que retorne raw_out
-        text_out = ""
-        try:
-            # raw_out puede ser dict, objeto o string según implementación del grafo
-            if isinstance(raw_out, dict):
-                # Prioridad: response -> text -> output -> result
-                for key in ("response", "text", "output", "result"):
-                    if raw_out.get(key):
-                        text_out = raw_out.get(key)
-                        break
-            elif isinstance(raw_out, str):
-                text_out = raw_out
+            # --- 2) Procesar resultado del grafo si hay ---
+            final_text = ""
+            raw_out = None
+            metadata = {
+                'prompt_length': len(graph_inputs['system_prompt']),
+                'examples_count': len(graph_inputs['examples']),
+                'history_messages': len(normalized_history),
+                'execution_timestamp': datetime.utcnow().isoformat()
+            }
+    
+            if graph_result:
+                raw_out = graph_result
+                # varios formatos posibles: dict con 'text', o objeto con .text, o dict['output']
+                try:
+                    if isinstance(graph_result, dict):
+                        if graph_result.get("text"):
+                            final_text = graph_result.get("text")
+                        elif graph_result.get("output") and isinstance(graph_result.get("output"), str):
+                            final_text = graph_result.get("output")
+                        else:
+                            # Tal vez el grafo devuelve state-like con 'response'
+                            final_text = graph_result.get("response") or graph_result.get("result") or ""
+                    elif hasattr(graph_result, "text"):
+                        final_text = getattr(graph_result, "text")
+                    else:
+                        final_text = str(graph_result)
+                except Exception as e:
+                    logger.error(f"[_run_graph_prompt] Error extracting text from graph_result: {e}", exc_info=True)
+                    final_text = ""
+    
+                logger.debug(f"[_run_graph_prompt] Graph executed; produced_text_len={len(final_text)}")
+                metadata['from_graph'] = True
             else:
-                # objeto con atributo posible
-                text_out = getattr(raw_out, "response", "") or getattr(raw_out, "text", "") or ""
-        except Exception:
-            text_out = ""
+                # No graph result -> fallback (prompt_node puede ser None)
+                logger.warning(f"[_run_graph_prompt] prompt_node is None or malformed for agent {agent_key}; using fallback.")
+                raw_out = {"note": "no graph available", "inputs": graph_inputs}
+                metadata['from_graph'] = False
     
-        metadata = {
-            "prompt_length": len(graph_inputs["system_prompt"]),
-            "examples_count": len(graph_inputs["examples"]),
-            "history_messages": len(normalized_history),
-            "execution_timestamp": datetime.utcnow().isoformat()
-        }
+            # --- 3) Retorno normalizado ---
+            return {
+                'text': final_text or "",
+                'raw': raw_out,
+                'metadata': metadata
+            }
     
-        return {
-            "text": text_out,
-            "raw": raw_out,
-            "metadata": metadata
-        }
+        except Exception as e:
+            logger.error(
+                f"[{self.agent_type.value}] Error running graph prompt: {e}",
+                exc_info=True
+            )
+            return {
+                'text': "Error ejecutando el prompt.",
+                'raw': None,
+                'metadata': {
+                    'error': str(e),
+                    'error_timestamp': datetime.utcnow().isoformat()
+                }
+            }
 
     # ========================================================================
     # ABSTRACT METHODS (Deben ser implementados por subclases)
