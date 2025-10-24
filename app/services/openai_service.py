@@ -208,42 +208,49 @@ class OpenAIService:
                 
     
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (correct input types: input_text + input_image)."""
+        """Analyze image using Responses API (message + input_image; compliant payload)."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
     
         try:
-            # Leer bytes de la imagen
+            # Leer bytes
             if hasattr(image_file, "read"):
                 image_bytes = image_file.read()
             else:
                 with open(image_file, "rb") as f:
                     image_bytes = f.read()
     
-            # Recomendar subir a storage si es grande
+            # Recomendar subir a storage si imagen grande
             if len(image_bytes) > 300_000:
-                logger.warning("Image size > 300KB — consider uploading to storage and passing a public URL instead of a data URI.")
+                logger.warning("Image size > 300KB — consider uploading to storage and passing a public URL instead of data URI.")
     
             import base64, json
             base64_image = base64.b64encode(image_bytes).decode("utf-8")
             data_uri = f"data:image/jpeg;base64,{base64_image}"
     
-            # --- Construcción CORRECTA del input para Responses API ---
-            # Usamos item de tipo input_text y input_image (no 'output_text')
-            text_item = {
-                "type": "input_text",
-                "text": (
-                    "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
-                    "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
-                )
+            # Construir payload CORRECTO:
+            # 1) message que contiene input_text dentro de content
+            message_item = {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
+                            "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                        )
+                    }
+                ]
             }
     
+            # 2) imagen como input_image
             image_item = {
                 "type": "input_image",
                 "image_url": {"url": data_uri}
             }
     
-            input_payload = [text_item, image_item]
+            input_payload = [message_item, image_item]
     
             # DEBUG: log payload (recorta para no llenar logs)
             try:
@@ -251,6 +258,7 @@ class OpenAIService:
             except Exception:
                 logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): (could not json.dumps)")
     
+            # IMPORTANTE: asegúrate de usar un modelo multimodal si necesitas visión
             resp = self.client.responses.create(
                 model=self.model_name,
                 input=input_payload,
@@ -258,7 +266,6 @@ class OpenAIService:
                 temperature=0.1
             )
     
-            # Extraer texto de la respuesta de forma robusta (usa tu helper si existe)
             return self._extract_response_text(resp)
     
         except Exception as e:
@@ -285,8 +292,12 @@ class OpenAIService:
             if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
                 logger.warning(f"Content type might not be image: {content_type}")
     
-            # Si la imagen es grande: subir a storage y pasar la URL pública (recomendado).
             image_file = BytesIO(response.content)
+    
+            # Si la imagen es grande, subir a storage y pasar la URL pública es la opción robusta.
+            if len(response.content) > 300_000:
+                logger.warning("Downloaded image >300KB — recommended to upload to storage and pass public URL to Responses API.")
+    
             return self.analyze_image(image_file)
     
         except requests.exceptions.RequestException as e:
