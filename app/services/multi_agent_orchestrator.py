@@ -191,11 +191,14 @@ class MultiAgentOrchestrator:
         conversation_id = state.get("conversation_id")
         
         try:
+            history = []
             if conversation_id:
-                history = self.conversation_manager.get_conversation_history(
-                    conversation_id=conversation_id,
-                    limit=10
-                )
+                raw = self.conversation_manager.get_chat_history(
+                    user_id=conversation_id,
+                    format_type="dict"
+                ) or []
+                # raw ya es lista de dicts; limitarlo
+                history = raw[-10:]
                 
                 logger.debug(
                     f"[{self.company_config.company_id}] History loaded",
@@ -487,25 +490,28 @@ class MultiAgentOrchestrator:
             return state
         
         try:
-            # Guardar pregunta del usuario
+            # Guardar pregunta del usuario (usar user_id como primer argumento)
             self.conversation_manager.add_message(
-                conversation_id=conversation_id,
+                user_id=conversation_id,
                 role="user",
                 content=state["question"]
             )
             
-            # Guardar respuesta del agente
+            # Guardar respuesta del asistente (sin metadata, o maneja metadata aparte)
             self.conversation_manager.add_message(
-                conversation_id=conversation_id,
+                user_id=conversation_id,
                 role="assistant",
-                content=state["final_response"],
-                metadata={
-                    "agent": state.get("current_agent"),
-                    "intent": state.get("intent"),
-                    "confidence": state.get("confidence"),
-                    "execution_time": state.get("execution_time")
-                }
+                content=state["final_response"]
             )
+            
+            # Si quieres conservar metadata, guárdala aparte (ejemplo: log)
+            logger.debug({
+                "conversation_id": conversation_id,
+                "agent": state.get("current_agent"),
+                "intent": state.get("intent"),
+                "confidence": state.get("confidence"),
+                "execution_time": state.get("execution_time")
+            })
             
             logger.info(
                 f"History saved to conversation {conversation_id}",
