@@ -203,7 +203,7 @@ class MultiAgentOrchestrator:
                 # 🧠 2. Si no, usa el método real que tu backend tiene.
                 elif hasattr(self.conversation_manager, "get_chat_history"):
                     history = self.conversation_manager.get_chat_history(
-                        conversation_id,
+                        state["user_id"],
                         format_type="dict"
                     ) or []
 
