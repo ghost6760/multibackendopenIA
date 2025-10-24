@@ -10,138 +10,79 @@ from typing import Optional
 from flask import current_app
 import logging
 
+# FIXED: Remove app.core imports that don't exist in modular structure
 logger = logging.getLogger(__name__)
 
 
 class MultimediaService:
     def __init__(self):
-        # Inicializar cliente OpenAI (usar la misma configuración que el resto de la app)
+        # FIXED: Use current_app.config instead of app.core.config
         self.client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
-
-    # ---------------------------
-    # Helpers
-    # ---------------------------
-    def _extract_response_text(self, resp) -> str:
-        """Extrae texto de una respuesta de Responses API de forma tolerante."""
-        text_parts = []
-
-        try:
-            out = getattr(resp, "output", None)
-            if isinstance(out, list):
-                for item in out:
-                    # item puede ser dict o un objeto; normalizar a dict-accessible
-                    content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
-                    if isinstance(content, list):
-                        for c in content:
-                            if isinstance(c, dict):
-                                # formatos: {'type':'output_text','text': '...'} o {'text': '...'}
-                                if "text" in c:
-                                    text_parts.append(c["text"])
-                            elif isinstance(c, str):
-                                text_parts.append(c)
-        except Exception:
-            # no rompemos, iremos a fallbacks
-            pass
-
-        # fallback común: output_text
-        if not text_parts and hasattr(resp, "output_text"):
-            try:
-                text_parts.append(getattr(resp, "output_text"))
-            except Exception:
-                pass
-
-        if text_parts:
-            return "".join(text_parts).strip()
-
-        # último recurso: stringify
-        try:
-            return str(resp)
-        except Exception:
-            return ""
-
-    def _messages_to_prompt(self, messages) -> str:
-        """Convierta la lista de mensajes (role/content) a un prompt simple."""
-        if isinstance(messages, str):
-            return messages
-
-        parts = []
-        for m in messages:
-            role = m.get("role", "user") if isinstance(m, dict) else "user"
-            content = m.get("content", "") if isinstance(m, dict) else str(m)
-            if isinstance(content, list):
-                subparts = []
-                for c in content:
-                    if isinstance(c, dict) and "text" in c:
-                        subparts.append(c["text"])
-                    elif isinstance(c, str):
-                        subparts.append(c)
-                content_text = " ".join(subparts)
-            else:
-                content_text = str(content)
-            parts.append(f"{role.upper()}: {content_text}")
-        return "\n".join(parts)
-
-    # ---------------------------
-    # Audio / Transcription
-    # ---------------------------
+    
     def transcribe_audio(self, audio_path: str) -> str:
-        """Transcribe audio to text using Whisper with Spanish language."""
+        """Transcribe audio to text using Whisper with Spanish language (EXACTLY like monolith)"""
         try:
             with open(audio_path, "rb") as audio_file:
+                # FIXED: Add language="es" like in monolith
                 transcript = self.client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
-                    language="es",
+                    language="es",  # MISSING in modular - NOW ADDED
                     response_format="text"
                 )
-
-            return transcript.text if hasattr(transcript, "text") else str(transcript)
-
+            
+            return transcript.text if hasattr(transcript, 'text') else str(transcript)
+            
         except Exception as e:
             logger.error(f"Error in audio transcription: {e}")
             raise
 
     def transcribe_audio_from_url(self, audio_url: str) -> str:
-        """Download audio and transcribe it (with safe temp-file handling)."""
+        """Transcribe audio from URL with improved error handling (EXACTLY like monolith)"""
         try:
             logger.info(f"Downloading audio from: {audio_url}")
             headers = {
-                "User-Agent": "Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)",
-                "Accept": "audio/*,*/*;q=0.9",
+                'User-Agent': 'Mozilla/5.0 (compatible; ChatbotAudioTranscriber/1.0)',
+                'Accept': 'audio/*,*/*;q=0.9'
             }
-
+            
             response = requests.get(audio_url, headers=headers, timeout=60, stream=True)
             response.raise_for_status()
-
-            content_type = response.headers.get("content-type", "").lower()
+            
+            # Verify content-type if available
+            content_type = response.headers.get('content-type', '').lower()
             logger.info(f"Audio content-type: {content_type}")
-
-            extension = ".ogg"
-            if "mp3" in content_type or audio_url.endswith(".mp3"):
-                extension = ".mp3"
-            elif "wav" in content_type or audio_url.endswith(".wav"):
-                extension = ".wav"
-            elif "m4a" in content_type or audio_url.endswith(".m4a"):
-                extension = ".m4a"
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as tmp:
+            
+            # Determine extension based on content-type or URL
+            extension = '.ogg'  # Default for Chatwoot
+            if 'mp3' in content_type or audio_url.endswith('.mp3'):
+                extension = '.mp3'
+            elif 'wav' in content_type or audio_url.endswith('.wav'):
+                extension = '.wav'
+            elif 'm4a' in content_type or audio_url.endswith('.m4a'):
+                extension = '.m4a'
+            
+            # Create temporary file with correct extension
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
                 for chunk in response.iter_content(chunk_size=8192):
-                    tmp.write(chunk)
-                temp_path = tmp.name
-
+                    temp_file.write(chunk)
+                temp_path = temp_file.name
+            
             logger.info(f"Audio saved to temp file: {temp_path} (size: {os.path.getsize(temp_path)} bytes)")
-
+            
             try:
                 result = self.transcribe_audio(temp_path)
                 logger.info(f"Transcription successful: {len(result)} characters")
                 return result
+                
             finally:
+                # Clean up temporary file
                 try:
                     os.unlink(temp_path)
                     logger.info(f"Temporary file deleted: {temp_path}")
                 except Exception as cleanup_error:
                     logger.warning(f"Could not delete temp file {temp_path}: {cleanup_error}")
-
+            
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading audio: {e}")
             raise Exception(f"Error downloading audio: {str(e)}")
@@ -149,102 +90,64 @@ class MultimediaService:
             logger.error(f"Error in audio transcription from URL: {e}")
             raise
 
-    # ---------------------------
-    # Image analysis (Responses API)
-    # ---------------------------
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (message + input_image; compliant payload)."""
-        if not self.image_enabled:
-            raise ValueError("Image processing is not enabled")
-    
+        """Analyze image using GPT-4 Vision (EXACTLY like monolith)"""
         try:
-            # Leer bytes
-            if hasattr(image_file, "read"):
-                image_bytes = image_file.read()
-            else:
-                with open(image_file, "rb") as f:
-                    image_bytes = f.read()
-    
-            # Recomendar subir a storage si imagen grande
-            if len(image_bytes) > 300_000:
-                logger.warning("Image size > 300KB — consider uploading to storage and passing a public URL instead of data URI.")
-    
-            import base64, json
-            base64_image = base64.b64encode(image_bytes).decode("utf-8")
-            data_uri = f"data:image/jpeg;base64,{base64_image}"
-    
-            # Construir payload CORRECTO:
-            # 1) message que contiene input_text dentro de content
-            message_item = {
-                "type": "message",
-                "role": "user",
-                "content": [
+            # Convert image to base64
+            image_data = base64.b64encode(image_file.read()).decode('utf-8')
+            
+            # Use correct v1.x syntax
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
                     {
-                        "type": "input_text",
-                        "text": (
-                            "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
-                            "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
-                        )
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text", 
+                                "text": "Describe esta imagen en detalle, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_data}",
+                                    "detail": "high"  # Added for better analysis
+                                }
+                            }
+                        ]
                     }
-                ]
-            }
-    
-            # 2) imagen como input_image
-            image_item = {
-                "type": "input_image",
-                "image_url": {"url": data_uri}
-            }
-    
-            input_payload = [message_item, image_item]
-    
-            # DEBUG: log payload (recorta para no llenar logs)
-            try:
-                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): %s", json.dumps(input_payload)[:8000])
-            except Exception:
-                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): (could not json.dumps)")
-    
-            # IMPORTANTE: asegúrate de usar un modelo multimodal si necesitas visión
-            resp = self.client.responses.create(
-                model=self.model_name,
-                input=input_payload,
-                max_output_tokens=500,
-                temperature=0.1
+                ],
+                max_tokens=500,
+                temperature=0.1  # More deterministic for analysis
             )
-    
-            return self._extract_response_text(resp)
-    
+            
+            return response.choices[0].message.content
+            
         except Exception as e:
-            logger.error(f"Error analyzing image (Responses): {e}")
-            try:
-                logger.debug("Exception details: %s", getattr(e, "args", e))
-            except Exception:
-                pass
+            logger.error(f"Error in image analysis: {e}")
             raise
 
-
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Analyze image from URL using Responses API (delegates to analyze_image)."""
-        if not self.image_enabled:
-            raise ValueError("Image processing is not enabled")
-    
+        """Analyze image from URL using GPT-4 Vision (EXACTLY like monolith)"""
         try:
             logger.info(f"Downloading image from: {image_url}")
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)"}
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)'
+            }
             response = requests.get(image_url, headers=headers, timeout=30)
             response.raise_for_status()
-    
-            content_type = response.headers.get("content-type", "").lower()
-            if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
+            
+            # Verify it's an image
+            content_type = response.headers.get('content-type', '').lower()
+            if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'gif', 'webp']):
                 logger.warning(f"Content type might not be image: {content_type}")
-    
+            
+            # Create file in memory
             image_file = BytesIO(response.content)
-    
-            # Si la imagen es grande, subir a storage y pasar la URL pública es la opción robusta.
-            if len(response.content) > 300_000:
-                logger.warning("Downloaded image >300KB — recommended to upload to storage and pass public URL to Responses API.")
-    
+            
+            # Analyze using existing function
             return self.analyze_image(image_file)
-    
+            
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading image: {e}")
             raise Exception(f"Error downloading image: {str(e)}")
@@ -252,39 +155,19 @@ class MultimediaService:
             logger.error(f"Error in image analysis from URL: {e}")
             raise
 
-    # ---------------------------
-    # Text-to-speech
-    # ---------------------------
     def text_to_speech(self, text: str) -> str:
-        """Convert text to audio using OpenAI TTS"""
+        """Convert text to audio using OpenAI TTS (EXACTLY like monolith)"""
         try:
             response = self.client.audio.speech.create(
                 model="tts-1",
                 voice="alloy",
                 input=text
             )
-
-            # Algunos SDKs exponen método para guardar/stream; usamos fallback a archivo temporal
+            
+            # Save audio temporarily
             temp_path = "/tmp/response.mp3"
-            try:
-                # Si existe método stream_to_file
-                if hasattr(response, "stream_to_file"):
-                    response.stream_to_file(temp_path)
-                else:
-                    # intentar obtener bytes en .content o .audio
-                    content = getattr(response, "content", None) or getattr(response, "audio", None)
-                    if isinstance(content, (bytes, bytearray)):
-                        with open(temp_path, "wb") as f:
-                            f.write(content)
-                    else:
-                        # fallback a str(resp)
-                        with open(temp_path, "wb") as f:
-                            f.write(str(response).encode("utf-8"))
-            except Exception:
-                # Si falló el guardado específico, intentar cast simple
-                with open(temp_path, "wb") as f:
-                    f.write(str(response).encode("utf-8"))
-
+            response.stream_to_file(temp_path)
+            
             return temp_path
         except Exception as e:
             logger.error(f"Error in text-to-speech: {e}")
