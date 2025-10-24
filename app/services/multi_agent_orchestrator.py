@@ -33,102 +33,33 @@ class MultiAgentOrchestrator:
     
     def __init__(
         self, 
-        company_config: CompanyConfig = None,
-        agents: Dict[str, Any] = None,
-        conversation_manager: Optional[ConversationManager] = None,
-        **kwargs  # ← Captura argumentos legacy
+        company_config: CompanyConfig,
+        agents: Dict[str, Any],
+        conversation_manager: Optional[ConversationManager] = None
     ):
         """
         Inicializar orquestador con LangGraph.
-        
-        ✅ BACKWARD COMPATIBLE con llamadas legacy
         
         Args:
             company_config: Configuración de la empresa
             agents: Diccionario de agentes {nombre: instancia}
             conversation_manager: Manager de conversaciones
-            **kwargs: Captura argumentos legacy (company_id, openai_service, etc)
         """
-    
-        # ===== COMPATIBILIDAD BACKWARD =====
-        # Manejo de llamadas legacy con company_id
-        if company_config is None:
-            if 'company_id' in kwargs:
-                # Legacy call: MultiAgentOrchestrator(company_id="benova", ...)
-                company_id = kwargs['company_id']
-                logger.warning(
-                    f"⚠️ Legacy call detected with company_id={company_id}. "
-                    f"Update caller to pass company_config object."
-                )
-                
-                # ✅ OBTENER CompanyConfig COMPLETO del manager
-                try:
-                    from app.config.company_config import get_company_config
-                    company_config = get_company_config(company_id)
-                    logger.info(f"✅ Retrieved full CompanyConfig for {company_id}")
-                except Exception as e:
-                    logger.error(f"Failed to get CompanyConfig for {company_id}: {e}")
-                    raise ValueError(
-                        f"Cannot initialize MultiAgentOrchestrator: "
-                        f"company_id '{company_id}' not found in config manager"
-                    )
-            else:
-                raise ValueError("Either company_config or company_id must be provided")
-        
-        # Si agents no se pasó, intentar obtenerlo de kwargs
-        if agents is None:
-            agents = kwargs.get('agents', {})
-        
-        # ===== VALIDACIÓN =====
-        if not isinstance(company_config, CompanyConfig):
-            raise TypeError(
-                f"company_config must be CompanyConfig instance, got {type(company_config)}"
-            )
-        
-        if not agents:
-            logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
-        
-        # ===== IGNORAR openai_service de kwargs (legacy) =====
-        if 'openai_service' in kwargs:
-            logger.debug(f"[{company_config.company_id}] Ignoring openai_service from kwargs (legacy)")
-        
-        # ===== INICIALIZACIÓN NORMAL =====
         self.company_config = company_config
         self.agents = agents
         self.conversation_manager = conversation_manager or ConversationManager()
-    
-        # 🧠 FIX 1: Asegurar que el RouterAgent exista
-        if "router" not in self.agents and "router_agent" not in self.agents:
-            try:
-                from app.agents.router_agent import RouterAgent
-                self.agents["router"] = RouterAgent(company_config)
-                logger.info(f"[{company_config.company_id}] ✅ Default RouterAgent initialized")
-            except Exception as e:
-                logger.error(f"[{company_config.company_id}] ❌ Failed to initialize RouterAgent: {e}")
-    
-        # 🧠 FIX 2: Validar métodos del ConversationManager
-        if not hasattr(self.conversation_manager, "get_chat_history"):
-            logger.warning(
-                f"[{company_config.company_id}] ConversationManager lacks get_chat_history(), "
-                f"fallbacks may be used in history loader."
-            )
-    
-        # ===== CONSTRUCCIÓN DEL GRAFO =====
-        try:
-            self.graph = self._build_orchestrator_graph()
-        except Exception as e:
-            logger.exception(f"Error building orchestrator graph for {company_config.company_id}: {e}")
-            raise
+        
+        # Construir grafo
+        self.graph = self._build_orchestrator_graph()
         
         logger.info(
             f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
             extra={
                 "available_agents": list(agents.keys()),
-                "has_conversation_manager": conversation_manager is not None,
-                "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
+                "has_conversation_manager": conversation_manager is not None
             }
         )
-
+    
     def _build_orchestrator_graph(self) -> StateGraph:
         """
         Construir grafo de orquestación.
@@ -201,42 +132,36 @@ class MultiAgentOrchestrator:
     # =========================================================================
     
     def _load_history_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Cargar historial conversacional desde DB (robusto a distintos ConversationManagers)"""
+        """Cargar historial conversacional desde DB"""
         conversation_id = state.get("conversation_id")
-
+        
         try:
-            history = []
-            if conversation_id and self.conversation_manager:
-                # 🧠 1. Si existe el método nuevo, úsalo.
-                if hasattr(self.conversation_manager, "get_conversation_history"):
-                    history = self.conversation_manager.get_conversation_history(
-                        conversation_id=conversation_id,
-                        limit=10
-                    ) or []
-
-                # 🧠 2. Si no, usa el método real que tu backend tiene.
-                elif hasattr(self.conversation_manager, "get_chat_history"):
-                    history = self.conversation_manager.get_chat_history(
-                        state["user_id"],
-                        format_type="dict"
-                    ) or []
-
-                # 🧠 3. Último fallback si solo existe get_conversation_details
-                elif hasattr(self.conversation_manager, "get_conversation_details"):
-                    details = self.conversation_manager.get_conversation_details(conversation_id) or {}
-                    history = details.get("messages") or details.get("history") or []
-
+            if conversation_id:
+                history = self.conversation_manager.get_conversation_history(
+                    conversation_id=conversation_id,
+                    limit=10
+                )
+                
+                logger.debug(
+                    f"[{self.company_config.company_id}] History loaded",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "history_length": len(history)
+                    }
+                )
+            else:
+                history = []
+            
             return {
                 **state,
                 "chat_history": history,
                 "retry_count": 0,
                 "timestamp": datetime.utcnow().isoformat()
             }
-
+            
         except Exception as e:
             logger.error(f"Error loading history: {e}")
             return {**state, "chat_history": [], "retry_count": 0}
-
     
     def _classify_intent_node(self, state: OrchestratorState) -> OrchestratorState:
         """Clasificar intención usando RouterAgent"""
@@ -244,20 +169,8 @@ class MultiAgentOrchestrator:
             start_time = time.time()
             
             # Ejecutar RouterAgent
-            router_agent = (
-                self.agents.get("router")
-                or self.agents.get("router_agent")
-                or self.agents.get("routing_agent")
-                or None
-            )
-            
-            if not router_agent:
-                raise KeyError("Router agent not found in orchestrator registry")
-                logger.debug(f"[{self.company_config.company_id}] Using router agent: {router_agent.__class__.__name__}")
-
-            # ✅ Ejecutar invoke del router agent real
-            router_response = router_agent.invoke({
-                "question": state.get("question", ""),
+            router_response = self.agents["router"].invoke({
+                "question": state["question"],
                 "chat_history": state.get("chat_history", [])
             })
             
@@ -703,57 +616,3 @@ class MultiAgentOrchestrator:
             "graph_nodes": len(self.graph.get_graph().nodes),
             "has_conversation_manager": self.conversation_manager is not None
         }
-
-
-    # =========================================================================
-    # MÉTODOS DE COMPATIBILIDAD CON FACTORY
-    # =========================================================================
-    
-    def set_vectorstore_service(self, vectorstore_service: Any):
-        """
-        Compatibilidad con MultiAgentFactory.
-        
-        En el nuevo orchestrator, el vectorstore ya está en los agentes,
-        por lo que este método no hace nada. Se mantiene para no romper
-        el código del factory.
-        """
-        logger.debug(
-            f"[{self.company_config.company_id}] set_vectorstore_service called "
-            f"(ignored - agents already have vectorstore)"
-        )
-        # No hacer nada - los agentes ya tienen vectorstore configurado
-        pass
-    
-    def set_tool_executor(self, tool_executor: Any):
-        """
-        Compatibilidad con MultiAgentFactory.
-        
-        En el nuevo orchestrator, los tools ya están en los agentes,
-        por lo que este método no hace nada. Se mantiene para no romper
-        el código del factory.
-        """
-        logger.debug(
-            f"[{self.company_config.company_id}] set_tool_executor called "
-            f"(ignored - agents already have tools)"
-        )
-        # No hacer nada - los agentes ya tienen tools configurados
-        pass
-    
-    def health_check(self) -> Dict[str, Any]:
-        """
-        Health check del orchestrator.
-        Compatibilidad con código existente.
-        """
-        try:
-            return {
-                "system_healthy": True,
-                "company_id": self.company_config.company_id,
-                "agents_count": len(self.agents),
-                "graph_initialized": self.graph is not None,
-                "conversation_manager": self.conversation_manager is not None
-            }
-        except Exception as e:
-            return {
-                "system_healthy": False,
-                "error": str(e)
-            }
