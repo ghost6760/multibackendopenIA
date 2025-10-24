@@ -153,9 +153,9 @@ class MultimediaService:
     # Image analysis (Responses API)
     # ---------------------------
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (fixed input types)."""
-        if not self.client:
-            raise RuntimeError("OpenAI client not initialized")
+        """Analyze image using Responses API (message + input_image; compliant payload)."""
+        if not self.image_enabled:
+            raise ValueError("Image processing is not enabled")
     
         try:
             # Leer bytes
@@ -165,22 +165,45 @@ class MultimediaService:
                 with open(image_file, "rb") as f:
                     image_bytes = f.read()
     
-            # Si la imagen es grande, preferible subir a storage y pasar URL pública.
+            # Recomendar subir a storage si imagen grande
             if len(image_bytes) > 300_000:
-                logger.warning("Image size > 300KB — consider uploading to storage and passing a URL instead of data URI.")
+                logger.warning("Image size > 300KB — consider uploading to storage and passing a public URL instead of data URI.")
     
-            # Construir data URI (fallback si no tienes storage)
+            import base64, json
             base64_image = base64.b64encode(image_bytes).decode("utf-8")
             data_uri = f"data:image/jpeg;base64,{base64_image}"
     
-            # Construir input en la forma esperada por Responses API:
-            # 1) message (role/content) con la instrucción
-            # 2) input_image con image_url objeto { "url": ... }
-            input_payload = [
-                {"role": "user", "content": "Describe esta imagen en detalle en español, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."},
-                {"type": "input_image", "image_url": {"url": data_uri}}
-            ]
+            # Construir payload CORRECTO:
+            # 1) message que contiene input_text dentro de content
+            message_item = {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
+                            "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                        )
+                    }
+                ]
+            }
     
+            # 2) imagen como input_image
+            image_item = {
+                "type": "input_image",
+                "image_url": {"url": data_uri}
+            }
+    
+            input_payload = [message_item, image_item]
+    
+            # DEBUG: log payload (recorta para no llenar logs)
+            try:
+                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): %s", json.dumps(input_payload)[:8000])
+            except Exception:
+                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): (could not json.dumps)")
+    
+            # IMPORTANTE: asegúrate de usar un modelo multimodal si necesitas visión
             resp = self.client.responses.create(
                 model=self.model_name,
                 input=input_payload,
@@ -191,13 +214,19 @@ class MultimediaService:
             return self._extract_response_text(resp)
     
         except Exception as e:
-            # Hacer el error más legible (incluir body si viene del cliente)
             logger.error(f"Error analyzing image (Responses): {e}")
+            try:
+                logger.debug("Exception details: %s", getattr(e, "args", e))
+            except Exception:
+                pass
             raise
 
 
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Analyze image from URL using Responses API (fixed input types)."""
+        """Analyze image from URL using Responses API (delegates to analyze_image)."""
+        if not self.image_enabled:
+            raise ValueError("Image processing is not enabled")
+    
         try:
             logger.info(f"Downloading image from: {image_url}")
             headers = {"User-Agent": "Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)"}
@@ -208,14 +237,12 @@ class MultimediaService:
             if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
                 logger.warning(f"Content type might not be image: {content_type}")
     
-            # Usar BytesIO y delegar
             image_file = BytesIO(response.content)
     
-            # Opcional: si la imagen es pequeña, podemos pasar la data-uri; si es grande, subirla a storage y pasar la URL:
+            # Si la imagen es grande, subir a storage y pasar la URL pública es la opción robusta.
             if len(response.content) > 300_000:
-                # RECOMENDADO: subir a storage y usar URL pública aquí.
                 logger.warning("Downloaded image >300KB — recommended to upload to storage and pass public URL to Responses API.")
-                # Fallback: still use data-uri (may fail if too big)
+    
             return self.analyze_image(image_file)
     
         except requests.exceptions.RequestException as e:
