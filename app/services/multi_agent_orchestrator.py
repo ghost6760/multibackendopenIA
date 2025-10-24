@@ -187,36 +187,42 @@ class MultiAgentOrchestrator:
     # =========================================================================
     
     def _load_history_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Cargar historial conversacional desde DB"""
+        """Cargar historial conversacional desde DB (robusto a distintos ConversationManagers)"""
         conversation_id = state.get("conversation_id")
-        
+
         try:
-            if conversation_id:
-                history = self.conversation_manager.get_conversation_history(
-                    conversation_id=conversation_id,
-                    limit=10
-                )
-                
-                logger.debug(
-                    f"[{self.company_config.company_id}] History loaded",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "history_length": len(history)
-                    }
-                )
-            else:
-                history = []
-            
+            history = []
+            if conversation_id and self.conversation_manager:
+                # 🧠 1. Si existe el método nuevo, úsalo.
+                if hasattr(self.conversation_manager, "get_conversation_history"):
+                    history = self.conversation_manager.get_conversation_history(
+                        conversation_id=conversation_id,
+                        limit=10
+                    ) or []
+
+                # 🧠 2. Si no, usa el método real que tu backend tiene.
+                elif hasattr(self.conversation_manager, "get_chat_history"):
+                    history = self.conversation_manager.get_chat_history(
+                        conversation_id,
+                        format_type="dict"
+                    ) or []
+
+                # 🧠 3. Último fallback si solo existe get_conversation_details
+                elif hasattr(self.conversation_manager, "get_conversation_details"):
+                    details = self.conversation_manager.get_conversation_details(conversation_id) or {}
+                    history = details.get("messages") or details.get("history") or []
+
             return {
                 **state,
                 "chat_history": history,
                 "retry_count": 0,
                 "timestamp": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             logger.error(f"Error loading history: {e}")
             return {**state, "chat_history": [], "retry_count": 0}
+
     
     def _classify_intent_node(self, state: OrchestratorState) -> OrchestratorState:
         """Clasificar intención usando RouterAgent"""
@@ -224,8 +230,20 @@ class MultiAgentOrchestrator:
             start_time = time.time()
             
             # Ejecutar RouterAgent
-            router_response = self.agents["router"].invoke({
-                "question": state["question"],
+            router_agent = (
+                self.agents.get("router")
+                or self.agents.get("router_agent")
+                or self.agents.get("routing_agent")
+                or None
+            )
+            
+            if not router_agent:
+                raise KeyError("Router agent not found in orchestrator registry")
+                logger.debug(f"[{self.company_config.company_id}] Using router agent: {router_agent.__class__.__name__}")
+
+            # ✅ Ejecutar invoke del router agent real
+            router_response = router_agent.invoke({
+                "question": state.get("question", ""),
                 "chat_history": state.get("chat_history", [])
             })
             
