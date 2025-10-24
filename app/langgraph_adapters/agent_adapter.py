@@ -17,7 +17,7 @@ Principio de diseño:
 solo se envuelven para orquestación cognitiva.
 """
 
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 import logging
 import time
