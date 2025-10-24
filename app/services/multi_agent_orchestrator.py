@@ -1,794 +1,372 @@
-# app/services/multi_agent_orchestrator.py - MIGRADO A LANGGRAPH
-"""
-MultiAgentOrchestrator con LangGraph
-Mantiene interfaz get_response() para compatibilidad
-"""
+# app/services/multi_agent_orchestrator.py - VERSIÓN FINAL CORRECTA
 
 from typing import Dict, Any, List, Optional, Tuple
+from app.config.company_config import CompanyConfig, get_company_config
+from app.agents import (
+    RouterAgent, EmergencyAgent, SalesAgent, 
+    SupportAgent, ScheduleAgent, AvailabilityAgent
+)
+from app.services.openai_service import OpenAIService
+from app.services.vectorstore_service import VectorstoreService
+from app.models.conversation import ConversationManager
 import logging
 import json
 import time
-from datetime import datetime
-
-from langgraph.graph import StateGraph, END
-from app.services.multi_agent_orchestrator_types import (
-    OrchestratorState, 
-    IntentType, 
-    RoutingDecision, 
-    ValidationDecision
-)
-from app.config.company_config import CompanyConfig
-from app.models.conversation import ConversationManager
 
 logger = logging.getLogger(__name__)
 
 class MultiAgentOrchestrator:
-    """
-    Orquestador de múltiples agentes usando LangGraph.
+    """Orquestador multi-agente multi-tenant con RAG mejorado y tool execution"""
     
-    ✅ MANTIENE: Interfaz get_response() intacta
-    ✅ AÑADE: Estado persistente, retry automático, validación
-    ✅ MEJORA: Logging estructurado, visualización de flujo
-    """
-    
-    def __init__(
-        self, 
-        company_config: CompanyConfig = None,
-        agents: Dict[str, Any] = None,
-        conversation_manager: Optional[ConversationManager] = None,
-        **kwargs  # ← Captura argumentos legacy
-    ):
-        """
-        Inicializar orquestador con LangGraph.
+    def __init__(self, company_id: str, openai_service: OpenAIService = None):
+        self.company_id = company_id
+        self.company_config = get_company_config(company_id)
         
-        ✅ BACKWARD COMPATIBLE con llamadas legacy
+        if not self.company_config:
+            raise ValueError(f"Configuration not found for company: {company_id}")
+        
+        # Servicios
+        self.openai_service = openai_service or OpenAIService()
+        self.vectorstore_service = None  # Se inyecta externamente
+        
+        # ✅ Tool executor (ya tiene ToolsLibrary internamente)
+        self.tool_executor = None  # Se inyecta externamente
+        
+        # Agentes
+        self.agents = {}
+        self._initialize_agents()
+        
+        logger.info(f"MultiAgentOrchestrator initialized for company: {company_id}")
+    
+    def set_vectorstore_service(self, vectorstore_service: VectorstoreService):
+        """Inyectar servicio de vectorstore específico de la empresa"""
+        self.vectorstore_service = vectorstore_service
+        
+        # Configurar RAG para todos los agentes que lo necesitan
+        rag_agents = ['sales', 'support', 'emergency', 'schedule']
+        
+        for agent_name in rag_agents:
+            if agent_name in self.agents:
+                self.agents[agent_name].set_vectorstore_service(vectorstore_service)
+                logger.info(f"[{self.company_id}] RAG configured for {agent_name} agent")
+        
+        # ✅ También inyectar al tool_executor si ya existe
+        if self.tool_executor:
+            self.tool_executor.set_vectorstore_service(vectorstore_service)
+            logger.info(f"[{self.company_id}] RAG configured for tool_executor")
+    
+    def set_tool_executor(self, tool_executor):
+        """
+        ✅ Inyectar tool executor al orquestador
+        
+        El tool_executor ya tiene ToolsLibrary internamente,
+        por lo que no necesitamos tools_library separado.
+        """
+        self.tool_executor = tool_executor
+        
+        # ✅ Si ya tenemos vectorstore, inyectarlo al executor automáticamente
+        if self.vectorstore_service:
+            tool_executor.set_vectorstore_service(self.vectorstore_service)
+            logger.info(f"[{self.company_id}] RAG auto-injected to tool_executor")
+        
+        # Log de tools disponibles
+        available_tools = tool_executor.get_available_tools()
+        tools_ready = [name for name, status in available_tools.items() if status.get("available")]
+        
+        logger.info(f"✅ [{self.company_id}] ToolExecutor configured")
+        logger.info(f"   → Total tools: {len(available_tools)}")
+        logger.info(f"   → Ready tools: {len(tools_ready)}")
+        logger.info(f"   → Tools ready: {tools_ready}")
+    
+    def execute_tool(self, tool_name: str, parameters: dict) -> dict:
+        """
+        ✅ NUEVO: Ejecutar una tool desde el orquestador
+        
+        Método de conveniencia para que agentes puedan ejecutar tools.
         
         Args:
-            company_config: Configuración de la empresa
-            agents: Diccionario de agentes {nombre: instancia}
-            conversation_manager: Manager de conversaciones
-            **kwargs: Captura argumentos legacy (company_id, openai_service, etc)
-        """
-        
-        # ===== COMPATIBILIDAD BACKWARD =====
-        # Manejo de llamadas legacy con company_id
-        if company_config is None:
-            if 'company_id' in kwargs:
-                # Legacy call: MultiAgentOrchestrator(company_id="benova", ...)
-                company_id = kwargs['company_id']
-                logger.warning(
-                    f"⚠️ Legacy call detected with company_id={company_id}. "
-                    f"Update caller to pass company_config object."
-                )
-                
-                # ✅ OBTENER CompanyConfig COMPLETO del manager
-                try:
-                    from app.config.company_config import get_company_config
-                    company_config = get_company_config(company_id)
-                    logger.info(f"✅ Retrieved full CompanyConfig for {company_id}")
-                except Exception as e:
-                    logger.error(f"Failed to get CompanyConfig for {company_id}: {e}")
-                    raise ValueError(
-                        f"Cannot initialize MultiAgentOrchestrator: "
-                        f"company_id '{company_id}' not found in config manager"
-                    )
-            else:
-                raise ValueError("Either company_config or company_id must be provided")
-        
-        # Si agents no se pasó, intentar obtenerlo de kwargs
-        if agents is None:
-            agents = kwargs.get('agents', {})
-        
-        # ===== VALIDACIÓN =====
-        if not isinstance(company_config, CompanyConfig):
-            raise TypeError(
-                f"company_config must be CompanyConfig instance, got {type(company_config)}"
-            )
-        
-        if not agents:
-            logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
-        
-        # ===== IGNORAR openai_service de kwargs (legacy) =====
-        # El orchestrator no necesita openai_service directamente,
-        # los agentes ya lo tienen inyectado
-        if 'openai_service' in kwargs:
-            logger.debug(f"[{company_config.company_id}] Ignoring openai_service from kwargs (legacy)")
-        
-        # ===== INICIALIZACIÓN NORMAL =====
-        self.company_config = company_config
-        self.agents = agents
-        self.conversation_manager = conversation_manager or ConversationManager()
-        
-        # Construir grafo
-        try:
-            self.graph = self._build_orchestrator_graph()
-        except Exception as e:
-            logger.exception(f"Error building orchestrator graph for {company_config.company_id}: {e}")
-            raise
-        
-        logger.info(
-            f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
-            extra={
-                "available_agents": list(agents.keys()),
-                "has_conversation_manager": conversation_manager is not None,
-                "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
-            }
-        )
-    
-    def _build_orchestrator_graph(self) -> StateGraph:
-        """
-        Construir grafo de orquestación.
-        
-        Flujo:
-        1. load_history → Cargar historial conversacional
-        2. classify → Clasificar intención con RouterAgent
-        3. route → Decidir agente apropiado
-        4. execute_agent → Ejecutar agente seleccionado
-        5. validate → Validar calidad de respuesta
-        6. save_history → Guardar en DB
-        """
-        workflow = StateGraph(OrchestratorState)
-        
-        # ===== NODOS =====
-        workflow.add_node("load_history", self._load_history_node)
-        workflow.add_node("classify", self._classify_intent_node)
-        workflow.add_node("execute_emergency", self._execute_emergency_node)
-        workflow.add_node("execute_sales", self._execute_sales_node)
-        workflow.add_node("execute_schedule", self._execute_schedule_node)
-        workflow.add_node("execute_support", self._execute_support_node)
-        workflow.add_node("execute_availability", self._execute_availability_node)
-        workflow.add_node("validate_response", self._validate_response_node)
-        workflow.add_node("save_history", self._save_history_node)
-        workflow.add_node("handle_error", self._handle_error_node)
-        
-        # ===== FLUJO =====
-        workflow.set_entry_point("load_history")
-        
-        workflow.add_edge("load_history", "classify")
-        
-        # Routing condicional por intención
-        workflow.add_conditional_edges(
-            "classify",
-            self._route_by_intent,
-            {
-                "emergency": "execute_emergency",
-                "sales": "execute_sales",
-                "schedule": "execute_schedule",
-                "support": "execute_support",
-                "availability": "execute_availability",
-                "error": "handle_error"
-            }
-        )
-        
-        # Todos los agentes → validación
-        for agent in ["execute_emergency", "execute_sales", "execute_schedule", 
-                      "execute_support", "execute_availability"]:
-            workflow.add_edge(agent, "validate_response")
-        
-        # Validación decide siguiente paso
-        workflow.add_conditional_edges(
-            "validate_response",
-            self._decide_next_step,
-            {
-                "save": "save_history",
-                "retry": "classify",
-                "fallback": "execute_support",
-                "end": END
-            }
-        )
-        
-        workflow.add_edge("save_history", END)
-        workflow.add_edge("handle_error", END)
-        
-        return workflow.compile()
-    
-    # =========================================================================
-    # NODOS DEL GRAFO
-    # =========================================================================
-    
-    def _load_history_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Cargar historial conversacional desde DB (defensivo - loguea tipo/valor de conversation_id)."""
-        conversation_id = state.get("conversation_id")
-    
-        try:
-            history = []
-            if conversation_id:
-                # LOG: tipo/valor para debug (evita errores por objetos inesperados)
-                try:
-                    logger.debug(
-                        f"[{self.company_config.company_id}] DEBUG conversation_id type: {type(conversation_id)} value: {repr(conversation_id)}"
-                    )
-                except Exception:
-                    logger.debug(
-                        f"[{self.company_config.company_id}] DEBUG conversation_id (repr fallo)"
-                    )
-    
-                # Forzar a str/int si viene un objeto accidental
-                if not isinstance(conversation_id, (str, int)):
-                    logger.warning(
-                        f"[{self.company_config.company_id}] conversation_id inesperado ({type(conversation_id)}); convirtiendo a str"
-                    )
-                    conversation_id = str(conversation_id)
-    
-                # Llamar al ConversationManager usando la API conocida
-                raw = []
-                try:
-                    if hasattr(self.conversation_manager, "get_chat_history"):
-                        raw = self.conversation_manager.get_chat_history(
-                            user_id=conversation_id,
-                            format_type="dict"
-                        ) or []
-                    elif hasattr(self.conversation_manager, "get_conversation_history"):
-                        raw = self.conversation_manager.get_conversation_history(
-                            conversation_id=conversation_id,
-                            limit=100
-                        ) or []
-                    else:
-                        logger.warning(f"[{self.company_config.company_id}] ConversationManager sin método de historial conocido")
-                        raw = []
-                except Exception as e:
-                    logger.error(f"[{self.company_config.company_id}] Error calling conversation manager: {e}")
-                    raw = []
-    
-                # Normalizar estructura
-                if isinstance(raw, dict):
-                    raw = raw.get("messages", []) or []
-    
-                history = raw[-10:]
-    
-                logger.debug(
-                    f"[{self.company_config.company_id}] History loaded",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "history_length": len(history)
-                    }
-                )
-            else:
-                history = []
-    
-            return {
-                **state,
-                "chat_history": history,
-                "retry_count": 0,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-    
-        except Exception as e:
-            logger.error(f"Error loading history: {e}")
-            return {**state, "chat_history": [], "retry_count": 0}
-
-    
-    def _classify_intent_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Clasificar intención usando RouterAgent (robusto contra KeyError de 'router')."""
-        try:
-            start_time = time.time()
-    
-            # DEBUG: listar agentes disponibles para detectar mismatch de nombres
-            try:
-                logger.debug(f"[{self.company_config.company_id}] Agents available for routing: {list(self.agents.keys())}")
-            except Exception:
-                logger.debug(f"[{self.company_config.company_id}] Agents available: (could not stringify)")
-    
-            # Buscar agente 'router' de forma robusta
-            router_agent = self.agents.get("router")
-            if router_agent is None:
-                # intentar detectar por substring en keys
-                for k, v in self.agents.items():
-                    if "router" in k.lower():
-                        router_agent = v
-                        logger.info(f"[{self.company_config.company_id}] Router agent found by fallback key: '{k}'")
-                        break
-    
-            if router_agent is None:
-                # Log detallado y fallback seguro
-                logger.error(f"[{self.company_config.company_id}] Router agent not found. Available agents: {list(self.agents.keys())}")
-                intent_data = {
-                    "intent": "SUPPORT",
-                    "confidence": 0.0,
-                    "keywords": [],
-                    "reasoning": "Router agent not configured"
-                }
-            else:
-                # Ejecutar RouterAgent pasando inputs conocidos
-                router_response = router_agent.invoke({
-                    "question": state.get("question", ""),
-                    "chat_history": state.get("chat_history", [])
-                })
-    
-                # Intentamos parsear JSON si el router devuelve string
-                try:
-                    intent_data = json.loads(router_response) if isinstance(router_response, str) else router_response
-                except Exception:
-                    logger.warning(f"[{self.company_config.company_id}] Router returned non-JSON (preview): {str(router_response)[:200]}")
-                    intent_data = {
-                        "intent": "SUPPORT",
-                        "confidence": 0.3,
-                        "keywords": [],
-                        "reasoning": "Router JSON parse failed"
-                    }
-    
-            intent = intent_data.get("intent", "SUPPORT")
-            confidence = intent_data.get("confidence", 0.5)
-    
-            execution_time = time.time() - start_time
-    
-            logger.info(
-                f"[{self.company_config.company_id}] Intent classified",
-                extra={
-                    "intent": intent,
-                    "confidence": confidence,
-                    "execution_time": execution_time,
-                    "question_preview": state.get("question", "")[:50]
-                }
-            )
-    
-            return {
-                **state,
-                "intent": intent,
-                "confidence": confidence,
-                "keywords": intent_data.get("keywords", []),
-                "reasoning": intent_data.get("reasoning", ""),
-                "execution_time": execution_time
-            }
-    
-        except Exception as e:
-            logger.exception(f"Classification error: {e}")
-            return {
-                **state,
-                "intent": "SUPPORT",
-                "confidence": 0.0,
-                "error_message": f"Classification failed: {str(e)}"
-            }
-    
-    def _route_by_intent(self, state: OrchestratorState) -> RoutingDecision:
-        """
-        Decidir ruta basado en intención clasificada.
-        
-        Lógica:
-        - Confianza < 0.3 → SUPPORT (fallback)
-        - Intención válida → Agente correspondiente
-        - Error → handle_error
-        """
-        intent = state.get("intent", "SUPPORT")
-        confidence = state.get("confidence", 0.0)
-        
-        # Si hay error en clasificación
-        if state.get("error_message"):
-            logger.warning("Routing to error handler due to classification error")
-            return "error"
-        
-        # Si confianza muy baja, ir a SUPPORT
-        if confidence < 0.3:
-            logger.warning(
-                f"Low confidence ({confidence:.2f}), routing to SUPPORT",
-                extra={"original_intent": intent}
-            )
-            return "support"
-        
-        # Mapear intención a agente
-        intent_map = {
-            "EMERGENCY": "emergency",
-            "SALES": "sales",
-            "SCHEDULE": "schedule",
-            "SUPPORT": "support",
-            "AVAILABILITY": "availability"
-        }
-        
-        route = intent_map.get(intent, "support")
-        
-        logger.debug(f"Routing to: {route}", extra={"intent": intent, "confidence": confidence})
-        
-        return route
-    
-    def _execute_emergency_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Ejecutar EmergencyAgent"""
-        return self._execute_agent(state, "emergency")
-    
-    def _execute_sales_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Ejecutar SalesAgent"""
-        return self._execute_agent(state, "sales")
-    
-    def _execute_schedule_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Ejecutar ScheduleAgent"""
-        return self._execute_agent(state, "schedule")
-    
-    def _execute_support_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Ejecutar SupportAgent"""
-        return self._execute_agent(state, "support")
-    
-    def _execute_availability_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Ejecutar AvailabilityAgent"""
-        return self._execute_agent(state, "availability")
-    
-    def _execute_agent(self, state: OrchestratorState, agent_name: str) -> OrchestratorState:
-        """
-        Método común para ejecutar cualquier agente.
-        
-        Mantiene compatibilidad con interfaz invoke() de agentes.
-        """
-        try:
-            start_time = time.time()
+            tool_name: Nombre de la tool (ej: "knowledge_base")
+            parameters: Parámetros de la tool
             
-            # Preparar inputs para el agente
-            agent_inputs = {
-                "question": state["question"],
-                "user_id": state["user_id"],
-                "conversation_id": state.get("conversation_id"),
-                "chat_history": state.get("chat_history", []),
-                "media_type": state.get("media_type", "text"),
-                "media_context": state.get("media_context")
-            }
-            
-            # Ejecutar agente
-            response = self.agents[agent_name].invoke(agent_inputs)
-            
-            execution_time = time.time() - start_time
-            
-            logger.info(
-                f"[{self.company_config.company_id}] Agent executed: {agent_name}",
-                extra={
-                    "agent": agent_name,
-                    "execution_time": execution_time,
-                    "response_length": len(response) if response else 0
-                }
-            )
-            
-            return {
-                **state,
-                "agent_response": response,
-                "current_agent": agent_name,
-                "agent_metadata": {
-                    "execution_time": execution_time,
-                    "timestamp": datetime.utcnow().isoformat()
-                },
-                "final_response": response
-            }
-            
-        except Exception as e:
-            logger.exception(f"Error executing {agent_name}: {e}")
-            
-            # Respuesta de fallback
-            fallback_response = (
-                f"Disculpa, tuve un problema procesando tu solicitud en {self.company_config.company_name}. "
-                f"¿Puedes intentar de nuevo?"
-            )
-            
-            return {
-                **state,
-                "agent_response": fallback_response,
-                "current_agent": agent_name,
-                "is_valid": False,
-                "error_message": str(e),
-                "final_response": fallback_response
-            }
-    
-    def _validate_response_node(self, state: OrchestratorState) -> OrchestratorState:
-        """
-        Validar calidad de respuesta del agente.
-        
-        Criterios de validación:
-        - Tiene contenido (> 20 caracteres)
-        - Menciona el nombre de la empresa
-        - No contiene palabras de error
-        - Longitud razonable (< 2000 caracteres)
-        """
-        response = state.get("agent_response", "")
-        
-        # Validaciones
-        checks = {
-            "has_content": len(response) > 20,
-            "has_company_name": self.company_config.company_name.lower() in response.lower(),
-            "not_error_message": not any(
-                word in response.lower() 
-                for word in ["error", "fallo", "problema técnico", "no pude"]
-            ),
-            "reasonable_length": len(response) < 2000,
-            "not_empty": bool(response and response.strip())
-        }
-        
-        # Es válida si pasa al menos 3/5 checks
-        is_valid = sum(checks.values()) >= 3
-        
-        # Validaciones que fallan
-        failed_checks = [k for k, v in checks.items() if not v]
-        
-        logger.info(
-            f"Response validation: {'PASS' if is_valid else 'FAIL'}",
-            extra={
-                "checks": checks,
-                "failed_checks": failed_checks,
-                "agent": state.get("current_agent")
-            }
-        )
-        
-        return {
-            **state,
-            "is_valid": is_valid,
-            "validation_errors": failed_checks
-        }
-    
-    def _decide_next_step(self, state: OrchestratorState) -> ValidationDecision:
-        """
-        Decidir siguiente paso después de validación.
-        
-        Lógica:
-        - Válida → Guardar y terminar
-        - Inválida + retry < 2 → Reintentar con clasificación
-        - Inválida + retry >= 2 → Fallback a support
-        - Error grave → Terminar
-        """
-        is_valid = state.get("is_valid", False)
-        retry_count = state.get("retry_count", 0)
-        has_error = bool(state.get("error_message"))
-        
-        if is_valid:
-            # Respuesta válida, guardar y terminar
-            logger.debug("Valid response, proceeding to save")
-            return "save"
-        
-        elif retry_count < 2 and not has_error:
-            # Reintentar con reclasificación
-            logger.warning(f"Invalid response, retrying (attempt {retry_count + 1}/2)")
-            state["retry_count"] = retry_count + 1
-            return "retry"
-        
-        elif retry_count >= 2:
-            # Demasiados reintentos, usar fallback
-            logger.error("Max retries reached, using fallback")
-            state["fallback_used"] = True
-            return "fallback"
-        
-        else:
-            # Error grave, terminar
-            logger.error("Critical error, ending execution")
-            return "end"
-    
-    def _save_history_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Guardar conversación en historial"""
-        conversation_id = state.get("conversation_id")
-        
-        if not conversation_id:
-            logger.debug("No conversation_id, skipping history save")
-            return state
-        
-        try:
-            # Guardar pregunta del usuario (usar user_id como primer argumento)
-            self.conversation_manager.add_message(
-                user_id=conversation_id,
-                role="user",
-                content=state["question"]
-            )
-            
-            # Guardar respuesta del asistente (sin metadata, o maneja metadata aparte)
-            self.conversation_manager.add_message(
-                user_id=conversation_id,
-                role="assistant",
-                content=state["final_response"]
-            )
-            
-            # Si quieres conservar metadata, guárdala aparte (ejemplo: log)
-            logger.debug({
-                "conversation_id": conversation_id,
-                "agent": state.get("current_agent"),
-                "intent": state.get("intent"),
-                "confidence": state.get("confidence"),
-                "execution_time": state.get("execution_time")
-            })
-            
-            logger.info(
-                f"History saved to conversation {conversation_id}",
-                extra={"agent": state.get("current_agent")}
-            )
-            
-        except Exception as e:
-            logger.error(f"Error saving history: {e}")
-        
-        return state
-    
-    def _handle_error_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Manejar errores graves"""
-        error_msg = state.get("error_message", "Unknown error")
-        
-        logger.error(
-            f"[{self.company_config.company_id}] Error handler activated",
-            extra={"error": error_msg}
-        )
-        
-        fallback_response = (
-            f"Disculpa, estamos experimentando dificultades técnicas. "
-            f"Por favor, contacta directamente con {self.company_config.company_name}."
-        )
-        
-        return {
-            **state,
-            "final_response": fallback_response,
-            "current_agent": "error_handler",
-            "fallback_used": True
-        }
-    
-    # =========================================================================
-    # INTERFAZ PÚBLICA - MANTENER COMPATIBILIDAD
-    # =========================================================================
-    
-    def get_response(
-        self,
-        question: str,
-        user_id: str,
-        conversation_id: Optional[str] = None,
-        media_type: str = "text",
-        media_context: Optional[Dict[str, Any]] = None,
-        conversation_manager: Optional[ConversationManager] = None,
-        **kwargs
-    ) -> Tuple[str, str]:
-        """
-        Obtener respuesta del orquestador.
-        
-        ✅ INTERFAZ MANTENIDA - Compatible con código existente
-        
-        Args:
-            question: Pregunta del usuario
-            user_id: ID del usuario
-            conversation_id: ID de conversación (opcional)
-            media_type: Tipo de media (text, image, audio)
-            media_context: Contexto adicional del media
-            conversation_manager: Manager de conversación (opcional)
-            **kwargs: Argumentos adicionales (ignorados)
-        
         Returns:
-            Tuple[str, str]: (respuesta, nombre_agente)
+            Resultado de la ejecución
         """
-        # Override conversation_manager si se proporciona
-        if conversation_manager:
-            self.conversation_manager = conversation_manager
+        if not self.tool_executor:
+            logger.warning(f"[{self.company_id}] ToolExecutor not configured")
+            return {
+                "success": False,
+                "error": "ToolExecutor not configured for this company"
+            }
         
-        # Estado inicial
-        initial_state: OrchestratorState = {
-            "question": question,
-            "user_id": user_id,
-            "conversation_id": conversation_id,
-            "media_type": media_type,
-            "media_context": media_context,
-            "chat_history": [],
-            "intent": None,
-            "confidence": 0.0,
-            "keywords": [],
-            "reasoning": "",
-            "current_agent": None,
-            "agent_response": None,
-            "agent_metadata": {},
-            "is_valid": False,
-            "validation_errors": [],
-            "retry_count": 0,
-            "final_response": "",
-            "execution_time": 0.0,
-            "timestamp": "",
-            "error_message": None,
-            "fallback_used": False
-        }
-        
+        return self.tool_executor.execute_tool(tool_name, parameters)
+    
+    def _initialize_agents(self):
+        """Inicializar todos los agentes especializados"""
         try:
-            # Ejecutar grafo
-            logger.debug(
-                f"[{self.company_config.company_id}] Executing orchestrator graph",
-                extra={"question_preview": question[:50]}
-            )
+            # Router Agent (siempre necesario)
+            self.agents['router'] = RouterAgent(self.company_config, self.openai_service)
             
-            result = self.graph.invoke(initial_state)
+            # Emergency Agent - Con RAG
+            self.agents['emergency'] = EmergencyAgent(self.company_config, self.openai_service)
             
-            # Extraer respuesta y agente
-            response = result.get("final_response", "")
-            agent_name = result.get("current_agent", "unknown")
+            # Sales Agent - Con RAG
+            self.agents['sales'] = SalesAgent(self.company_config, self.openai_service)
             
-            logger.info(
-                f"[{self.company_config.company_id}] Orchestration completed",
-                extra={
-                    "agent": agent_name,
-                    "intent": result.get("intent"),
-                    "is_valid": result.get("is_valid"),
-                    "retry_count": result.get("retry_count"),
-                    "fallback_used": result.get("fallback_used")
-                }
-            )
+            # Support Agent - Con RAG
+            self.agents['support'] = SupportAgent(self.company_config, self.openai_service)
             
-            return response, agent_name
+            # Schedule Agent - Con RAG
+            self.agents['schedule'] = ScheduleAgent(self.company_config, self.openai_service)
+            
+            # Availability Agent (sin RAG, usa schedule agent)
+            self.agents['availability'] = AvailabilityAgent(self.company_config, self.openai_service)
+            
+            # Conectar availability agent con schedule agent
+            self.agents['availability'].set_schedule_agent(self.agents['schedule'])
+            
+            logger.info(f"[{self.company_id}] All agents initialized: {list(self.agents.keys())}")
+            logger.info(f"[{self.company_id}] RAG-enabled agents: sales, support, emergency, schedule")
             
         except Exception as e:
-            logger.exception(
-                f"[{self.company_config.company_id}] Critical error in orchestrator: {e}"
-            )
-            
-            # Fallback final
-            fallback_response = (
-                f"Lo siento, estoy experimentando dificultades. "
-                f"Por favor contacta con {self.company_config.company_name}."
-            )
-            
-            return fallback_response, "error"
+            logger.error(f"[{self.company_id}] Error initializing agents: {e}")
+            raise
     
-    # =========================================================================
-    # UTILIDADES
-    # =========================================================================
-    
-    def visualize_graph(self, output_path: str = "orchestrator_graph.png"):
-        """
-        Visualizar grafo como imagen.
+    def get_response(self, question: str, user_id: str, conversation_manager: ConversationManager,
+                     media_type: str = "text", media_context: str = None) -> Tuple[str, str]:
+        """Método principal para obtener respuesta del sistema multi-agente"""
         
-        Requiere: pip install pygraphviz
-        """
         try:
-            from langgraph.graph import Graph
+            # Procesar contexto multimedia
+            processed_question = self._process_multimedia_context(question, media_type, media_context)
             
-            # Generar visualización
-            graph_image = self.graph.get_graph().draw_mermaid_png()
+            if not processed_question or not processed_question.strip():
+                return f"Por favor, envía un mensaje específico para poder ayudarte en {self.company_config.company_name}. 😊", "support"
             
-            with open(output_path, "wb") as f:
-                f.write(graph_image)
+            if not user_id or not user_id.strip():
+                return "Error interno: ID de usuario inválido.", "error"
             
-            logger.info(f"Graph visualization saved to: {output_path}")
+            # Obtener historial de conversación
+            chat_history = conversation_manager.get_chat_history(user_id, format_type="messages")
             
-        except ImportError:
-            logger.warning("Install pygraphviz to visualize graph: pip install pygraphviz")
+            # Preparar inputs
+            inputs = {
+                "question": processed_question.strip(),
+                "chat_history": chat_history,
+                "user_id": user_id,
+                "company_id": self.company_id
+            }
+            
+            # Log de inicio
+            self._log_query_start(inputs)
+            
+            # Orquestar respuesta
+            response, agent_used = self._orchestrate_response(inputs)
+            
+            # Guardar en conversación
+            conversation_manager.add_message(user_id, "user", processed_question)
+            conversation_manager.add_message(user_id, "assistant", response)
+            
+            # Log de finalización
+            self._log_query_completion(agent_used, response)
+            
+            return response, agent_used
+            
         except Exception as e:
-            logger.error(f"Error visualizing graph: {e}")
+            logger.exception(f"[{self.company_id}] Error in multi-agent system for user {user_id}")
+            error_response = f"Disculpa, tuve un problema técnico en {self.company_config.company_name}. Por favor intenta de nuevo. 🔧"
+            return error_response, "error"
     
-    def get_stats(self) -> Dict[str, Any]:
-        """Obtener estadísticas del orquestador"""
-        return {
-            "company_id": self.company_config.company_id,
-            "available_agents": list(self.agents.keys()),
-            "graph_nodes": len(self.graph.get_graph().nodes),
-            "has_conversation_manager": self.conversation_manager is not None
-        }
+    def _process_multimedia_context(self, question: str, media_type: str, media_context: str = None) -> str:
+        """Procesar contexto multimedia"""
+        if media_type == "image" and media_context:
+            return f"Contexto visual: {media_context}\n\nPregunta: {question}"
+        elif media_type == "voice" and media_context:
+            return f"Transcripción de voz: {media_context}\n\nPregunta: {question}"
+        else:
+            return question
     
-    # =========================================================================
-    # MÉTODOS DE COMPATIBILIDAD CON FACTORY
-    # =========================================================================
+    def _orchestrate_response(self, inputs: Dict[str, Any]) -> Tuple[str, str]:
+        """Orquestador principal que coordina los agentes"""
+        try:
+            # Clasificar intención con Router Agent
+            router_response = self.agents['router'].invoke(inputs)
+            
+            try:
+                classification = json.loads(router_response)
+                intent = classification.get("intent", "SUPPORT")
+                confidence = classification.get("confidence", 0.5)
+                
+                logger.info(f"[{self.company_id}] Intent classified: {intent} (confidence: {confidence})")
+                
+            except json.JSONDecodeError:
+                intent = "SUPPORT"
+                confidence = 0.3
+                logger.warning(f"[{self.company_id}] Router response was not valid JSON, defaulting to SUPPORT")
+            
+            # Seleccionar y ejecutar agente apropiado
+            response = self._execute_selected_agent(intent, confidence, inputs)
+            
+            return response, intent.lower()
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error in orchestration: {e}")
+            # Fallback al support agent
+            return self.agents['support'].invoke(inputs), "support"
     
-    def set_vectorstore_service(self, vectorstore_service: Any):
-        """
-        Compatibilidad con MultiAgentFactory.
+    def _execute_selected_agent(self, intent: str, confidence: float, inputs: Dict[str, Any]) -> str:
+        """Ejecutar el agente seleccionado"""
         
-        En el nuevo orchestrator, el vectorstore ya está en los agentes,
-        por lo que este método no hace nada. Se mantiene para no romper
-        el código del factory.
-        """
-        logger.debug(
-            f"[{self.company_config.company_id}] set_vectorstore_service called "
-            f"(ignored - agents already have vectorstore)"
-        )
-        # No hacer nada - los agentes ya tienen vectorstore configurado
-        pass
-    
-    def set_tool_executor(self, tool_executor: Any):
-        """
-        Compatibilidad con MultiAgentFactory.
+        # Threshold de confianza más alto para intenciones específicas
+        if confidence > 0.7:
+            if intent == "EMERGENCY":
+                return self.agents['emergency'].invoke(inputs)
+            elif intent == "SALES":
+                return self.agents['sales'].invoke(inputs)
+            elif intent == "SCHEDULE":
+                return self.agents['schedule'].invoke(inputs)
+            elif intent == "SUPPORT":
+                return self.agents['support'].invoke(inputs)
         
-        En el nuevo orchestrator, los tools ya están en los agentes,
-        por lo que este método no hace nada. Se mantiene para no romper
-        el código del factory.
-        """
-        logger.debug(
-            f"[{self.company_config.company_id}] set_tool_executor called "
-            f"(ignored - agents already have tools)"
-        )
-        # No hacer nada - los agentes ya tienen tools configurados
-        pass
+        # Si confianza es baja, usar support por defecto
+        logger.info(f"[{self.company_id}] Low confidence ({confidence}), using support agent")
+        return self.agents['support'].invoke(inputs)
+    
+    def _log_query_start(self, inputs: Dict[str, Any]):
+        """Log inicio de consulta"""
+        question = inputs.get("question", "")
+        user_id = inputs.get("user_id", "unknown")
+        
+        logger.info(f"🔍 [{self.company_id}] QUERY START - User: {user_id}")
+        logger.info(f"   → Question: {question[:100]}...")
+        
+        # Detectar si puede necesitar RAG
+        might_need_rag = self._might_need_rag(question)
+        if might_need_rag:
+            rag_status = "available" if self.vectorstore_service else "not configured"
+            logger.info(f"   → Possible RAG query detected for {self.company_config.company_name} (RAG: {rag_status})")
+    
+    def _log_query_completion(self, agent_used: str, response: str):
+        """Log finalización de consulta"""
+        logger.info(f"🤖 [{self.company_id}] RESPONSE GENERATED - Agent: {agent_used}")
+        logger.info(f"   → Response length: {len(response)} characters")
+        logger.info(f"   → Company: {self.company_config.company_name}")
+        
+        # Log si el agente usado tiene RAG
+        rag_agents = ['sales', 'support', 'emergency', 'schedule']
+        if agent_used in rag_agents:
+            rag_status = "enabled" if self.vectorstore_service else "disabled"
+            logger.info(f"   → RAG status for {agent_used}: {rag_status}")
+    
+    def _might_need_rag(self, question: str) -> bool:
+        """Determinar si consulta podría necesitar RAG"""
+        rag_keywords = [
+            "precio", "costo", "inversión", "duración", "tiempo",
+            "tratamiento", "procedimiento", "servicio", "beneficio",
+            "horario", "disponibilidad", "agendar", "cita", "información",
+            "dolor", "emergencia", "protocolo", "preparación", "requisitos"
+        ]
+        return any(keyword in question.lower() for keyword in rag_keywords)
+    
+    def search_documents(self, query: str, k: int = 3):
+        """Búsqueda de documentos específica de la empresa - método de compatibilidad"""
+        try:
+            if not self.vectorstore_service:
+                return []
+            
+            # Buscar documentos filtrados por empresa
+            docs = self.vectorstore_service.search_by_company(query, self.company_id, k=k)
+            return docs
+            
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error searching documents: {e}")
+            return []
     
     def health_check(self) -> Dict[str, Any]:
-        """
-        Health check del orchestrator.
-        Compatibilidad con código existente.
-        """
+        """Verificar salud del sistema multi-agente"""
         try:
-            return {
-                "system_healthy": True,
-                "company_id": self.company_config.company_id,
-                "agents_count": len(self.agents),
-                "graph_initialized": self.graph is not None,
-                "conversation_manager": self.conversation_manager is not None
+            agents_status = {}
+            
+            for agent_name, agent in self.agents.items():
+                try:
+                    # Test básico de cada agente
+                    test_inputs = {
+                        "question": "test",
+                        "chat_history": [],
+                        "user_id": "health_check"
+                    }
+                    
+                    # Para router, verificar que devuelve JSON válido
+                    if agent_name == "router":
+                        response = agent.invoke(test_inputs)
+                        try:
+                            json.loads(response)
+                            agents_status[agent_name] = "healthy"
+                        except json.JSONDecodeError:
+                            agents_status[agent_name] = "unhealthy"
+                    else:
+                        # Para otros agentes, verificar que no lancen excepción
+                        response = agent.invoke(test_inputs)
+                        agents_status[agent_name] = "healthy" if response else "unhealthy"
+                        
+                except Exception as e:
+                    agents_status[agent_name] = f"error: {str(e)}"
+            
+            # Estado del sistema
+            all_healthy = all(status == "healthy" for status in agents_status.values())
+            
+            # Información sobre RAG y Tools
+            rag_info = {
+                "rag_available": self.vectorstore_service is not None,
+                "rag_enabled_agents": ["sales", "support", "emergency", "schedule"],
+                "rag_disabled_agents": ["router", "availability"]
             }
+            
+            tools_info = {
+                "tool_executor_available": self.tool_executor is not None,
+                "tools_configured": len(self.tool_executor.get_available_tools()) if self.tool_executor else 0
+            }
+            
+            return {
+                "system_healthy": all_healthy,
+                "company_id": self.company_id,
+                "company_name": self.company_config.company_name,
+                "agents_status": agents_status,
+                "vectorstore_connected": self.vectorstore_service is not None,
+                "tool_executor_connected": self.tool_executor is not None,
+                "schedule_service_url": self.company_config.schedule_service_url,
+                "system_type": "multi-agent-multi-tenant",
+                "rag_status": rag_info,
+                "tools_status": tools_info
+            }
+            
         except Exception as e:
             return {
                 "system_healthy": False,
-                "error": str(e)
+                "company_id": self.company_id,
+                "error": str(e),
+                "system_type": "multi-agent-multi-tenant"
             }
+    
+    def get_system_stats(self) -> Dict[str, Any]:
+        """Obtener estadísticas del sistema"""
+        stats = {
+            "company_id": self.company_id,
+            "company_name": self.company_config.company_name,
+            "agents_available": list(self.agents.keys()),
+            "rag_enabled_agents": ["sales", "support", "emergency", "schedule"],
+            "system_type": "multi-agent-multi-tenant-rag",
+            "vectorstore_index": self.company_config.vectorstore_index,
+            "schedule_service_url": self.company_config.schedule_service_url,
+            "services": self.company_config.services,
+            "rag_status": "enabled" if self.vectorstore_service else "disabled"
+        }
+        
+        # Agregar info de tools si está disponible
+        if self.tool_executor:
+            available_tools = self.tool_executor.get_available_tools()
+            tools_ready = [name for name, status in available_tools.items() if status.get("available")]
+            stats["tools_available"] = len(available_tools)
+            stats["tools_ready"] = len(tools_ready)
+            stats["tools_ready_list"] = tools_ready
+        
+        return stats
