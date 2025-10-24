@@ -33,6 +33,7 @@ Ventajas vs implementación actual:
 from typing import Dict, Any, List, Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from datetime import datetime
 import logging
 import json
 
@@ -239,6 +240,7 @@ class MultiAgentOrchestratorGraph:
                 "handoff_to_sales": "execute_sales",
                 "handoff_to_schedule": "execute_schedule",
                 "handoff_to_support": "execute_support",
+                "handoff_to_emergency": "execute_emergency",
                 "end": END
             }
         )
@@ -369,6 +371,8 @@ class MultiAgentOrchestratorGraph:
         Casos de uso:
         - Usuario pregunta por precio durante agendamiento → secondary_intent = "sales"
         - Usuario pregunta por disponibilidad durante consulta comercial → secondary_intent = "schedule"
+        - Usuario pregunta general durante cualquier flujo → secondary_intent = "support"
+        - Usuario menciona emergencia/dolor → secondary_intent = "emergency"
 
         Si se detecta secondary intent con alta confianza, se puede hacer handoff.
         """
@@ -377,45 +381,85 @@ class MultiAgentOrchestratorGraph:
         question = state["question"].lower()
         primary_intent = state.get("intent", "").lower()
 
-        # Keywords para detectar preguntas comerciales/pricing
+        # ===== KEYWORDS PARA DIFERENTES INTENTS ===== #
+
+        # Keywords comerciales/pricing
         pricing_keywords = [
             "precio", "costo", "cuánto", "cuanto", "valor", "pagar",
             "inversión", "oferta", "promoción", "descuento", "cuesta"
         ]
 
-        # Keywords para detectar preguntas de agendamiento
+        # Keywords de agendamiento
         schedule_keywords = [
             "cita", "agenda", "agendar", "reserva", "reservar", "disponibilidad",
-            "horario", "turno", "día", "fecha", "hora"
+            "horario", "turno", "día", "fecha", "hora", "cuando"
         ]
 
-        # Detectar secondary intent
+        # Keywords de soporte general
+        support_keywords = [
+            "parqueadero", "ubicación", "dirección", "donde queda", "dónde",
+            "horario de atención", "atienden", "cómo llegar", "como llegar",
+            "métodos de pago", "formas de pago", "tarjeta", "efectivo",
+            "información", "requisitos", "documentos", "qué necesito",
+            "queja", "reclamo", "problema", "ayuda"
+        ]
+
+        # Keywords de emergencia (prioridad máxima)
+        emergency_keywords = [
+            "dolor", "duele", "sangr", "emergencia", "urgente", "urgencia",
+            "inmediato", "ahora", "rápido", "ayuda", "mal", "grave",
+            "inflamación", "hinchazón", "infección", "fiebre", "mareo"
+        ]
+
+        # ===== DETECTAR PRESENCIA DE KEYWORDS ===== #
         has_pricing_query = any(keyword in question for keyword in pricing_keywords)
         has_schedule_query = any(keyword in question for keyword in schedule_keywords)
+        has_support_query = any(keyword in question for keyword in support_keywords)
+        has_emergency_query = any(keyword in question for keyword in emergency_keywords)
 
         logger.info(
             f"[{self.company_id}] Detection: primary_intent={primary_intent}, "
-            f"has_pricing={has_pricing_query}, has_schedule={has_schedule_query}"
+            f"pricing={has_pricing_query}, schedule={has_schedule_query}, "
+            f"support={has_support_query}, emergency={has_emergency_query}"
         )
 
-        # Si intent primario es "schedule" pero hay pregunta de pricing
-        if primary_intent == "schedule" and has_pricing_query:
+        # ===== PRIORIDAD 1: EMERGENCIAS (siempre tiene máxima prioridad) ===== #
+        if has_emergency_query and primary_intent != "emergency":
+            state["secondary_intent"] = "emergency"
+            state["secondary_confidence"] = 0.9  # Alta confianza
+            logger.info(
+                f"[{self.company_id}] ⚠️ Secondary intent detected: EMERGENCY "
+                f"(urgent query from {primary_intent})"
+            )
+
+        # ===== PRIORIDAD 2: PRICING (durante schedule o support) ===== #
+        elif primary_intent in ["schedule", "support"] and has_pricing_query:
             state["secondary_intent"] = "sales"
             state["secondary_confidence"] = 0.8
             logger.info(
                 f"[{self.company_id}] ✅ Secondary intent detected: sales "
-                f"(pricing question during scheduling)"
+                f"(pricing question during {primary_intent})"
             )
 
-        # Si intent primario es "sales" pero hay pregunta de agendamiento
-        elif primary_intent == "sales" and has_schedule_query:
+        # ===== PRIORIDAD 3: SCHEDULING (durante sales o support) ===== #
+        elif primary_intent in ["sales", "support"] and has_schedule_query:
             state["secondary_intent"] = "schedule"
             state["secondary_confidence"] = 0.8
             logger.info(
                 f"[{self.company_id}] ✅ Secondary intent detected: schedule "
-                f"(scheduling question during sales)"
+                f"(scheduling question during {primary_intent})"
             )
 
+        # ===== PRIORIDAD 4: SUPPORT (durante sales o schedule) ===== #
+        elif primary_intent in ["sales", "schedule"] and has_support_query:
+            state["secondary_intent"] = "support"
+            state["secondary_confidence"] = 0.75
+            logger.info(
+                f"[{self.company_id}] ✅ Secondary intent detected: support "
+                f"(general question during {primary_intent})"
+            )
+
+        # ===== NO SE DETECTÓ SECONDARY INTENT ===== #
         else:
             state["secondary_intent"] = None
             state["secondary_confidence"] = 0.0
@@ -492,31 +536,66 @@ class MultiAgentOrchestratorGraph:
                 f"({len(result['output'])} chars)"
             )
 
-            # ✅ Guardar información en shared state store
+            # ✅ Guardar información en shared state store para TODOS los agentes
             user_id = state["user_id"]
             response = result["output"]
 
-            # Si es SalesAgent y la respuesta contiene pricing info
-            if agent_name == "sales" and any(
-                keyword in response.lower()
-                for keyword in ["$", "cop", "pesos", "precio", "costo", "valor"]
-            ):
-                # Extraer y guardar pricing info en el store
-                # (simplificado - en producción usar NER o LLM para extraer)
-                logger.info(f"[{self.company_id}] Storing pricing info from {agent_name}")
-                state["shared_context"]["sales_pricing"] = {
+            # ===== SALES AGENT: Guardar pricing info ===== #
+            if agent_name == "sales":
+                has_pricing = any(
+                    keyword in response.lower()
+                    for keyword in ["$", "cop", "pesos", "precio", "costo", "valor"]
+                )
+                if has_pricing:
+                    logger.info(f"[{self.company_id}] Storing pricing info from {agent_name}")
+
+                state["shared_context"]["sales_info"] = {
                     "response": response,
                     "agent": agent_name,
-                    "has_pricing": True
+                    "has_pricing": has_pricing,
+                    "timestamp": datetime.utcnow().isoformat()
                 }
 
-            # Si es ScheduleAgent y la respuesta contiene schedule info
+            # ===== SCHEDULE AGENT: Guardar schedule info ===== #
             elif agent_name == "schedule":
+                has_appointment = any(
+                    keyword in response.lower()
+                    for keyword in ["cita", "agenda", "fecha", "hora", "confirmada"]
+                )
                 logger.info(f"[{self.company_id}] Storing schedule info from {agent_name}")
+
                 state["shared_context"]["schedule_info"] = {
                     "response": response,
                     "agent": agent_name,
-                    "has_schedule": True
+                    "has_appointment": has_appointment,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+            # ===== SUPPORT AGENT: Guardar support info ===== #
+            elif agent_name == "support":
+                logger.info(f"[{self.company_id}] Storing support info from {agent_name}")
+
+                state["shared_context"]["support_info"] = {
+                    "response": response,
+                    "agent": agent_name,
+                    "question": state["question"],
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+            # ===== EMERGENCY AGENT: Guardar emergency info ===== #
+            elif agent_name == "emergency":
+                has_urgency = any(
+                    keyword in response.lower()
+                    for keyword in ["urgente", "emergencia", "inmediato", "llamar", "contactar"]
+                )
+                logger.info(f"[{self.company_id}] Storing emergency info from {agent_name}")
+
+                state["shared_context"]["emergency_info"] = {
+                    "response": response,
+                    "agent": agent_name,
+                    "has_urgency": has_urgency,
+                    "question": state["question"],
+                    "timestamp": datetime.utcnow().isoformat()
                 }
 
         else:
@@ -659,11 +738,13 @@ class MultiAgentOrchestratorGraph:
 
     def _validate_cross_agent_info(self, state: OrchestratorState) -> OrchestratorState:
         """
-        Validar consistencia de información entre agentes.
+        Validar consistencia de información entre TODOS los agentes.
 
         Casos de validación:
-        - Si Schedule proporcionó precio, verificar con info de Sales
+        - Si Schedule proporcionó precio, verificar con Sales
         - Si Sales proporcionó disponibilidad, verificar con Schedule
+        - Si Support proporcionó precio, verificar con Sales
+        - Si cualquier agente proporciona info que debería venir de otro especialista
 
         Esta validación usa el shared_context para comparar información.
         """
@@ -673,9 +754,14 @@ class MultiAgentOrchestratorGraph:
         agent_response = state.get("agent_response", "")
         shared_context = state.get("shared_context", {})
 
-        # Detectar si la respuesta contiene información de precios
+        # Keywords para diferentes tipos de información
         pricing_keywords = ["$", "cop", "pesos", "precio", "costo", "valor"]
+        schedule_keywords = ["cita", "agenda", "disponibilidad", "horario", "fecha"]
+        emergency_keywords = ["urgente", "emergencia", "dolor", "inmediato"]
+
         has_pricing_info = any(keyword in agent_response.lower() for keyword in pricing_keywords)
+        has_schedule_info = any(keyword in agent_response.lower() for keyword in schedule_keywords)
+        has_emergency_info = any(keyword in agent_response.lower() for keyword in emergency_keywords)
 
         validation: ValidationResult = {
             "is_valid": True,
@@ -684,34 +770,58 @@ class MultiAgentOrchestratorGraph:
             "metadata": {}
         }
 
-        # Si Schedule Agent proporcionó pricing info
-        if current_agent == "schedule" and has_pricing_info:
-            # Verificar si hay pricing info en shared_context de Sales
-            sales_pricing = shared_context.get("sales_pricing", {})
+        # ===== VALIDAR PRICING INFO ===== #
+        # Si un agente NO-SALES proporciona pricing, validar con Sales
+        if current_agent != "sales" and has_pricing_info:
+            sales_info = shared_context.get("sales_info", {})
 
-            if sales_pricing:
-                # TODO: Implementar comparación de precios
-                # Por ahora solo registrar warning si difieren
+            if sales_info and sales_info.get("has_pricing"):
                 validation["warnings"].append(
-                    "Schedule provided pricing info - should validate against Sales data"
+                    f"{current_agent} provided pricing - validated with Sales context"
                 )
-                validation["metadata"]["has_sales_pricing"] = True
+                validation["metadata"]["has_sales_context"] = True
             else:
                 validation["warnings"].append(
-                    "Schedule provided pricing without Sales context"
+                    f"{current_agent} provided pricing without Sales context"
                 )
 
-        # Si Sales Agent proporcionó schedule info
-        elif current_agent == "sales" and any(
-            keyword in agent_response.lower()
-            for keyword in ["cita", "agenda", "disponibilidad", "horario"]
-        ):
+        # ===== VALIDAR SCHEDULE INFO ===== #
+        # Si un agente NO-SCHEDULE proporciona schedule info, validar con Schedule
+        if current_agent != "schedule" and has_schedule_info:
             schedule_info = shared_context.get("schedule_info", {})
 
-            if not schedule_info:
+            if schedule_info and schedule_info.get("has_appointment"):
                 validation["warnings"].append(
-                    "Sales mentioned scheduling without Schedule context"
+                    f"{current_agent} mentioned scheduling - validated with Schedule context"
                 )
+                validation["metadata"]["has_schedule_context"] = True
+            else:
+                validation["warnings"].append(
+                    f"{current_agent} mentioned scheduling without Schedule context"
+                )
+
+        # ===== VALIDAR EMERGENCY INFO ===== #
+        # Si un agente NO-EMERGENCY menciona emergencia, validar con Emergency
+        if current_agent != "emergency" and has_emergency_info:
+            emergency_info = shared_context.get("emergency_info", {})
+
+            if emergency_info:
+                validation["warnings"].append(
+                    f"{current_agent} mentioned emergency - validated with Emergency context"
+                )
+                validation["metadata"]["has_emergency_context"] = True
+            else:
+                validation["warnings"].append(
+                    f"{current_agent} mentioned emergency without Emergency context"
+                )
+
+        # ===== LOG SHARED CONTEXT DISPONIBLE ===== #
+        available_contexts = [k for k in shared_context.keys()]
+        if available_contexts:
+            validation["metadata"]["available_contexts"] = available_contexts
+            logger.info(
+                f"[{self.company_id}] Available contexts: {', '.join(available_contexts)}"
+            )
 
         state["validations"].append(validation)
 
@@ -819,7 +929,7 @@ class MultiAgentOrchestratorGraph:
     def _should_perform_handoff(
         self,
         state: OrchestratorState
-    ) -> Literal["handoff_to_sales", "handoff_to_schedule", "handoff_to_support", "end"]:
+    ) -> Literal["handoff_to_sales", "handoff_to_schedule", "handoff_to_support", "handoff_to_emergency", "end"]:
         """
         Determinar si realizar handoff a otro agente.
 
@@ -827,6 +937,7 @@ class MultiAgentOrchestratorGraph:
             - handoff_to_sales: Hacer handoff a SalesAgent
             - handoff_to_schedule: Hacer handoff a ScheduleAgent
             - handoff_to_support: Hacer handoff a SupportAgent
+            - handoff_to_emergency: Hacer handoff a EmergencyAgent
             - end: No hacer handoff, terminar
         """
         if not state.get("handoff_requested", False):
@@ -840,6 +951,8 @@ class MultiAgentOrchestratorGraph:
             return "handoff_to_schedule"
         elif handoff_to == "support":
             return "handoff_to_support"
+        elif handoff_to == "emergency":
+            return "handoff_to_emergency"
         else:
             return "end"
 

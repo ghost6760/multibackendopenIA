@@ -73,6 +73,40 @@ class UserInfo:
 
 
 @dataclass
+class ServiceInfo:
+    """Información sobre servicios/tratamientos consultados"""
+    service_name: str
+    category: Optional[str] = None
+    description: Optional[str] = None
+    mentioned_by_agent: str = "unknown"
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SupportInfo:
+    """Información de soporte/preguntas generales"""
+    question_type: str  # general, complaint, facility, payment_method, etc.
+    question: str
+    answer: Optional[str] = None
+    resolved: bool = False
+    source_agent: str = "support"
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class EmergencyInfo:
+    """Información de emergencias médicas"""
+    symptoms: List[str] = field(default_factory=list)
+    urgency_level: str = "unknown"  # low, medium, high, critical
+    action_taken: Optional[str] = None
+    detected_by_agent: str = "emergency"
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class HandoffInfo:
     """Información de handoff entre agentes"""
     from_agent: str
@@ -112,6 +146,9 @@ class SharedStateStore:
             self._pricing_store: Dict[str, Dict[str, PricingInfo]] = {}
             self._schedule_store: Dict[str, ScheduleInfo] = {}
             self._user_store: Dict[str, UserInfo] = {}
+            self._service_store: Dict[str, List[ServiceInfo]] = {}
+            self._support_store: Dict[str, List[SupportInfo]] = {}
+            self._emergency_store: Dict[str, EmergencyInfo] = {}
             self._handoff_store: Dict[str, List[HandoffInfo]] = {}
             self._expiration_times: Dict[str, datetime] = {}
 
@@ -129,6 +166,9 @@ class SharedStateStore:
                 self._pricing_store = {}
                 self._schedule_store = {}
                 self._user_store = {}
+                self._service_store = {}
+                self._support_store = {}
+                self._emergency_store = {}
                 self._handoff_store = {}
                 self._expiration_times = {}
         else:
@@ -413,6 +453,179 @@ class SharedStateStore:
                     self._user_store[user_id] = user_info
 
                 logger.info(f"Intent added to history: user={user_id}, intent={intent}")
+
+    # ========== SERVICE INFO ========== #
+
+    def add_service_info(
+        self,
+        user_id: str,
+        service_name: str,
+        category: str = None,
+        description: str = None,
+        mentioned_by_agent: str = "unknown",
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Registrar servicio/tratamiento mencionado.
+
+        Args:
+            user_id: ID del usuario
+            service_name: Nombre del servicio
+            category: Categoría del servicio
+            description: Descripción
+            mentioned_by_agent: Agente que mencionó el servicio
+            metadata: Metadata adicional
+        """
+        with self._lock:
+            if self.backend == "memory":
+                service_info = ServiceInfo(
+                    service_name=service_name,
+                    category=category,
+                    description=description,
+                    mentioned_by_agent=mentioned_by_agent,
+                    metadata=metadata or {}
+                )
+
+                if user_id not in self._service_store:
+                    self._service_store[user_id] = []
+
+                self._service_store[user_id].append(service_info)
+
+                logger.info(
+                    f"Service info added: user={user_id}, service={service_name}, "
+                    f"agent={mentioned_by_agent}"
+                )
+
+    def get_service_info(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Obtener servicios mencionados para un usuario.
+
+        Args:
+            user_id: ID del usuario
+
+        Returns:
+            Lista de servicios mencionados
+        """
+        with self._lock:
+            if self.backend == "memory":
+                services = self._service_store.get(user_id, [])
+                return [asdict(s) for s in services]
+            return []
+
+    # ========== SUPPORT INFO ========== #
+
+    def add_support_info(
+        self,
+        user_id: str,
+        question_type: str,
+        question: str,
+        answer: str = None,
+        resolved: bool = False,
+        source_agent: str = "support",
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Registrar pregunta de soporte.
+
+        Args:
+            user_id: ID del usuario
+            question_type: Tipo de pregunta (general, complaint, facility, etc.)
+            question: Pregunta del usuario
+            answer: Respuesta proporcionada
+            resolved: Si la pregunta fue resuelta
+            source_agent: Agente que manejó la pregunta
+            metadata: Metadata adicional
+        """
+        with self._lock:
+            if self.backend == "memory":
+                support_info = SupportInfo(
+                    question_type=question_type,
+                    question=question,
+                    answer=answer,
+                    resolved=resolved,
+                    source_agent=source_agent,
+                    metadata=metadata or {}
+                )
+
+                if user_id not in self._support_store:
+                    self._support_store[user_id] = []
+
+                self._support_store[user_id].append(support_info)
+
+                logger.info(
+                    f"Support info added: user={user_id}, type={question_type}, "
+                    f"resolved={resolved}"
+                )
+
+    def get_support_info(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Obtener historial de soporte para un usuario.
+
+        Args:
+            user_id: ID del usuario
+
+        Returns:
+            Lista de consultas de soporte
+        """
+        with self._lock:
+            if self.backend == "memory":
+                support = self._support_store.get(user_id, [])
+                return [asdict(s) for s in support]
+            return []
+
+    # ========== EMERGENCY INFO ========== #
+
+    def set_emergency_info(
+        self,
+        user_id: str,
+        symptoms: List[str] = None,
+        urgency_level: str = "unknown",
+        action_taken: str = None,
+        detected_by_agent: str = "emergency",
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Registrar información de emergencia.
+
+        Args:
+            user_id: ID del usuario
+            symptoms: Lista de síntomas
+            urgency_level: Nivel de urgencia (low, medium, high, critical)
+            action_taken: Acción tomada
+            detected_by_agent: Agente que detectó la emergencia
+            metadata: Metadata adicional
+        """
+        with self._lock:
+            if self.backend == "memory":
+                emergency_info = EmergencyInfo(
+                    symptoms=symptoms or [],
+                    urgency_level=urgency_level,
+                    action_taken=action_taken,
+                    detected_by_agent=detected_by_agent,
+                    metadata=metadata or {}
+                )
+
+                self._emergency_store[user_id] = emergency_info
+
+                logger.info(
+                    f"Emergency info stored: user={user_id}, urgency={urgency_level}, "
+                    f"symptoms={len(symptoms or [])}"
+                )
+
+    def get_emergency_info(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtener información de emergencia.
+
+        Args:
+            user_id: ID del usuario
+
+        Returns:
+            Dict con emergency info o None si no existe
+        """
+        with self._lock:
+            if self.backend == "memory":
+                emergency = self._emergency_store.get(user_id)
+                return asdict(emergency) if emergency else None
 
     # ========== HANDOFF INFO ========== #
 

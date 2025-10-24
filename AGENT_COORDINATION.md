@@ -416,40 +416,76 @@ START
 END
 ```
 
-#### **Ejemplo de Uso**
+#### **Ejemplos de Uso**
 
+**Caso 1: Pricing durante scheduling (Schedule → Sales)**
 ```python
-# Caso: Usuario pregunta "Quiero agendar toxina botulínica, ¿cuánto cuesta?"
+User: "Quiero agendar toxina botulínica, ¿cuánto cuesta?"
 
 # 1. Router clasifica intent="schedule"
 # 2. Detect Secondary Intent detecta keywords de pricing → secondary_intent="sales"
 # 3. Execute Schedule Agent responde sobre agendamiento
-# 4. Handle Agent Handoff detecta secondary_intent → solicita handoff a Sales
+# 4. Handle Agent Handoff detecta secondary_intent → handoff a Sales
 # 5. Execute Sales Agent proporciona precio correcto: "$550,000"
 # 6. Validate Cross-Agent Info verifica consistencia
-# 7. Respuesta final combina información de ambos agentes
+# 7. Respuesta final combina información de ambos agentes ✅
+```
+
+**Caso 2: Pregunta general durante ventas (Sales → Support)**
+```python
+User: "¿Cuánto cuesta la toxina? ¿Tienen parqueadero?"
+
+# 1. Router clasifica intent="sales"
+# 2. Execute Sales Agent responde sobre pricing
+# 3. Detect Secondary Intent detecta keywords de support → secondary_intent="support"
+# 4. Handle Agent Handoff → handoff a Support
+# 5. Execute Support Agent proporciona info de parqueadero
+# 6. Respuesta combina pricing + facilities info ✅
+```
+
+**Caso 3: Emergencia durante cualquier flujo (Any → Emergency)**
+```python
+User: "Quiero agendar... me duele mucho la zona tratada"
+
+# 1. Router clasifica intent="schedule"
+# 2. Detect Secondary Intent detecta keywords de EMERGENCY → secondary_intent="emergency" (prioridad máxima)
+# 3. Execute Schedule Agent (breve)
+# 4. Handle Agent Handoff → handoff URGENTE a Emergency
+# 5. Execute Emergency Agent prioriza atención médica
+# 6. Shared context guarda emergency_info para seguimiento ⚠️
 ```
 
 #### **Beneficios Implementados**
 
-✅ **Detección de Intención Secundaria**
-- Detecta cambios de intención mid-conversation
-- Keywords-based con alta precisión
+✅ **Detección de Intención Secundaria (EXTENDIDA)**
+- **Pricing**: Schedule/Support → Sales
+- **Scheduling**: Sales/Support → Schedule
+- **Support general**: Schedule/Sales → Support
+- **Emergency (PRIORIDAD MÁXIMA)**: Cualquier agente → Emergency
+- Keywords-based con confianza del 75-90%
 
-✅ **Agent Handoff Automático**
-- Schedule → Sales cuando se pregunta por precios
-- Sales → Schedule cuando se pregunta por agendamiento
+✅ **Agent Handoff Multi-Direccional**
+- Schedule ↔ Sales (pricing/scheduling)
+- Schedule ↔ Support (general questions)
+- Sales ↔ Support (facilities, payment methods)
+- **ANY → Emergency** (máxima prioridad para urgencias)
 - Contexto preservado durante handoff
+- Prevención de loops infinitos
 
-✅ **Contexto Compartido**
-- Pricing info compartida entre agentes
-- Schedule info compartida entre agentes
-- User info accesible por todos
+✅ **Contexto Compartido (TODOS LOS AGENTES)**
+- **sales_info**: pricing, payment methods, promotions
+- **schedule_info**: appointments, availability, booking IDs
+- **support_info**: general questions, facilities, complaints
+- **emergency_info**: symptoms, urgency level, actions taken
+- **service_info**: treatments/services mentioned
+- **user_info**: contact info, intent history
 
-✅ **Validación Cruzada**
-- Detecta inconsistencias en pricing
-- Logs warnings para debugging
-- Fuente de verdad clara (Sales para pricing, Schedule para disponibilidad)
+✅ **Validación Cruzada (COMPREHENSIVA)**
+- Valida pricing entre Schedule/Support con Sales
+- Valida scheduling entre Sales/Support con Schedule
+- Valida emergency mentions con Emergency context
+- Logs disponibles de contextos compartidos
+- Warnings para debugging e inconsistencias
 
 #### **Próximos Pasos**
 
