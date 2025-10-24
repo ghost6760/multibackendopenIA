@@ -25,7 +25,8 @@ Ventajas vs implementación actual de ScheduleAgent:
 - Debugging más sencillo (ver estado en cada paso)
 """
 
-from typing import Dict, Any, List, Literal
+from __future__ import annotations
+from typing import Dict, Any, List, Literal, TYPE_CHECKING
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 import logging
@@ -36,7 +37,10 @@ from app.langgraph_adapters.state_schemas import (
     ScheduleAgentState,
     create_initial_schedule_state
 )
-from app.agents.schedule_agent import ScheduleAgent
+
+# Avoid circular import: ScheduleAgent imports ScheduleAgentGraph
+if TYPE_CHECKING:
+    from app.agents.schedule_agent import ScheduleAgent
 
 logger = logging.getLogger(__name__)
 
@@ -325,8 +329,18 @@ class ScheduleAgentGraph:
         }
 
         try:
-            # Ejecutar ScheduleAgent mediante su método invoke
-            response = self.schedule_agent.invoke(inputs)
+            # ✅ IMPORTANTE: Llamar directamente al chain para evitar loop de recursión
+            # NO usar invoke() porque ese método llama de vuelta al grafo
+            if hasattr(self.schedule_agent, 'chain') and self.schedule_agent.chain:
+                response = self.schedule_agent.chain.invoke(inputs)
+            else:
+                # Fallback: usar hybrid_schedule_processor directamente
+                response = self.schedule_agent.hybrid_schedule_processor(
+                    question=inputs["question"],
+                    chat_history=inputs.get("chat_history", []),
+                    additional_context=inputs.get("context", "")
+                )
+
             state["agent_response"] = response
 
             logger.info(

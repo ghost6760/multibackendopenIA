@@ -23,90 +23,22 @@ class ScheduleAgent(BaseAgent):
         self.schedule_status_last_check = 0
         self.schedule_status_cache_duration = 30
         self.vectorstore_service = None  # Se inyecta externamente
-
+        
         # Configuración de integraciones de calendario
         self.integration_type = self._detect_integration_type()
-
+        
         # Verificar conexión inicial con servicio de agendamiento
         self._verify_schedule_service()
-
+        
         # Crear cadena
         self._create_chain()
-
-        # ✅ NUEVO: Inicializar grafo LangGraph para orquestación
-        self._initialize_graph()
     
     def set_vectorstore_service(self, vectorstore_service):
         """Inyectar servicio de vectorstore específico de la empresa"""
         self.vectorstore_service = vectorstore_service
         # Recrear cadena con RAG
         self._create_chain()
-        # Reinicializar grafo con nueva configuración
-        self._initialize_graph()
-
-    def _initialize_graph(self):
-        """Inicializar ScheduleAgentGraph para orquestación paso a paso"""
-        try:
-            from app.langgraph_adapters.schedule_agent_graph import ScheduleAgentGraph
-            self.graph = ScheduleAgentGraph(
-                schedule_agent=self,
-                enable_checkpointing=False
-            )
-            logger.info(
-                f"✅ ScheduleAgentGraph initialized for company "
-                f"{self.company_config.company_id}"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Could not initialize ScheduleAgentGraph: {e}. "
-                f"Using direct chain execution."
-            )
-            self.graph = None
-
-    def invoke(self, inputs: Dict[str, Any]) -> str:
-        """
-        Método invoke con wrapper de ScheduleAgentGraph.
-
-        ✅ Usa ScheduleAgentGraph si está disponible para orquestación paso a paso
-        ✅ Fallback a chain directo si el grafo no está disponible
-        """
-        question = inputs.get("question", "")
-        chat_history = inputs.get("chat_history", [])
-        user_id = inputs.get("user_id", "default_user")
-
-        if not question:
-            return (
-                f"No se proporcionó una pregunta válida para "
-                f"{self.company_config.company_name}."
-            )
-
-        # ✅ Intentar usar grafo si está disponible
-        if self.graph:
-            try:
-                logger.info(
-                    f"[{self.company_config.company_id}] "
-                    f"Using ScheduleAgentGraph for scheduling"
-                )
-                response = self.graph.get_response(
-                    question=question,
-                    user_id=user_id,
-                    chat_history=chat_history
-                )
-                return response
-            except Exception as e:
-                logger.error(
-                    f"[{self.company_config.company_id}] "
-                    f"ScheduleAgentGraph failed: {e}. Using fallback."
-                )
-                # Continuar con fallback
-
-        # Fallback: usar implementación heredada de BaseAgent
-        logger.info(
-            f"[{self.company_config.company_id}] "
-            f"Using direct chain execution (fallback)"
-        )
-        return super().invoke(inputs)
-
+    
     def _detect_integration_type(self) -> str:
         """Detectar tipo de integración basado en configuración"""
         schedule_url = self.company_config.schedule_service_url.lower()
@@ -259,11 +191,9 @@ class ScheduleAgent(BaseAgent):
     1. Si el usuario consulta disponibilidad, proporciona horarios disponibles
     2. Si el usuario quiere agendar, solicita la información requerida de forma amigable
     3. Usa el contexto de agendamiento para proporcionar información específica sobre duraciones, preparaciones y requisitos
-    4. ✅ IMPORTANTE: Si el usuario pregunta por precios/costos, SIEMPRE usa la información exacta del CONTEXTO DE AGENDAMIENTO. NUNCA inventes o estimates precios.
-    5. Si el CONTEXTO incluye información de precios (valor, oferta, inversión), úsala literalmente
-    6. Sé profesional pero cálido en tus respuestas
-    7. Si hay información adicional en el contexto (abonos, recomendaciones), menciónala apropiadamente
-
+    4. Sé profesional pero cálido en tus respuestas
+    5. Si hay información adicional en el contexto (abonos, recomendaciones), menciónala apropiadamente
+    
     TONO: Profesional, organizado, servicial y claro.
     LONGITUD: Máximo 4-5 oraciones, a menos que se requiera información detallada.
     
@@ -293,42 +223,33 @@ class ScheduleAgent(BaseAgent):
         """Obtener contexto de agendamiento desde documentos RAG"""
         try:
             question = inputs.get("question", "")
-
+            
             if not self.vectorstore_service:
                 return self._get_basic_schedule_info()
-
-            # ✅ MEJORADO: Buscar directamente con la pregunta del usuario
-            # No modificar la query para mantener precisión semántica
+            
+            # Buscar información relacionada con agendamiento
+            schedule_query = f"cita agenda horario duración preparación requisitos abono {question}"
             docs = self.vectorstore_service.search_by_company(
-                question,
+                schedule_query,
                 self.company_config.company_id,
-                k=5  # Aumentado a 5 para mejor cobertura
+                k=3
             )
-
+            
             if not docs:
                 return self._get_basic_schedule_info()
-
-            # ✅ MEJORADO: Extraer información relevante (incluyendo precios)
+            
+            # Extraer información relevante para agendamiento
             context_parts = []
-            # Keywords expandidas para incluir información comercial
-            relevant_keywords = [
-                'cita', 'agenda', 'horario', 'duración', 'preparación',
-                'requisitos', 'abono', 'valoración',
-                # ✅ NUEVO: Incluir keywords comerciales
-                'precio', 'costo', 'valor', 'inversión', 'oferta',
-                'pago', 'efectivo', 'transferencia', 'promoción'
-            ]
-
             for doc in docs:
                 if hasattr(doc, 'page_content') and doc.page_content:
                     content = doc.page_content.lower()
-                    if any(word in content for word in relevant_keywords):
+                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos', 'abono', 'valoración']):
                         context_parts.append(doc.page_content)
                 elif isinstance(doc, dict) and 'content' in doc:
                     content = doc['content'].lower()
-                    if any(word in content for word in relevant_keywords):
+                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos', 'abono', 'valoración']):
                         context_parts.append(doc['content'])
-
+            
             if context_parts:
                 basic_info = self._get_basic_schedule_info()
                 rag_info = "\n\nInformación adicional específica:\n" + "\n".join(context_parts)
