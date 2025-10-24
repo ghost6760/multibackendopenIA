@@ -208,39 +208,34 @@ class OpenAIService:
                 
     
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (fixed input types)."""
+        """Analyze image using Responses API (correct input types: input_text + input_image)."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
     
         try:
-            # Leer bytes
+            # Leer bytes de la imagen
             if hasattr(image_file, "read"):
                 image_bytes = image_file.read()
             else:
                 with open(image_file, "rb") as f:
                     image_bytes = f.read()
     
-            # Preferible: si imagen grande, subir a storage y usar URL pública.
+            # Recomendar subir a storage si es grande
             if len(image_bytes) > 300_000:
-                logger.warning("Image size > 300KB — consider uploading to storage and passing a URL instead of data URI.")
+                logger.warning("Image size > 300KB — consider uploading to storage and passing a public URL instead of a data URI.")
     
             import base64, json
             base64_image = base64.b64encode(image_bytes).decode("utf-8")
             data_uri = f"data:image/jpeg;base64,{base64_image}"
     
-            # Construir payload válido para Responses API
-            message_item = {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": (
-                            "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
-                            "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
-                        )
-                    }
-                ]
+            # --- Construcción CORRECTA del input para Responses API ---
+            # Usamos item de tipo input_text y input_image (no 'output_text')
+            text_item = {
+                "type": "input_text",
+                "text": (
+                    "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
+                    "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                )
             }
     
             image_item = {
@@ -248,7 +243,7 @@ class OpenAIService:
                 "image_url": {"url": data_uri}
             }
     
-            input_payload = [message_item, image_item]
+            input_payload = [text_item, image_item]
     
             # DEBUG: log payload (recorta para no llenar logs)
             try:
@@ -263,25 +258,11 @@ class OpenAIService:
                 temperature=0.1
             )
     
-            # Extraer texto robustamente (usa tu helper si ya existe)
-            text_out = ""
-            if hasattr(resp, "output"):
-                for out in getattr(resp, "output", []):
-                    content = out.get("content") if isinstance(out, dict) else getattr(out, "content", None)
-                    if isinstance(content, list):
-                        for c in content:
-                            if isinstance(c, dict) and "text" in c:
-                                text_out += c["text"]
-                            elif isinstance(c, str):
-                                text_out += c
-            if not text_out and hasattr(resp, "output_text"):
-                text_out = getattr(resp, "output_text")
-    
-            return text_out.strip()
+            # Extraer texto de la respuesta de forma robusta (usa tu helper si existe)
+            return self._extract_response_text(resp)
     
         except Exception as e:
             logger.error(f"Error analyzing image (Responses): {e}")
-            # Log extra para debugging
             try:
                 logger.debug("Exception details: %s", getattr(e, "args", e))
             except Exception:
@@ -290,7 +271,7 @@ class OpenAIService:
 
     
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Analyze image from URL using Responses API (fixed input types)."""
+        """Analyze image from URL using Responses API (delegates to analyze_image)."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
     
@@ -304,10 +285,8 @@ class OpenAIService:
             if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
                 logger.warning(f"Content type might not be image: {content_type}")
     
-            # Si la imagen es grande preferible subir a storage y usar URL pública,
-            # pero para compatibilidad temporal delegamos al mismo analyze_image
+            # Si la imagen es grande: subir a storage y pasar la URL pública (recomendado).
             image_file = BytesIO(response.content)
-    
             return self.analyze_image(image_file)
     
         except requests.exceptions.RequestException as e:
