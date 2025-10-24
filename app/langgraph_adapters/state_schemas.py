@@ -74,9 +74,24 @@ class OrchestratorState(TypedDict):
     confidence: float
     intent_keywords: List[str]
 
+    # === Intención secundaria (detección mid-conversation) === #
+    secondary_intent: Optional[str]
+    secondary_confidence: float
+
     # === Estado de ejecución === #
     current_agent: Optional[str]
     agent_response: Optional[str]
+
+    # === Shared context entre agentes === #
+    shared_context: Dict[str, Any]  # Contexto compartido (pricing, schedule, etc.)
+
+    # === Handoff entre agentes === #
+    handoff_requested: bool
+    handoff_from: Optional[str]
+    handoff_to: Optional[str]
+    handoff_reason: Optional[str]
+    handoff_context: Dict[str, Any]
+    handoff_completed: bool  # Prevenir handoffs múltiples
 
     # === Validaciones === #
     validations: Annotated[List[ValidationResult], operator.add]
@@ -174,9 +189,24 @@ def create_initial_orchestrator_state(
         "confidence": 0.0,
         "intent_keywords": [],
 
+        # Intención secundaria
+        "secondary_intent": None,
+        "secondary_confidence": 0.0,
+
         # Ejecución
         "current_agent": None,
         "agent_response": None,
+
+        # Shared context
+        "shared_context": {},
+
+        # Handoff
+        "handoff_requested": False,
+        "handoff_from": None,
+        "handoff_to": None,
+        "handoff_reason": None,
+        "handoff_context": {},
+        "handoff_completed": False,
 
         # Validaciones
         "validations": [],
