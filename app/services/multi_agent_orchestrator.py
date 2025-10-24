@@ -187,19 +187,55 @@ class MultiAgentOrchestrator:
     # =========================================================================
     
     def _load_history_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Cargar historial conversacional desde DB"""
+        """Cargar historial conversacional desde DB (defensivo - loguea tipo/valor de conversation_id)."""
         conversation_id = state.get("conversation_id")
-        
+    
         try:
             history = []
             if conversation_id:
-                raw = self.conversation_manager.get_chat_history(
-                    user_id=conversation_id,
-                    format_type="dict"
-                ) or []
-                # raw ya es lista de dicts; limitarlo
+                # LOG: tipo/valor para debug (evita errores por objetos inesperados)
+                try:
+                    logger.debug(
+                        f"[{self.company_config.company_id}] DEBUG conversation_id type: {type(conversation_id)} value: {repr(conversation_id)}"
+                    )
+                except Exception:
+                    logger.debug(
+                        f"[{self.company_config.company_id}] DEBUG conversation_id (repr fallo)"
+                    )
+    
+                # Forzar a str/int si viene un objeto accidental
+                if not isinstance(conversation_id, (str, int)):
+                    logger.warning(
+                        f"[{self.company_config.company_id}] conversation_id inesperado ({type(conversation_id)}); convirtiendo a str"
+                    )
+                    conversation_id = str(conversation_id)
+    
+                # Llamar al ConversationManager usando la API conocida
+                raw = []
+                try:
+                    if hasattr(self.conversation_manager, "get_chat_history"):
+                        raw = self.conversation_manager.get_chat_history(
+                            user_id=conversation_id,
+                            format_type="dict"
+                        ) or []
+                    elif hasattr(self.conversation_manager, "get_conversation_history"):
+                        raw = self.conversation_manager.get_conversation_history(
+                            conversation_id=conversation_id,
+                            limit=100
+                        ) or []
+                    else:
+                        logger.warning(f"[{self.company_config.company_id}] ConversationManager sin método de historial conocido")
+                        raw = []
+                except Exception as e:
+                    logger.error(f"[{self.company_config.company_id}] Error calling conversation manager: {e}")
+                    raw = []
+    
+                # Normalizar estructura
+                if isinstance(raw, dict):
+                    raw = raw.get("messages", []) or []
+    
                 history = raw[-10:]
-                
+    
                 logger.debug(
                     f"[{self.company_config.company_id}] History loaded",
                     extra={
@@ -209,57 +245,83 @@ class MultiAgentOrchestrator:
                 )
             else:
                 history = []
-            
+    
             return {
                 **state,
                 "chat_history": history,
                 "retry_count": 0,
                 "timestamp": datetime.utcnow().isoformat()
             }
-            
+    
         except Exception as e:
             logger.error(f"Error loading history: {e}")
             return {**state, "chat_history": [], "retry_count": 0}
+
     
     def _classify_intent_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Clasificar intención usando RouterAgent"""
+        """Clasificar intención usando RouterAgent (robusto contra KeyError de 'router')."""
         try:
             start_time = time.time()
-            
-            # Ejecutar RouterAgent
-            router_response = self.agents["router"].invoke({
-                "question": state["question"],
-                "chat_history": state.get("chat_history", [])
-            })
-            
-            # Parsear respuesta JSON
+    
+            # DEBUG: listar agentes disponibles para detectar mismatch de nombres
             try:
-                intent_data = json.loads(router_response)
-            except json.JSONDecodeError:
-                # Fallback si no es JSON válido
-                logger.warning(f"Router returned non-JSON: {router_response[:100]}")
+                logger.debug(f"[{self.company_config.company_id}] Agents available for routing: {list(self.agents.keys())}")
+            except Exception:
+                logger.debug(f"[{self.company_config.company_id}] Agents available: (could not stringify)")
+    
+            # Buscar agente 'router' de forma robusta
+            router_agent = self.agents.get("router")
+            if router_agent is None:
+                # intentar detectar por substring en keys
+                for k, v in self.agents.items():
+                    if "router" in k.lower():
+                        router_agent = v
+                        logger.info(f"[{self.company_config.company_id}] Router agent found by fallback key: '{k}'")
+                        break
+    
+            if router_agent is None:
+                # Log detallado y fallback seguro
+                logger.error(f"[{self.company_config.company_id}] Router agent not found. Available agents: {list(self.agents.keys())}")
                 intent_data = {
                     "intent": "SUPPORT",
-                    "confidence": 0.3,
+                    "confidence": 0.0,
                     "keywords": [],
-                    "reasoning": "JSON parse failed"
+                    "reasoning": "Router agent not configured"
                 }
-            
+            else:
+                # Ejecutar RouterAgent pasando inputs conocidos
+                router_response = router_agent.invoke({
+                    "question": state.get("question", ""),
+                    "chat_history": state.get("chat_history", [])
+                })
+    
+                # Intentamos parsear JSON si el router devuelve string
+                try:
+                    intent_data = json.loads(router_response) if isinstance(router_response, str) else router_response
+                except Exception:
+                    logger.warning(f"[{self.company_config.company_id}] Router returned non-JSON (preview): {str(router_response)[:200]}")
+                    intent_data = {
+                        "intent": "SUPPORT",
+                        "confidence": 0.3,
+                        "keywords": [],
+                        "reasoning": "Router JSON parse failed"
+                    }
+    
             intent = intent_data.get("intent", "SUPPORT")
             confidence = intent_data.get("confidence", 0.5)
-            
+    
             execution_time = time.time() - start_time
-            
+    
             logger.info(
                 f"[{self.company_config.company_id}] Intent classified",
                 extra={
                     "intent": intent,
                     "confidence": confidence,
                     "execution_time": execution_time,
-                    "question_preview": state["question"][:50]
+                    "question_preview": state.get("question", "")[:50]
                 }
             )
-            
+    
             return {
                 **state,
                 "intent": intent,
@@ -268,7 +330,7 @@ class MultiAgentOrchestrator:
                 "reasoning": intent_data.get("reasoning", ""),
                 "execution_time": execution_time
             }
-            
+    
         except Exception as e:
             logger.exception(f"Classification error: {e}")
             return {
