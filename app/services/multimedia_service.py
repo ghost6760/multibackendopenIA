@@ -153,7 +153,10 @@ class MultimediaService:
     # Image analysis (Responses API)
     # ---------------------------
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (robust and size-aware)."""
+        """Analyze image using Responses API (fixed input types)."""
+        if not self.client:
+            raise RuntimeError("OpenAI client not initialized")
+    
         try:
             # Leer bytes
             if hasattr(image_file, "read"):
@@ -161,48 +164,60 @@ class MultimediaService:
             else:
                 with open(image_file, "rb") as f:
                     image_bytes = f.read()
-
-            # Aviso si la imagen es grande: preferible subir a storage y pasar URL
-            if len(image_bytes) > 300_000:  # ~300 KB threshold (ajustable)
+    
+            # Si la imagen es grande, preferible subir a storage y pasar URL pública.
+            if len(image_bytes) > 300_000:
                 logger.warning("Image size > 300KB — consider uploading to storage and passing a URL instead of data URI.")
-
+    
+            # Construir data URI (fallback si no tienes storage)
             base64_image = base64.b64encode(image_bytes).decode("utf-8")
             data_uri = f"data:image/jpeg;base64,{base64_image}"
-
-            # Construir input mixto para Responses API
-            prompt_parts = [
-                {"type": "text", "text": "Describe esta imagen en detalle en español, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."},
-                {"type": "image_url", "image_url": {"url": data_uri}}
+    
+            # Construir input en la forma esperada por Responses API:
+            # 1) message (role/content) con la instrucción
+            # 2) input_image con image_url objeto { "url": ... }
+            input_payload = [
+                {"role": "user", "content": "Describe esta imagen en detalle en español, enfocándote en elementos relevantes para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."},
+                {"type": "input_image", "image_url": {"url": data_uri}}
             ]
-
+    
             resp = self.client.responses.create(
-                model="gpt-4.1-mini-2025-04-14",
-                input=prompt_parts,
+                model=self.model_name,
+                input=input_payload,
                 max_output_tokens=500,
                 temperature=0.1
             )
-
+    
             return self._extract_response_text(resp)
-
+    
         except Exception as e:
-            logger.error(f"Error analyzing image (Responses API): {e}")
+            # Hacer el error más legible (incluir body si viene del cliente)
+            logger.error(f"Error analyzing image (Responses): {e}")
             raise
 
+
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Download image and analyze it (delegates to analyze_image)."""
+        """Analyze image from URL using Responses API (fixed input types)."""
         try:
             logger.info(f"Downloading image from: {image_url}")
             headers = {"User-Agent": "Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)"}
             response = requests.get(image_url, headers=headers, timeout=30)
             response.raise_for_status()
-
+    
             content_type = response.headers.get("content-type", "").lower()
             if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
                 logger.warning(f"Content type might not be image: {content_type}")
-
+    
+            # Usar BytesIO y delegar
             image_file = BytesIO(response.content)
+    
+            # Opcional: si la imagen es pequeña, podemos pasar la data-uri; si es grande, subirla a storage y pasar la URL:
+            if len(response.content) > 300_000:
+                # RECOMENDADO: subir a storage y usar URL pública aquí.
+                logger.warning("Downloaded image >300KB — recommended to upload to storage and pass public URL to Responses API.")
+                # Fallback: still use data-uri (may fail if too big)
             return self.analyze_image(image_file)
-
+    
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading image: {e}")
             raise Exception(f"Error downloading image: {str(e)}")
