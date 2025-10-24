@@ -49,7 +49,7 @@ class MultiAgentOrchestrator:
             conversation_manager: Manager de conversaciones
             **kwargs: Captura argumentos legacy (company_id, openai_service, etc)
         """
-        
+    
         # ===== COMPATIBILIDAD BACKWARD =====
         # Manejo de llamadas legacy con company_id
         if company_config is None:
@@ -89,8 +89,6 @@ class MultiAgentOrchestrator:
             logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
         
         # ===== IGNORAR openai_service de kwargs (legacy) =====
-        # El orchestrator no necesita openai_service directamente,
-        # los agentes ya lo tienen inyectado
         if 'openai_service' in kwargs:
             logger.debug(f"[{company_config.company_id}] Ignoring openai_service from kwargs (legacy)")
         
@@ -98,8 +96,24 @@ class MultiAgentOrchestrator:
         self.company_config = company_config
         self.agents = agents
         self.conversation_manager = conversation_manager or ConversationManager()
-        
-        # Construir grafo
+    
+        # 🧠 FIX 1: Asegurar que el RouterAgent exista
+        if "router" not in self.agents and "router_agent" not in self.agents:
+            try:
+                from app.agents.router_agent import RouterAgent
+                self.agents["router"] = RouterAgent(company_config)
+                logger.info(f"[{company_config.company_id}] ✅ Default RouterAgent initialized")
+            except Exception as e:
+                logger.error(f"[{company_config.company_id}] ❌ Failed to initialize RouterAgent: {e}")
+    
+        # 🧠 FIX 2: Validar métodos del ConversationManager
+        if not hasattr(self.conversation_manager, "get_chat_history"):
+            logger.warning(
+                f"[{company_config.company_id}] ConversationManager lacks get_chat_history(), "
+                f"fallbacks may be used in history loader."
+            )
+    
+        # ===== CONSTRUCCIÓN DEL GRAFO =====
         try:
             self.graph = self._build_orchestrator_graph()
         except Exception as e:
@@ -114,7 +128,7 @@ class MultiAgentOrchestrator:
                 "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
             }
         )
-    
+
     def _build_orchestrator_graph(self) -> StateGraph:
         """
         Construir grafo de orquestación.
