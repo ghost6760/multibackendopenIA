@@ -671,3 +671,56 @@ class MultiAgentOrchestrator:
             "graph_nodes": len(self.graph.get_graph().nodes),
             "has_conversation_manager": self.conversation_manager is not None
         }
+    
+    # =========================================================================
+    # MÉTODOS DE COMPATIBILIDAD CON FACTORY
+    # =========================================================================
+    
+    def set_vectorstore_service(self, vectorstore_service: Any):
+        """
+        Compatibilidad con MultiAgentFactory.
+        
+        En el nuevo orchestrator, el vectorstore ya está en los agentes,
+        por lo que este método no hace nada. Se mantiene para no romper
+        el código del factory.
+        """
+        logger.debug(
+            f"[{self.company_config.company_id}] set_vectorstore_service called "
+            f"(ignored - agents already have vectorstore)"
+        )
+        # No hacer nada - los agentes ya tienen vectorstore configurado
+        pass
+    
+    def set_tool_executor(self, tool_executor: Any):
+        """
+        Compatibilidad con MultiAgentFactory.
+        
+        En el nuevo orchestrator, los tools ya están en los agentes,
+        por lo que este método no hace nada. Se mantiene para no romper
+        el código del factory.
+        """
+        logger.debug(
+            f"[{self.company_config.company_id}] set_tool_executor called "
+            f"(ignored - agents already have tools)"
+        )
+        # No hacer nada - los agentes ya tienen tools configurados
+        pass
+    
+    def health_check(self) -> Dict[str, Any]:
+        """
+        Health check del orchestrator.
+        Compatibilidad con código existente.
+        """
+        try:
+            return {
+                "system_healthy": True,
+                "company_id": self.company_config.company_id,
+                "agents_count": len(self.agents),
+                "graph_initialized": self.graph is not None,
+                "conversation_manager": self.conversation_manager is not None
+            }
+        except Exception as e:
+            return {
+                "system_healthy": False,
+                "error": str(e)
+            }
