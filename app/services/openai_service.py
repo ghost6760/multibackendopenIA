@@ -71,88 +71,35 @@ class OpenAIService:
             raise
 
 
-    def validate_openai_setup(self) -> bool:
-        """Validar configuración completa de OpenAI (Responses API)."""
+    def validate_openai_setup() -> bool:
+        """Validar configuración completa de OpenAI"""
         try:
-            # Prueba simple con Responses API
-            resp = self.client.responses.create(
-                model=self.model_name,
-                input="test",
-                max_output_tokens=1
+            # Test de conexión básico
+            response = self.client.chat.completions.create(
+                model="gpt-4.1-mini-2025-04-14",
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=1
             )
-            # Si el cliente devolvió algo, consideramos OK
-            return bool(resp and getattr(resp, "id", None))
+            return True
         except Exception as e:
-            logger.error(f"OpenAI validation failed (Responses): {e}")
+            logger.error(f"OpenAI validation failed: {e}")
             return False
     
     def generate_response(self, messages: list, **kwargs) -> str:
-        """Generate response using OpenAI Responses API (minimal migration).
-
-        - messages: lista de dicts {'role': 'user'|'assistant', 'content': '...'}
-        - Conserva max_tokens/temperature como antes.
-        """
+        """Generate response using OpenAI Chat API"""
         try:
-            # Si te pasan un string directamente, usarlo
-            if isinstance(messages, str):
-                prompt = messages
-            else:
-                # Normalizar lista de mensajes a texto plano (cambio mínimo)
-                parts = []
-                for m in messages:
-                    role = m.get("role", "user")
-                    content = m.get("content", "")
-                    # Si content es lista (ej. para images) intentar extraer texto partes
-                    if isinstance(content, list):
-                        # concatenar textos que encuentre en la estructura
-                        subparts = []
-                        for c in content:
-                            if isinstance(c, dict) and "text" in c:
-                                subparts.append(c["text"])
-                            elif isinstance(c, str):
-                                subparts.append(c)
-                        content_text = " ".join(subparts)
-                    else:
-                        content_text = str(content)
-                    parts.append(f"{role.upper()}: {content_text}")
-                prompt = "\n".join(parts)
-
-            resp = self.client.responses.create(
+            response = self.client.chat.completions.create(
                 model=self.model_name,
-                input=prompt,
-                max_output_tokens=kwargs.get("max_tokens", self.max_tokens),
-                temperature=kwargs.get("temperature", self.temperature)
+                messages=messages,
+                max_tokens=kwargs.get('max_tokens', self.max_tokens),
+                temperature=kwargs.get('temperature', self.temperature)
             )
-
-            # Extraer texto de salida de forma robusta:
-            text_out = ""
-            try:
-                # La Responses API puede contener .output con elementos content
-                if hasattr(resp, "output"):
-                    for out in getattr(resp, "output", []):
-                        # cada out puede tener .content: lista de items con .type e .text/plain
-                        content = out.get("content") if isinstance(out, dict) else getattr(out, "content", None)
-                        if isinstance(content, list):
-                            for c in content:
-                                if isinstance(c, dict) and "text" in c:
-                                    text_out += c["text"]
-                                elif isinstance(c, dict) and c.get("type") == "output_text" and "text" in c:
-                                    text_out += c["text"]
-                                elif isinstance(c, str):
-                                    text_out += c
-                # Fallback: algunos SDK exponen resp.output_text directamente
-                if not text_out and hasattr(resp, "output_text"):
-                    text_out = getattr(resp, "output_text")
-            except Exception:
-                # último recurso: convertir a str
-                text_out = str(resp)
-
-            return text_out.strip()
-
+            
+            return response.choices[0].message.content
+            
         except Exception as e:
-            logger.error(f"Error generating OpenAI response (Responses API): {e}")
+            logger.error(f"Error generating OpenAI response: {e}")
             raise
-
     
     def transcribe_audio(self, audio_file_path: str) -> str:
         """Transcribe audio file to text"""
@@ -208,105 +155,84 @@ class OpenAIService:
                 
     
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (message + input_image; compliant payload)."""
+        """Analyze image using OpenAI Vision API"""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
-    
+        
         try:
-            # Leer bytes
-            if hasattr(image_file, "read"):
-                image_bytes = image_file.read()
+            # Read image data
+            if hasattr(image_file, 'read'):
+                image_data = image_file.read()
             else:
-                with open(image_file, "rb") as f:
-                    image_bytes = f.read()
-    
-            # Recomendar subir a storage si imagen grande
-            if len(image_bytes) > 300_000:
-                logger.warning("Image size > 300KB — consider uploading to storage and passing a public URL instead of data URI.")
-    
-            import base64, json
-            base64_image = base64.b64encode(image_bytes).decode("utf-8")
-            data_uri = f"data:image/jpeg;base64,{base64_image}"
-    
-            # Construir payload CORRECTO:
-            # 1) message que contiene input_text dentro de content
-            message_item = {
-                "type": "message",
-                "role": "user",
-                "content": [
+                with open(image_file, 'rb') as f:
+                    image_data = f.read()
+            
+            # Convert to base64
+            import base64
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4.1-mini-2025-04-14",
+                messages=[
                     {
-                        "type": "input_text",
-                        "text": (
-                            "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
-                            "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
-                        )
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
                     }
-                ]
-            }
-    
-            # 2) imagen como input_image
-            image_item = {
-                "type": "input_image",
-                "image_url": {"url": data_uri}
-            }
-    
-            input_payload = [message_item, image_item]
-    
-            # DEBUG: log payload (recorta para no llenar logs)
-            try:
-                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): %s", json.dumps(input_payload)[:8000])
-            except Exception:
-                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): (could not json.dumps)")
-    
-            # IMPORTANTE: asegúrate de usar un modelo multimodal si necesitas visión
-            resp = self.client.responses.create(
-                model=self.model_name,
-                input=input_payload,
-                max_output_tokens=500,
-                temperature=0.1
+                ],
+                max_tokens=300
             )
-    
-            return self._extract_response_text(resp)
-    
+            
+            return response.choices[0].message.content
+            
         except Exception as e:
-            logger.error(f"Error analyzing image (Responses): {e}")
-            try:
-                logger.debug("Exception details: %s", getattr(e, "args", e))
-            except Exception:
-                pass
+            logger.error(f"Error analyzing image: {e}")
             raise
-
     
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Analyze image from URL using Responses API (delegates to analyze_image)."""
+        """Analyze image from URL"""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
-    
+        
         try:
-            logger.info(f"Downloading image from: {image_url}")
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)"}
-            response = requests.get(image_url, headers=headers, timeout=30)
-            response.raise_for_status()
-    
-            content_type = response.headers.get("content-type", "").lower()
-            if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
-                logger.warning(f"Content type might not be image: {content_type}")
-    
-            image_file = BytesIO(response.content)
-    
-            # Si la imagen es grande, subir a storage y pasar la URL pública es la opción robusta.
-            if len(response.content) > 300_000:
-                logger.warning("Downloaded image >300KB — recommended to upload to storage and pass public URL to Responses API.")
-    
-            return self.analyze_image(image_file)
-    
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading image: {e}")
-            raise Exception(f"Error downloading image: {str(e)}")
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=300
+            )
+            
+            return response.choices[0].message.content
+            
         except Exception as e:
-            logger.error(f"Error in image analysis from URL: {e}")
+            logger.error(f"Error analyzing image from URL: {e}")
             raise
-
+    
     def text_to_speech(self, text: str) -> str:
         """Convert text to speech and return file path"""
         if not self.voice_enabled:
