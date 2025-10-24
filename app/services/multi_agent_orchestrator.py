@@ -33,61 +33,85 @@ class MultiAgentOrchestrator:
     
     def __init__(
         self, 
-        company_config: CompanyConfig = None,  # ← Hacer opcional
+        company_config: CompanyConfig = None,
         agents: Dict[str, Any] = None,
         conversation_manager: Optional[ConversationManager] = None,
-        **kwargs  # ← AGREGAR ESTO para capturar argumentos legacy
+        **kwargs  # ← Captura argumentos legacy
     ):
         """
         Inicializar orquestador con LangGraph.
         
-        ✅ BACKWARD COMPATIBLE con llamadas legacy que usan company_id
+        ✅ BACKWARD COMPATIBLE con llamadas legacy
         
         Args:
             company_config: Configuración de la empresa
             agents: Diccionario de agentes {nombre: instancia}
             conversation_manager: Manager de conversaciones
-            **kwargs: Captura argumentos legacy (company_id, etc)
+            **kwargs: Captura argumentos legacy (company_id, openai_service, etc)
         """
         
         # ===== COMPATIBILIDAD BACKWARD =====
-        # Si recibimos company_id en vez de company_config, manejarlo
-        if company_config is None and 'company_id' in kwargs:
-            company_id = kwargs['company_id']
-            logger.warning(
-                f"⚠️ Legacy call detected with company_id={company_id}. "
-                f"Please update to pass company_config object."
-            )
-            
-            # Intentar obtener company_config del kwargs o crear uno básico
-            if 'config' in kwargs:
-                company_config = kwargs['config']
-            else:
-                # Fallback: crear CompanyConfig básico
-                from app.config.company_config import CompanyConfig
-                company_config = CompanyConfig(
-                    company_id=company_id,
-                    company_name=kwargs.get('company_name', company_id),
-                    services=kwargs.get('services', 'services')
-                )
-        
-        # Validar que tenemos company_config
+        # Manejo de llamadas legacy con company_id
         if company_config is None:
-            raise ValueError("company_config is required")
+            if 'company_id' in kwargs:
+                # Legacy call: MultiAgentOrchestrator(company_id="benova", ...)
+                company_id = kwargs['company_id']
+                logger.warning(
+                    f"⚠️ Legacy call detected with company_id={company_id}. "
+                    f"Update caller to pass company_config object."
+                )
+                
+                # ✅ OBTENER CompanyConfig COMPLETO del manager
+                try:
+                    from app.config.company_config import get_company_config
+                    company_config = get_company_config(company_id)
+                    logger.info(f"✅ Retrieved full CompanyConfig for {company_id}")
+                except Exception as e:
+                    logger.error(f"Failed to get CompanyConfig for {company_id}: {e}")
+                    raise ValueError(
+                        f"Cannot initialize MultiAgentOrchestrator: "
+                        f"company_id '{company_id}' not found in config manager"
+                    )
+            else:
+                raise ValueError("Either company_config or company_id must be provided")
         
-        # ===== CONTINUAR NORMALMENTE =====
+        # Si agents no se pasó, intentar obtenerlo de kwargs
+        if agents is None:
+            agents = kwargs.get('agents', {})
+        
+        # ===== VALIDACIÓN =====
+        if not isinstance(company_config, CompanyConfig):
+            raise TypeError(
+                f"company_config must be CompanyConfig instance, got {type(company_config)}"
+            )
+        
+        if not agents:
+            logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
+        
+        # ===== IGNORAR openai_service de kwargs (legacy) =====
+        # El orchestrator no necesita openai_service directamente,
+        # los agentes ya lo tienen inyectado
+        if 'openai_service' in kwargs:
+            logger.debug(f"[{company_config.company_id}] Ignoring openai_service from kwargs (legacy)")
+        
+        # ===== INICIALIZACIÓN NORMAL =====
         self.company_config = company_config
-        self.agents = agents or {}
+        self.agents = agents
         self.conversation_manager = conversation_manager or ConversationManager()
         
         # Construir grafo
-        self.graph = self._build_orchestrator_graph()
+        try:
+            self.graph = self._build_orchestrator_graph()
+        except Exception as e:
+            logger.exception(f"Error building orchestrator graph for {company_config.company_id}: {e}")
+            raise
         
         logger.info(
             f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
             extra={
-                "available_agents": list(self.agents.keys()),
-                "has_conversation_manager": conversation_manager is not None
+                "available_agents": list(agents.keys()),
+                "has_conversation_manager": conversation_manager is not None,
+                "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
             }
         )
     
