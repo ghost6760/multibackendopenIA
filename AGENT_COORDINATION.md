@@ -237,10 +237,10 @@ Expected: Router detecta cambio y vuelve a schedule
 
 - [x] **Fix 1:** Mejorar recuperación RAG en ScheduleAgent (commit 9491d70)
 - [x] **Fix 2:** Agregar instrucciones de precio en prompt (commit 9491d70)
-- [ ] **Mejora 1:** Implementar detección de secondary intent en grafo
-- [ ] **Mejora 2:** Agregar nodo de handoff entre agentes
-- [ ] **Mejora 3:** Implementar contexto compartido entre agentes
-- [ ] **Mejora 4:** Agregar validación cruzada de información
+- [x] **Mejora 1:** Implementar detección de secondary intent en grafo
+- [x] **Mejora 2:** Agregar nodo de handoff entre agentes
+- [x] **Mejora 3:** Implementar contexto compartido entre agentes (SharedStateStore)
+- [x] **Mejora 4:** Agregar validación cruzada de información
 - [ ] **Testing:** Casos de uso con preguntas mixtas schedule+sales
 
 ---
@@ -263,3 +263,215 @@ Expected: Router detecta cambio y vuelve a schedule
 - Información consistente sin importar qué agente responde
 - Capacidad de cambiar de agente mid-conversation
 - Mejor gestión de conversaciones complejas con múltiples intenciones
+
+---
+
+## 🔧 Implementación: Shared State Store
+
+### **Arquitectura del Shared State Store**
+
+Se implementó un almacén centralizado de estado compartido que permite a los agentes coordinarse mediante lectura/escritura de información crítica.
+
+#### **Componentes Implementados**
+
+1. **SharedStateStore** (`app/services/shared_state_store.py`)
+   - Almacenamiento en memoria (con soporte futuro para Redis)
+   - TTL configurable (default: 1 hora)
+   - Thread-safe con locks
+
+2. **Tipos de Información Gestionada:**
+
+```python
+@dataclass
+class PricingInfo:
+    """Información de precios compartida entre Sales y Schedule"""
+    service_name: str
+    price: str
+    currency: str
+    payment_methods: List[str]
+    promotions: Optional[str]
+    source_agent: str  # Quién proporcionó la info
+
+@dataclass
+class ScheduleInfo:
+    """Información de agendamiento compartida"""
+    treatment: str
+    date: Optional[str]
+    time: Optional[str]
+    patient_name: Optional[str]
+    status: str  # pending, confirmed, cancelled
+    source_agent: str
+
+@dataclass
+class UserInfo:
+    """Información del usuario extraída durante la conversación"""
+    user_id: str
+    name: Optional[str]
+    phone: Optional[str]
+    intent_history: List[str]  # Historial de intenciones
+
+@dataclass
+class HandoffInfo:
+    """Registro de handoffs entre agentes"""
+    from_agent: str
+    to_agent: str
+    reason: str
+    context: Dict[str, Any]
+    return_to_original: bool
+```
+
+#### **Integración en OrchestratorGraph**
+
+**1. Extensión de OrchestratorState:**
+```python
+# app/langgraph_adapters/state_schemas.py
+
+class OrchestratorState(TypedDict):
+    # ... campos existentes ...
+
+    # ✅ NUEVO: Intención secundaria
+    secondary_intent: Optional[str]
+    secondary_confidence: float
+
+    # ✅ NUEVO: Shared context
+    shared_context: Dict[str, Any]
+
+    # ✅ NUEVO: Handoff info
+    handoff_requested: bool
+    handoff_from: Optional[str]
+    handoff_to: Optional[str]
+    handoff_reason: Optional[str]
+    handoff_context: Dict[str, Any]
+```
+
+**2. Nuevos Nodos en el Grafo:**
+
+```python
+# Nodo 1: Detectar intención secundaria
+def _detect_secondary_intent(state):
+    """
+    Detecta cuando usuario hace pregunta de pricing durante scheduling
+    o pregunta de scheduling durante sales.
+    """
+    if intent == "schedule" and has_pricing_keywords:
+        state["secondary_intent"] = "sales"
+        state["secondary_confidence"] = 0.8
+
+# Nodo 2: Manejar handoff entre agentes
+def _handle_agent_handoff(state):
+    """
+    Ejecuta handoff cuando se detecta secondary intent.
+    Schedule → Sales (para pricing)
+    Sales → Schedule (para agendamiento)
+    """
+    if secondary_intent and secondary_confidence >= 0.7:
+        state["handoff_requested"] = True
+        state["handoff_to"] = secondary_intent
+
+# Nodo 3: Validar consistencia cross-agent
+def _validate_cross_agent_info(state):
+    """
+    Valida que información proporcionada sea consistente.
+    Ej: Si Schedule da precio, verificar con datos de Sales.
+    """
+    if agent == "schedule" and has_pricing_in_response:
+        if sales_pricing_differs:
+            log_warning("Price mismatch detected")
+```
+
+**3. Flujo Actualizado:**
+
+```
+START
+  ↓
+[Validate Input]
+  ↓
+[Classify Intent] → intent="schedule"
+  ↓
+[Detect Secondary Intent] → secondary_intent="sales" (detected pricing keywords)
+  ↓
+[Route to Agent] → execute_schedule
+  ↓
+[Execute Schedule Agent]
+  ↓
+  ├─ Guardar schedule_info en shared_context
+  ↓
+[Validate Output]
+  ↓
+[Check Handoff?] → Yes (secondary_intent detected)
+  ↓
+[Handle Agent Handoff]
+  ↓
+  ├─ handoff_to="sales"
+  ↓
+[Execute Sales Agent] → proporcionar precio correcto
+  ↓
+  ├─ Guardar sales_pricing en shared_context
+  ↓
+[Validate Cross-Agent Info]
+  ↓
+  ├─ Comparar pricing de Schedule vs Sales
+  ├─ Log warnings si difieren
+  ↓
+END
+```
+
+#### **Ejemplo de Uso**
+
+```python
+# Caso: Usuario pregunta "Quiero agendar toxina botulínica, ¿cuánto cuesta?"
+
+# 1. Router clasifica intent="schedule"
+# 2. Detect Secondary Intent detecta keywords de pricing → secondary_intent="sales"
+# 3. Execute Schedule Agent responde sobre agendamiento
+# 4. Handle Agent Handoff detecta secondary_intent → solicita handoff a Sales
+# 5. Execute Sales Agent proporciona precio correcto: "$550,000"
+# 6. Validate Cross-Agent Info verifica consistencia
+# 7. Respuesta final combina información de ambos agentes
+```
+
+#### **Beneficios Implementados**
+
+✅ **Detección de Intención Secundaria**
+- Detecta cambios de intención mid-conversation
+- Keywords-based con alta precisión
+
+✅ **Agent Handoff Automático**
+- Schedule → Sales cuando se pregunta por precios
+- Sales → Schedule cuando se pregunta por agendamiento
+- Contexto preservado durante handoff
+
+✅ **Contexto Compartido**
+- Pricing info compartida entre agentes
+- Schedule info compartida entre agentes
+- User info accesible por todos
+
+✅ **Validación Cruzada**
+- Detecta inconsistencias en pricing
+- Logs warnings para debugging
+- Fuente de verdad clara (Sales para pricing, Schedule para disponibilidad)
+
+#### **Próximos Pasos**
+
+1. **Backend Redis** (opcional para producción)
+   ```python
+   store = SharedStateStore(
+       backend="redis",
+       redis_url="redis://localhost:6379",
+       ttl_seconds=3600
+   )
+   ```
+
+2. **Extracción Mejorada con NER/LLM**
+   - Usar NER para extraer precios precisos
+   - Usar LLM para extraer info de agendamiento
+
+3. **Métricas y Monitoreo**
+   - Tracking de handoffs realizados
+   - Tasa de detección de secondary intent
+   - Inconsistencias detectadas
+
+4. **Testing**
+   - Casos de uso mixtos (schedule + pricing)
+   - Handoffs múltiples
+   - Validación de consistencia

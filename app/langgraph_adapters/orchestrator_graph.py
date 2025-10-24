@@ -43,6 +43,7 @@ from app.langgraph_adapters.state_schemas import (
 )
 from app.langgraph_adapters.agent_adapter import AgentAdapter, validate_has_question
 from app.agents.base_agent import BaseAgent
+from app.services.shared_state_store import SharedStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,8 @@ class MultiAgentOrchestratorGraph:
         router_agent: BaseAgent,
         agents: Dict[str, BaseAgent],
         company_id: str,
-        enable_checkpointing: bool = False
+        enable_checkpointing: bool = False,
+        shared_state_store: SharedStateStore = None
     ):
         """
         Inicializar grafo de orquestación.
@@ -96,9 +98,16 @@ class MultiAgentOrchestratorGraph:
                     {"sales": SalesAgent, "support": SupportAgent, ...}
             company_id: ID de la empresa
             enable_checkpointing: Habilitar checkpointing para debugging
+            shared_state_store: Store compartido entre agentes (opcional)
         """
         self.company_id = company_id
         self.enable_checkpointing = enable_checkpointing
+
+        # Shared State Store para coordinación entre agentes
+        self.shared_state_store = shared_state_store or SharedStateStore(
+            backend="memory",
+            ttl_seconds=3600  # 1 hora
+        )
 
         # Crear adaptadores para cada agente
         self.router_adapter = AgentAdapter(
@@ -161,11 +170,14 @@ class MultiAgentOrchestratorGraph:
         # === AGREGAR NODOS === #
         workflow.add_node("validate_input", self._validate_input)
         workflow.add_node("classify_intent", self._classify_intent)
+        workflow.add_node("detect_secondary_intent", self._detect_secondary_intent)
         workflow.add_node("execute_sales", self._execute_sales)
         workflow.add_node("execute_support", self._execute_support)
         workflow.add_node("execute_emergency", self._execute_emergency)
         workflow.add_node("execute_schedule", self._execute_schedule)
         workflow.add_node("validate_output", self._validate_output)
+        workflow.add_node("handle_agent_handoff", self._handle_agent_handoff)
+        workflow.add_node("validate_cross_agent_info", self._validate_cross_agent_info)
         workflow.add_node("handle_retry", self._handle_retry)
 
         # === EDGE DESDE START === #
@@ -181,9 +193,12 @@ class MultiAgentOrchestratorGraph:
             }
         )
 
-        # === ROUTING CONDICIONAL DESDE CLASSIFY_INTENT === #
+        # === EDGE DE CLASSIFY_INTENT A DETECT_SECONDARY_INTENT === #
+        workflow.add_edge("classify_intent", "detect_secondary_intent")
+
+        # === ROUTING CONDICIONAL DESDE DETECT_SECONDARY_INTENT === #
         workflow.add_conditional_edges(
-            "classify_intent",
+            "detect_secondary_intent",
             self._route_to_agent,
             {
                 "sales": "execute_sales",
@@ -200,9 +215,26 @@ class MultiAgentOrchestratorGraph:
         # === EDGE CONDICIONAL DESDE VALIDATE_OUTPUT === #
         workflow.add_conditional_edges(
             "validate_output",
-            self._should_retry,
+            self._should_validate_cross_agent_or_retry,
             {
+                "validate_cross_agent": "validate_cross_agent_info",
+                "check_handoff": "handle_agent_handoff",
                 "retry": "handle_retry",
+                "end": END
+            }
+        )
+
+        # === EDGE DESDE VALIDATE_CROSS_AGENT_INFO === #
+        workflow.add_edge("validate_cross_agent_info", END)
+
+        # === EDGE CONDICIONAL DESDE HANDLE_AGENT_HANDOFF === #
+        workflow.add_conditional_edges(
+            "handle_agent_handoff",
+            self._should_perform_handoff,
+            {
+                "handoff_to_sales": "execute_sales",
+                "handoff_to_schedule": "execute_schedule",
+                "handoff_to_support": "execute_support",
                 "end": END
             }
         )
@@ -326,6 +358,61 @@ class MultiAgentOrchestratorGraph:
 
         return state
 
+    def _detect_secondary_intent(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Detectar intención secundaria mid-conversation.
+
+        Casos de uso:
+        - Usuario pregunta por precio durante agendamiento → secondary_intent = "sales"
+        - Usuario pregunta por disponibilidad durante consulta comercial → secondary_intent = "schedule"
+
+        Si se detecta secondary intent con alta confianza, se puede hacer handoff.
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: detect_secondary_intent")
+
+        question = state["question"].lower()
+        primary_intent = state.get("intent", "").lower()
+
+        # Keywords para detectar preguntas comerciales/pricing
+        pricing_keywords = [
+            "precio", "costo", "cuánto", "cuanto", "valor", "pagar",
+            "inversión", "oferta", "promoción", "descuento", "cuesta"
+        ]
+
+        # Keywords para detectar preguntas de agendamiento
+        schedule_keywords = [
+            "cita", "agenda", "agendar", "reserva", "reservar", "disponibilidad",
+            "horario", "turno", "día", "fecha", "hora"
+        ]
+
+        # Detectar secondary intent
+        has_pricing_query = any(keyword in question for keyword in pricing_keywords)
+        has_schedule_query = any(keyword in question for keyword in schedule_keywords)
+
+        # Si intent primario es "schedule" pero hay pregunta de pricing
+        if primary_intent == "schedule" and has_pricing_query:
+            state["secondary_intent"] = "sales"
+            state["secondary_confidence"] = 0.8
+            logger.info(
+                f"[{self.company_id}] Secondary intent detected: sales "
+                f"(pricing question during scheduling)"
+            )
+
+        # Si intent primario es "sales" pero hay pregunta de agendamiento
+        elif primary_intent == "sales" and has_schedule_query:
+            state["secondary_intent"] = "schedule"
+            state["secondary_confidence"] = 0.8
+            logger.info(
+                f"[{self.company_id}] Secondary intent detected: schedule "
+                f"(scheduling question during sales)"
+            )
+
+        else:
+            state["secondary_intent"] = None
+            state["secondary_confidence"] = 0.0
+
+        return state
+
     def _execute_sales(self, state: OrchestratorState) -> OrchestratorState:
         """Ejecutar SalesAgent"""
         return self._execute_agent(state, "sales")
@@ -392,6 +479,34 @@ class MultiAgentOrchestratorGraph:
                 f"[{self.company_id}] {agent_name} executed successfully "
                 f"({len(result['output'])} chars)"
             )
+
+            # ✅ Guardar información en shared state store
+            user_id = state["user_id"]
+            response = result["output"]
+
+            # Si es SalesAgent y la respuesta contiene pricing info
+            if agent_name == "sales" and any(
+                keyword in response.lower()
+                for keyword in ["$", "cop", "pesos", "precio", "costo", "valor"]
+            ):
+                # Extraer y guardar pricing info en el store
+                # (simplificado - en producción usar NER o LLM para extraer)
+                logger.info(f"[{self.company_id}] Storing pricing info from {agent_name}")
+                state["shared_context"]["sales_pricing"] = {
+                    "response": response,
+                    "agent": agent_name,
+                    "has_pricing": True
+                }
+
+            # Si es ScheduleAgent y la respuesta contiene schedule info
+            elif agent_name == "schedule":
+                logger.info(f"[{self.company_id}] Storing schedule info from {agent_name}")
+                state["shared_context"]["schedule_info"] = {
+                    "response": response,
+                    "agent": agent_name,
+                    "has_schedule": True
+                }
+
         else:
             state["errors"].append(f"{agent_name} failed: {result['error']}")
             state["agent_response"] = None
@@ -471,6 +586,113 @@ class MultiAgentOrchestratorGraph:
 
         return state
 
+    def _handle_agent_handoff(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Manejar handoff entre agentes.
+
+        Casos de uso:
+        - Schedule detecta pregunta de pricing → handoff a Sales
+        - Sales detecta pregunta de agendamiento → handoff a Schedule
+
+        El handoff permite que un agente derive a otro temporalmente
+        y luego puede volver al agente original.
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: handle_agent_handoff")
+
+        current_agent = state.get("current_agent")
+        secondary_intent = state.get("secondary_intent")
+        secondary_confidence = state.get("secondary_confidence", 0.0)
+
+        # Solo hacer handoff si hay secondary intent con alta confianza
+        if secondary_intent and secondary_confidence >= 0.7:
+            # Registrar handoff
+            state["handoff_requested"] = True
+            state["handoff_from"] = current_agent
+            state["handoff_to"] = secondary_intent
+            state["handoff_reason"] = "secondary_intent_detected"
+
+            # Guardar contexto del agente original
+            state["handoff_context"] = {
+                "original_agent": current_agent,
+                "original_response": state.get("agent_response"),
+                "question": state["question"]
+            }
+
+            logger.info(
+                f"[{self.company_id}] Handoff requested: {current_agent} → {secondary_intent}"
+            )
+
+        else:
+            state["handoff_requested"] = False
+            logger.info(f"[{self.company_id}] No handoff needed")
+
+        return state
+
+    def _validate_cross_agent_info(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Validar consistencia de información entre agentes.
+
+        Casos de validación:
+        - Si Schedule proporcionó precio, verificar con info de Sales
+        - Si Sales proporcionó disponibilidad, verificar con Schedule
+
+        Esta validación usa el shared_context para comparar información.
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: validate_cross_agent_info")
+
+        current_agent = state.get("current_agent")
+        agent_response = state.get("agent_response", "")
+        shared_context = state.get("shared_context", {})
+
+        # Detectar si la respuesta contiene información de precios
+        pricing_keywords = ["$", "cop", "pesos", "precio", "costo", "valor"]
+        has_pricing_info = any(keyword in agent_response.lower() for keyword in pricing_keywords)
+
+        validation: ValidationResult = {
+            "is_valid": True,
+            "errors": [],
+            "warnings": [],
+            "metadata": {}
+        }
+
+        # Si Schedule Agent proporcionó pricing info
+        if current_agent == "schedule" and has_pricing_info:
+            # Verificar si hay pricing info en shared_context de Sales
+            sales_pricing = shared_context.get("sales_pricing", {})
+
+            if sales_pricing:
+                # TODO: Implementar comparación de precios
+                # Por ahora solo registrar warning si difieren
+                validation["warnings"].append(
+                    "Schedule provided pricing info - should validate against Sales data"
+                )
+                validation["metadata"]["has_sales_pricing"] = True
+            else:
+                validation["warnings"].append(
+                    "Schedule provided pricing without Sales context"
+                )
+
+        # Si Sales Agent proporcionó schedule info
+        elif current_agent == "sales" and any(
+            keyword in agent_response.lower()
+            for keyword in ["cita", "agenda", "disponibilidad", "horario"]
+        ):
+            schedule_info = shared_context.get("schedule_info", {})
+
+            if not schedule_info:
+                validation["warnings"].append(
+                    "Sales mentioned scheduling without Schedule context"
+                )
+
+        state["validations"].append(validation)
+
+        logger.info(
+            f"[{self.company_id}] Cross-agent validation completed: "
+            f"{len(validation['errors'])} errors, {len(validation['warnings'])} warnings"
+        )
+
+        return state
+
     # === FUNCIONES DE ROUTING CONDICIONAL === #
 
     def _should_continue_after_validation(
@@ -515,6 +737,40 @@ class MultiAgentOrchestratorGraph:
             )
             return "support"
 
+    def _should_validate_cross_agent_or_retry(
+        self,
+        state: OrchestratorState
+    ) -> Literal["validate_cross_agent", "check_handoff", "retry", "end"]:
+        """
+        Determinar siguiente paso después de validar output.
+
+        Prioridades:
+        1. Si hay secondary intent detectado → check_handoff
+        2. Si hay información crítica (pricing/schedule) → validate_cross_agent
+        3. Si debe reintentar → retry
+        4. Sino → end
+        """
+        # Prioridad 1: Verificar handoff si hay secondary intent
+        if state.get("secondary_intent") and state.get("secondary_confidence", 0.0) >= 0.7:
+            return "check_handoff"
+
+        # Prioridad 2: Validar cross-agent si hay pricing/schedule info
+        current_agent = state.get("current_agent")
+        agent_response = state.get("agent_response", "")
+
+        if current_agent == "schedule" and any(
+            keyword in agent_response.lower()
+            for keyword in ["$", "cop", "pesos", "precio", "costo"]
+        ):
+            return "validate_cross_agent"
+
+        # Prioridad 3: Reintentar si es necesario
+        if state.get("should_retry", False) and state["retries"] < 2:
+            return "retry"
+
+        # Default: terminar
+        return "end"
+
     def _should_retry(
         self,
         state: OrchestratorState
@@ -523,6 +779,33 @@ class MultiAgentOrchestratorGraph:
         if state.get("should_retry", False) and state["retries"] < 2:
             return "retry"
         return "end"
+
+    def _should_perform_handoff(
+        self,
+        state: OrchestratorState
+    ) -> Literal["handoff_to_sales", "handoff_to_schedule", "handoff_to_support", "end"]:
+        """
+        Determinar si realizar handoff a otro agente.
+
+        Returns:
+            - handoff_to_sales: Hacer handoff a SalesAgent
+            - handoff_to_schedule: Hacer handoff a ScheduleAgent
+            - handoff_to_support: Hacer handoff a SupportAgent
+            - end: No hacer handoff, terminar
+        """
+        if not state.get("handoff_requested", False):
+            return "end"
+
+        handoff_to = state.get("handoff_to")
+
+        if handoff_to == "sales":
+            return "handoff_to_sales"
+        elif handoff_to == "schedule":
+            return "handoff_to_schedule"
+        elif handoff_to == "support":
+            return "handoff_to_support"
+        else:
+            return "end"
 
     def _should_escalate_to_support(
         self,
