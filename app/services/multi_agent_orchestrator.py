@@ -36,6 +36,9 @@ import logging
 # ✅ IMPORTAR GRAFO DE LANGGRAPH
 from app.langgraph_adapters.orchestrator_graph import MultiAgentOrchestratorGraph
 
+# ✅ IMPORTAR SHARED STATE STORE
+from app.services.shared_state_store import SharedStateStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +72,9 @@ class MultiAgentOrchestrator:
         # === CREAR AGENTES (igual que antes) === #
         self.agents = {}
         self._initialize_agents()
+
+        # === ✅ CREAR SHARED STATE STORE === #
+        self._initialize_shared_state_store()
 
         # === ✅ CREAR GRAFO DE LANGGRAPH INTERNAMENTE === #
         self._initialize_graph()
@@ -107,6 +113,63 @@ class MultiAgentOrchestrator:
             logger.error(f"[{self.company_id}] Error initializing agents: {e}")
             raise
 
+    def _initialize_shared_state_store(self):
+        """
+        ✅ NUEVO: Inicializar Shared State Store con Redis en producción
+        """
+        try:
+            # Intentar obtener Redis client de Flask context
+            redis_client = None
+            try:
+                from flask import has_request_context
+                if has_request_context():
+                    from app.services.redis_service import get_redis_client
+                    redis_client = get_redis_client()
+                    logger.info(f"[{self.company_id}] Using Redis client from Flask context")
+            except:
+                pass
+
+            # Si no hay Redis client de Flask, intentar crear uno nuevo
+            if redis_client is None:
+                try:
+                    import redis
+                    import os
+                    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+                    redis_client = redis.from_url(redis_url, decode_responses=True)
+                    redis_client.ping()
+                    logger.info(f"[{self.company_id}] Created new Redis client: {redis_url}")
+                except Exception as e:
+                    logger.warning(f"[{self.company_id}] Redis connection failed: {e}, using memory backend")
+                    redis_client = None
+
+            # Crear SharedStateStore
+            if redis_client:
+                self.shared_state_store = SharedStateStore(
+                    backend="redis",
+                    company_id=self.company_id,
+                    redis_client=redis_client,
+                    ttl_seconds=3600  # 1 hora
+                )
+                logger.info(f"[{self.company_id}] SharedStateStore initialized with Redis backend")
+            else:
+                # Fallback a memoria si Redis no está disponible
+                self.shared_state_store = SharedStateStore(
+                    backend="memory",
+                    company_id=self.company_id,
+                    ttl_seconds=3600
+                )
+                logger.info(f"[{self.company_id}] SharedStateStore initialized with memory backend (fallback)")
+
+        except Exception as e:
+            logger.error(f"[{self.company_id}] Error initializing shared state store: {e}")
+            # Fallback a memoria en caso de error
+            self.shared_state_store = SharedStateStore(
+                backend="memory",
+                company_id=self.company_id,
+                ttl_seconds=3600
+            )
+            logger.info(f"[{self.company_id}] SharedStateStore fallback to memory backend")
+
     def _initialize_graph(self):
         """
         ✅ NUEVO: Inicializar grafo de LangGraph
@@ -121,15 +184,19 @@ class MultiAgentOrchestrator:
                 if name not in ['router', 'availability']
             }
 
-            # Crear grafo
+            # Crear grafo con shared state store
             self.graph = MultiAgentOrchestratorGraph(
                 router_agent=self.agents['router'],
                 agents=graph_agents,
                 company_id=self.company_id,
-                enable_checkpointing=False  # Deshabilitar por defecto
+                enable_checkpointing=False,  # Deshabilitar por defecto
+                shared_state_store=self.shared_state_store  # ✅ Pasar store
             )
 
-            logger.info(f"[{self.company_id}] LangGraph orchestrator initialized")
+            logger.info(
+                f"[{self.company_id}] LangGraph orchestrator initialized "
+                f"with {self.shared_state_store.backend} backend"
+            )
 
         except Exception as e:
             logger.error(f"[{self.company_id}] Error initializing graph: {e}")
@@ -369,6 +436,7 @@ class MultiAgentOrchestrator:
                     "agents_available": list(self.agents.keys()),
                     "vectorstore_connected": self.vectorstore_service is not None,
                     "tool_executor_connected": self.tool_executor is not None,
+                    "shared_state_backend": self.shared_state_store.backend if hasattr(self, 'shared_state_store') else "unknown",
                     "system_type": "multi-agent-hybrid-langgraph"
                 }
             else:
@@ -381,6 +449,7 @@ class MultiAgentOrchestrator:
                     "agents_available": list(self.agents.keys()),
                     "vectorstore_connected": self.vectorstore_service is not None,
                     "tool_executor_connected": self.tool_executor is not None,
+                    "shared_state_backend": self.shared_state_store.backend if hasattr(self, 'shared_state_store') else "unknown",
                     "system_type": "multi-agent-direct"
                 }
 
@@ -406,8 +475,17 @@ class MultiAgentOrchestrator:
             "vectorstore_index": self.company_config.vectorstore_index,
             "schedule_service_url": self.company_config.schedule_service_url,
             "services": self.company_config.services,
-            "rag_status": "enabled" if self.vectorstore_service else "disabled"
+            "rag_status": "enabled" if self.vectorstore_service else "disabled",
+            "shared_state_backend": self.shared_state_store.backend if hasattr(self, 'shared_state_store') else "unknown"
         }
+
+        # ✅ Agregar stats del shared state store
+        if hasattr(self, 'shared_state_store'):
+            try:
+                store_stats = self.shared_state_store.get_stats()
+                stats["shared_state_stats"] = store_stats
+            except Exception as e:
+                logger.error(f"[{self.company_id}] Error getting shared state stats: {e}")
 
         # ✅ Agregar stats del grafo si está disponible
         if self.graph:
