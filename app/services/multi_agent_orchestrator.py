@@ -33,20 +33,51 @@ class MultiAgentOrchestrator:
     
     def __init__(
         self, 
-        company_config: CompanyConfig,
-        agents: Dict[str, Any],
-        conversation_manager: Optional[ConversationManager] = None
+        company_config: CompanyConfig = None,  # ← Hacer opcional
+        agents: Dict[str, Any] = None,
+        conversation_manager: Optional[ConversationManager] = None,
+        **kwargs  # ← AGREGAR ESTO para capturar argumentos legacy
     ):
         """
         Inicializar orquestador con LangGraph.
+        
+        ✅ BACKWARD COMPATIBLE con llamadas legacy que usan company_id
         
         Args:
             company_config: Configuración de la empresa
             agents: Diccionario de agentes {nombre: instancia}
             conversation_manager: Manager de conversaciones
+            **kwargs: Captura argumentos legacy (company_id, etc)
         """
+        
+        # ===== COMPATIBILIDAD BACKWARD =====
+        # Si recibimos company_id en vez de company_config, manejarlo
+        if company_config is None and 'company_id' in kwargs:
+            company_id = kwargs['company_id']
+            logger.warning(
+                f"⚠️ Legacy call detected with company_id={company_id}. "
+                f"Please update to pass company_config object."
+            )
+            
+            # Intentar obtener company_config del kwargs o crear uno básico
+            if 'config' in kwargs:
+                company_config = kwargs['config']
+            else:
+                # Fallback: crear CompanyConfig básico
+                from app.config.company_config import CompanyConfig
+                company_config = CompanyConfig(
+                    company_id=company_id,
+                    company_name=kwargs.get('company_name', company_id),
+                    services=kwargs.get('services', 'services')
+                )
+        
+        # Validar que tenemos company_config
+        if company_config is None:
+            raise ValueError("company_config is required")
+        
+        # ===== CONTINUAR NORMALMENTE =====
         self.company_config = company_config
-        self.agents = agents
+        self.agents = agents or {}
         self.conversation_manager = conversation_manager or ConversationManager()
         
         # Construir grafo
@@ -55,7 +86,7 @@ class MultiAgentOrchestrator:
         logger.info(
             f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
             extra={
-                "available_agents": list(agents.keys()),
+                "available_agents": list(self.agents.keys()),
                 "has_conversation_manager": conversation_manager is not None
             }
         )
