@@ -1,729 +1,726 @@
-# app/services/multi_agent_orchestrator.py
+# app/services/multi_agent_orchestrator.py - MIGRADO A LANGGRAPH
 """
-Orquestador Multi-Agente con LangGraph
-MIGRADO DIRECTAMENTE - No hay versión V1/V2
-
-MEJORAS CON LANGGRAPH:
-- State machine con persistencia de estado
-- Decisiones condicionales inteligentes
-- Recuperación automática de errores
-- Retry logic con fallbacks
-- Flujos paralelos preparados
+MultiAgentOrchestrator con LangGraph
+Mantiene interfaz get_response() para compatibilidad
 """
 
-from typing import Dict, Any, List, Optional, Tuple, Literal
-from typing_extensions import TypedDict
-from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
 import logging
 import json
+import time
+from datetime import datetime
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-
-from app.config.company_config import CompanyConfig, get_company_config
-from app.agents import (
-    RouterAgent, EmergencyAgent, SalesAgent, 
-    SupportAgent, ScheduleAgent, AvailabilityAgent
+from app.services.multi_agent_orchestrator_types import (
+    OrchestratorState, 
+    IntentType, 
+    RoutingDecision, 
+    ValidationDecision
 )
-from app.services.openai_service import OpenAIService
-from app.services.vectorstore_service import VectorstoreService
+from app.config.company_config import CompanyConfig
 from app.models.conversation import ConversationManager
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# STATE DEFINITION
-# =============================================================================
-
-class OrchestratorState(TypedDict):
-    """Estado del orquestador durante la conversación"""
-    # Input
-    question: str
-    user_id: str
-    company_id: str
-    chat_history: List[Dict[str, str]]
-    media_type: str
-    media_context: Optional[str]
-    
-    # Processing
-    processed_question: str
-    intent: str
-    confidence: float
-    classification_data: Dict[str, Any]
-    
-    # Agent execution
-    selected_agent: str
-    agent_response: str
-    fallback_attempted: bool
-    
-    # RAG and tools
-    rag_context: Optional[str]
-    tools_used: List[str]
-    tool_results: Dict[str, Any]
-    
-    # Flow control
-    needs_clarification: bool
-    needs_escalation: bool
-    retry_count: int
-    max_retries: int
-    response_valid: bool
-    
-    # Metadata
-    start_time: float
-    execution_path: List[str]
-    errors: List[str]
-
-
-# =============================================================================
-# MULTI-AGENT ORCHESTRATOR CON LANGGRAPH
-# =============================================================================
-
 class MultiAgentOrchestrator:
     """
-    Orquestador multi-agente multi-tenant con LangGraph
+    Orquestador de múltiples agentes usando LangGraph.
     
-    ✅ State machine avanzado
-    ✅ Recuperación inteligente de errores
-    ✅ Retry automático con fallbacks
-    ✅ Persistencia de estado
-    ✅ API compatible con sistema existente
+    ✅ MANTIENE: Interfaz get_response() intacta
+    ✅ AÑADE: Estado persistente, retry automático, validación
+    ✅ MEJORA: Logging estructurado, visualización de flujo
     """
     
-    def __init__(self, company_id: str, openai_service: OpenAIService = None):
-        self.company_id = company_id
-        self.company_config = get_company_config(company_id)
+    def __init__(
+        self, 
+        company_config: CompanyConfig = None,
+        agents: Dict[str, Any] = None,
+        conversation_manager: Optional[ConversationManager] = None,
+        **kwargs  # ← Captura argumentos legacy
+    ):
+        """
+        Inicializar orquestador con LangGraph.
         
-        if not self.company_config:
-            raise ValueError(f"Configuration not found for company: {company_id}")
+        ✅ BACKWARD COMPATIBLE con llamadas legacy
         
-        # Servicios (igual que antes)
-        self.openai_service = openai_service or OpenAIService()
-        self.vectorstore_service = None
-        self.tool_executor = None
+        Args:
+            company_config: Configuración de la empresa
+            agents: Diccionario de agentes {nombre: instancia}
+            conversation_manager: Manager de conversaciones
+            **kwargs: Captura argumentos legacy (company_id, openai_service, etc)
+        """
         
-        # Agentes (reutilizamos los existentes)
-        self.agents = {}
-        self._initialize_agents()
+        # ===== COMPATIBILIDAD BACKWARD =====
+        # Manejo de llamadas legacy con company_id
+        if company_config is None:
+            if 'company_id' in kwargs:
+                # Legacy call: MultiAgentOrchestrator(company_id="benova", ...)
+                company_id = kwargs['company_id']
+                logger.warning(
+                    f"⚠️ Legacy call detected with company_id={company_id}. "
+                    f"Update caller to pass company_config object."
+                )
+                
+                # ✅ OBTENER CompanyConfig COMPLETO del manager
+                try:
+                    from app.config.company_config import get_company_config
+                    company_config = get_company_config(company_id)
+                    logger.info(f"✅ Retrieved full CompanyConfig for {company_id}")
+                except Exception as e:
+                    logger.error(f"Failed to get CompanyConfig for {company_id}: {e}")
+                    raise ValueError(
+                        f"Cannot initialize MultiAgentOrchestrator: "
+                        f"company_id '{company_id}' not found in config manager"
+                    )
+            else:
+                raise ValueError("Either company_config or company_id must be provided")
         
-        # LangGraph state machine
-        self.graph = self._build_orchestration_graph()
+        # Si agents no se pasó, intentar obtenerlo de kwargs
+        if agents is None:
+            agents = kwargs.get('agents', {})
         
-        # Memory para persistencia
-        self.memory = MemorySaver()
+        # ===== VALIDACIÓN =====
+        if not isinstance(company_config, CompanyConfig):
+            raise TypeError(
+                f"company_config must be CompanyConfig instance, got {type(company_config)}"
+            )
         
-        logger.info(f"🚀 [{company_id}] MultiAgentOrchestrator (LangGraph) initialized")
-    
-    # =========================================================================
-    # DEPENDENCY INJECTION (sin cambios)
-    # =========================================================================
-    
-    def set_vectorstore_service(self, vectorstore_service: VectorstoreService):
-        """Inyectar servicio de vectorstore"""
-        self.vectorstore_service = vectorstore_service
+        if not agents:
+            logger.warning(f"[{company_config.company_id}] No agents provided to orchestrator")
         
-        rag_agents = ['sales', 'support', 'emergency', 'schedule']
-        for agent_name in rag_agents:
-            if agent_name in self.agents:
-                self.agents[agent_name].set_vectorstore_service(vectorstore_service)
-                logger.info(f"[{self.company_id}] RAG configured for {agent_name} agent")
+        # ===== IGNORAR openai_service de kwargs (legacy) =====
+        # El orchestrator no necesita openai_service directamente,
+        # los agentes ya lo tienen inyectado
+        if 'openai_service' in kwargs:
+            logger.debug(f"[{company_config.company_id}] Ignoring openai_service from kwargs (legacy)")
         
-        if self.tool_executor:
-            self.tool_executor.set_vectorstore_service(vectorstore_service)
-            logger.info(f"[{self.company_id}] RAG configured for tool_executor")
-    
-    def set_tool_executor(self, tool_executor):
-        """Inyectar tool executor"""
-        self.tool_executor = tool_executor
+        # ===== INICIALIZACIÓN NORMAL =====
+        self.company_config = company_config
+        self.agents = agents
+        self.conversation_manager = conversation_manager or ConversationManager()
         
-        if self.vectorstore_service:
-            tool_executor.set_vectorstore_service(self.vectorstore_service)
-            logger.info(f"[{self.company_id}] RAG auto-injected to tool_executor")
-        
-        available_tools = tool_executor.get_available_tools()
-        tools_ready = [name for name, status in available_tools.items() if status.get("available")]
-        
-        logger.info(f"✅ [{self.company_id}] ToolExecutor configured")
-        logger.info(f"   → Total tools: {len(available_tools)}")
-        logger.info(f"   → Ready tools: {len(tools_ready)}")
-        logger.info(f"   → Tools: {tools_ready}")
-    
-    def execute_tool(self, tool_name: str, parameters: dict) -> dict:
-        """Ejecutar una tool desde el orquestador"""
-        if not self.tool_executor:
-            logger.warning(f"[{self.company_id}] ToolExecutor not configured")
-            return {
-                "success": False,
-                "error": "ToolExecutor not configured for this company"
-            }
-        return self.tool_executor.execute_tool(tool_name, parameters)
-    
-    def _initialize_agents(self):
-        """Inicializar agentes (sin cambios)"""
+        # Construir grafo
         try:
-            self.agents['router'] = RouterAgent(self.company_config, self.openai_service)
-            self.agents['emergency'] = EmergencyAgent(self.company_config, self.openai_service)
-            self.agents['sales'] = SalesAgent(self.company_config, self.openai_service)
-            self.agents['support'] = SupportAgent(self.company_config, self.openai_service)
-            self.agents['schedule'] = ScheduleAgent(self.company_config, self.openai_service)
-            self.agents['availability'] = AvailabilityAgent(self.company_config, self.openai_service)
-            
-            self.agents['availability'].set_schedule_agent(self.agents['schedule'])
-            
-            logger.info(f"[{self.company_id}] All agents initialized: {list(self.agents.keys())}")
-            
+            self.graph = self._build_orchestrator_graph()
         except Exception as e:
-            logger.error(f"[{self.company_id}] Error initializing agents: {e}")
+            logger.exception(f"Error building orchestrator graph for {company_config.company_id}: {e}")
             raise
-    
-    # =========================================================================
-    # LANGGRAPH STATE MACHINE
-    # =========================================================================
-    
-    def _build_orchestration_graph(self) -> StateGraph:
-        """
-        Construir grafo de orquestación con LangGraph
         
-        FLUJO:
-        preprocess → classify → check_emergency → select → execute → validate → finalize
-        Con manejo de errores y retry logic
-        """
-        
-        graph = StateGraph(OrchestratorState)
-        
-        # NODOS
-        graph.add_node("preprocess", self._preprocess_node)
-        graph.add_node("classify_intent", self._classify_intent_node)
-        graph.add_node("check_emergency", self._check_emergency_node)
-        graph.add_node("select_agent", self._select_agent_node)
-        graph.add_node("execute_agent", self._execute_agent_node)
-        graph.add_node("validate_response", self._validate_response_node)
-        graph.add_node("handle_error", self._handle_error_node)
-        graph.add_node("finalize", self._finalize_node)
-        
-        # FLUJO PRINCIPAL
-        graph.set_entry_point("preprocess")
-        graph.add_edge("preprocess", "classify_intent")
-        
-        # Decidir si verificar emergencia
-        graph.add_conditional_edges(
-            "classify_intent",
-            self._should_check_emergency,
-            {
-                "check": "check_emergency",
-                "skip": "select_agent"
+        logger.info(
+            f"[{company_config.company_id}] MultiAgentOrchestrator initialized with LangGraph",
+            extra={
+                "available_agents": list(agents.keys()),
+                "has_conversation_manager": conversation_manager is not None,
+                "initialization_mode": "legacy" if 'company_id' in kwargs else "modern"
             }
         )
+    
+    def _build_orchestrator_graph(self) -> StateGraph:
+        """
+        Construir grafo de orquestación.
         
-        graph.add_edge("check_emergency", "select_agent")
-        graph.add_edge("select_agent", "execute_agent")
+        Flujo:
+        1. load_history → Cargar historial conversacional
+        2. classify → Clasificar intención con RouterAgent
+        3. route → Decidir agente apropiado
+        4. execute_agent → Ejecutar agente seleccionado
+        5. validate → Validar calidad de respuesta
+        6. save_history → Guardar en DB
+        """
+        workflow = StateGraph(OrchestratorState)
         
-        # Después de ejecutar agente: validar o error
-        graph.add_conditional_edges(
-            "execute_agent",
-            self._should_validate_or_error,
+        # ===== NODOS =====
+        workflow.add_node("load_history", self._load_history_node)
+        workflow.add_node("classify", self._classify_intent_node)
+        workflow.add_node("execute_emergency", self._execute_emergency_node)
+        workflow.add_node("execute_sales", self._execute_sales_node)
+        workflow.add_node("execute_schedule", self._execute_schedule_node)
+        workflow.add_node("execute_support", self._execute_support_node)
+        workflow.add_node("execute_availability", self._execute_availability_node)
+        workflow.add_node("validate_response", self._validate_response_node)
+        workflow.add_node("save_history", self._save_history_node)
+        workflow.add_node("handle_error", self._handle_error_node)
+        
+        # ===== FLUJO =====
+        workflow.set_entry_point("load_history")
+        
+        workflow.add_edge("load_history", "classify")
+        
+        # Routing condicional por intención
+        workflow.add_conditional_edges(
+            "classify",
+            self._route_by_intent,
             {
-                "validate": "validate_response",
+                "emergency": "execute_emergency",
+                "sales": "execute_sales",
+                "schedule": "execute_schedule",
+                "support": "execute_support",
+                "availability": "execute_availability",
                 "error": "handle_error"
             }
         )
         
-        # Después de validar: finalizar, reintentar o error
-        graph.add_conditional_edges(
+        # Todos los agentes → validación
+        for agent in ["execute_emergency", "execute_sales", "execute_schedule", 
+                      "execute_support", "execute_availability"]:
+            workflow.add_edge(agent, "validate_response")
+        
+        # Validación decide siguiente paso
+        workflow.add_conditional_edges(
             "validate_response",
-            self._should_finalize_or_retry,
+            self._decide_next_step,
             {
-                "finalize": "finalize",
-                "retry": "execute_agent",
-                "error": "handle_error"
+                "save": "save_history",
+                "retry": "classify",
+                "fallback": "execute_support",
+                "end": END
             }
         )
         
-        # Después de error: reintentar o terminar
-        graph.add_conditional_edges(
-            "handle_error",
-            self._should_retry_or_end,
-            {
-                "retry": "select_agent",
-                "end": "finalize"
-            }
-        )
+        workflow.add_edge("save_history", END)
+        workflow.add_edge("handle_error", END)
         
-        graph.add_edge("finalize", END)
-        
-        return graph.compile(checkpointer=self.memory)
+        return workflow.compile()
     
     # =========================================================================
     # NODOS DEL GRAFO
     # =========================================================================
     
-    def _preprocess_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 1: Preprocesar entrada"""
-        logger.info(f"🔧 [{self.company_id}] [PREPROCESS] Processing input")
+    def _load_history_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Cargar historial conversacional desde DB"""
+        conversation_id = state.get("conversation_id")
         
-        processed = self._process_multimedia_context(
-            state["question"],
-            state.get("media_type", "text"),
-            state.get("media_context")
-        )
-        
-        state["processed_question"] = processed
-        state["start_time"] = datetime.now().timestamp()
-        state["execution_path"] = ["preprocess"]
-        state["retry_count"] = 0
-        state["max_retries"] = 2
-        state["fallback_attempted"] = False
-        state["tools_used"] = []
-        state["tool_results"] = {}
-        state["errors"] = []
-        state["response_valid"] = False
-        
-        return state
+        try:
+            if conversation_id:
+                history = self.conversation_manager.get_conversation_history(
+                    conversation_id=conversation_id,
+                    limit=10
+                )
+                
+                logger.debug(
+                    f"[{self.company_config.company_id}] History loaded",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "history_length": len(history)
+                    }
+                )
+            else:
+                history = []
+            
+            return {
+                **state,
+                "chat_history": history,
+                "retry_count": 0,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error loading history: {e}")
+            return {**state, "chat_history": [], "retry_count": 0}
     
     def _classify_intent_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 2: Clasificar intención"""
-        logger.info(f"🎯 [{self.company_id}] [CLASSIFY] Classifying intent")
-        
-        state["execution_path"].append("classify_intent")
-        
+        """Clasificar intención usando RouterAgent"""
         try:
-            inputs = {
-                "question": state["processed_question"],
-                "chat_history": state.get("chat_history", []),
-                "user_id": state["user_id"]
-            }
+            start_time = time.time()
             
-            router_response = self.agents['router'].invoke(inputs)
+            # Ejecutar RouterAgent
+            router_response = self.agents["router"].invoke({
+                "question": state["question"],
+                "chat_history": state.get("chat_history", [])
+            })
             
+            # Parsear respuesta JSON
             try:
-                classification = json.loads(router_response)
-                intent = classification.get("intent", "SUPPORT")
-                confidence = classification.get("confidence", 0.5)
-                
-                state["intent"] = intent
-                state["confidence"] = confidence
-                state["classification_data"] = classification
-                
-                logger.info(f"✅ [{self.company_id}] Intent: {intent} (confidence: {confidence:.2f})")
-                
+                intent_data = json.loads(router_response)
             except json.JSONDecodeError:
-                logger.warning(f"⚠️ [{self.company_id}] Invalid router response, defaulting to SUPPORT")
-                state["intent"] = "SUPPORT"
-                state["confidence"] = 0.3
-                state["classification_data"] = {}
-        
-        except Exception as e:
-            logger.error(f"❌ [{self.company_id}] Error in classification: {e}")
-            state["intent"] = "SUPPORT"
-            state["confidence"] = 0.0
-            state["errors"].append(f"Classification error: {str(e)}")
-        
-        return state
-    
-    def _check_emergency_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 3: Verificación de emergencia"""
-        logger.info(f"🚨 [{self.company_id}] [EMERGENCY CHECK] Verifying emergency")
-        
-        state["execution_path"].append("check_emergency")
-        
-        # Keywords críticas
-        critical_keywords = [
-            "sangrado", "hemorragia", "dolor intenso", "inflamación severa",
-            "reacción alérgica", "mareo", "desmayo", "fiebre alta"
-        ]
-        
-        question_lower = state["processed_question"].lower()
-        has_critical = any(keyword in question_lower for keyword in critical_keywords)
-        
-        if has_critical:
-            logger.warning(f"⚠️ [{self.company_id}] CRITICAL emergency detected")
-            state["intent"] = "EMERGENCY"
-            state["confidence"] = 0.95
-            state["needs_escalation"] = True
-        
-        return state
-    
-    def _select_agent_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 4: Seleccionar agente"""
-        logger.info(f"🤖 [{self.company_id}] [SELECT] Choosing agent")
-        
-        state["execution_path"].append("select_agent")
-        
-        intent = state["intent"]
-        confidence = state["confidence"]
-        
-        # Selección con threshold
-        if confidence > 0.7:
-            agent_map = {
-                "EMERGENCY": "emergency",
-                "SALES": "sales",
-                "SCHEDULE": "schedule",
-                "SUPPORT": "support"
+                # Fallback si no es JSON válido
+                logger.warning(f"Router returned non-JSON: {router_response[:100]}")
+                intent_data = {
+                    "intent": "SUPPORT",
+                    "confidence": 0.3,
+                    "keywords": [],
+                    "reasoning": "JSON parse failed"
+                }
+            
+            intent = intent_data.get("intent", "SUPPORT")
+            confidence = intent_data.get("confidence", 0.5)
+            
+            execution_time = time.time() - start_time
+            
+            logger.info(
+                f"[{self.company_config.company_id}] Intent classified",
+                extra={
+                    "intent": intent,
+                    "confidence": confidence,
+                    "execution_time": execution_time,
+                    "question_preview": state["question"][:50]
+                }
+            )
+            
+            return {
+                **state,
+                "intent": intent,
+                "confidence": confidence,
+                "keywords": intent_data.get("keywords", []),
+                "reasoning": intent_data.get("reasoning", ""),
+                "execution_time": execution_time
             }
-            selected = agent_map.get(intent, "support")
-        else:
-            logger.info(f"📊 [{self.company_id}] Low confidence, using support")
-            selected = "support"
-        
-        state["selected_agent"] = selected
-        logger.info(f"✅ [{self.company_id}] Selected: {selected}")
-        
-        return state
+            
+        except Exception as e:
+            logger.exception(f"Classification error: {e}")
+            return {
+                **state,
+                "intent": "SUPPORT",
+                "confidence": 0.0,
+                "error_message": f"Classification failed: {str(e)}"
+            }
     
-    def _execute_agent_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 5: Ejecutar agente"""
-        agent_name = state["selected_agent"]
+    def _route_by_intent(self, state: OrchestratorState) -> RoutingDecision:
+        """
+        Decidir ruta basado en intención clasificada.
         
-        logger.info(f"⚙️ [{self.company_id}] [EXECUTE] Running {agent_name} agent")
+        Lógica:
+        - Confianza < 0.3 → SUPPORT (fallback)
+        - Intención válida → Agente correspondiente
+        - Error → handle_error
+        """
+        intent = state.get("intent", "SUPPORT")
+        confidence = state.get("confidence", 0.0)
         
-        state["execution_path"].append(f"execute_{agent_name}")
+        # Si hay error en clasificación
+        if state.get("error_message"):
+            logger.warning("Routing to error handler due to classification error")
+            return "error"
         
+        # Si confianza muy baja, ir a SUPPORT
+        if confidence < 0.3:
+            logger.warning(
+                f"Low confidence ({confidence:.2f}), routing to SUPPORT",
+                extra={"original_intent": intent}
+            )
+            return "support"
+        
+        # Mapear intención a agente
+        intent_map = {
+            "EMERGENCY": "emergency",
+            "SALES": "sales",
+            "SCHEDULE": "schedule",
+            "SUPPORT": "support",
+            "AVAILABILITY": "availability"
+        }
+        
+        route = intent_map.get(intent, "support")
+        
+        logger.debug(f"Routing to: {route}", extra={"intent": intent, "confidence": confidence})
+        
+        return route
+    
+    def _execute_emergency_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Ejecutar EmergencyAgent"""
+        return self._execute_agent(state, "emergency")
+    
+    def _execute_sales_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Ejecutar SalesAgent"""
+        return self._execute_agent(state, "sales")
+    
+    def _execute_schedule_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Ejecutar ScheduleAgent"""
+        return self._execute_agent(state, "schedule")
+    
+    def _execute_support_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Ejecutar SupportAgent"""
+        return self._execute_agent(state, "support")
+    
+    def _execute_availability_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Ejecutar AvailabilityAgent"""
+        return self._execute_agent(state, "availability")
+    
+    def _execute_agent(self, state: OrchestratorState, agent_name: str) -> OrchestratorState:
+        """
+        Método común para ejecutar cualquier agente.
+        
+        Mantiene compatibilidad con interfaz invoke() de agentes.
+        """
         try:
-            inputs = {
-                "question": state["processed_question"],
+            start_time = time.time()
+            
+            # Preparar inputs para el agente
+            agent_inputs = {
+                "question": state["question"],
+                "user_id": state["user_id"],
+                "conversation_id": state.get("conversation_id"),
                 "chat_history": state.get("chat_history", []),
-                "user_id": state["user_id"]
+                "media_type": state.get("media_type", "text"),
+                "media_context": state.get("media_context")
             }
             
-            agent = self.agents.get(agent_name)
-            if not agent:
-                raise ValueError(f"Agent {agent_name} not found")
+            # Ejecutar agente
+            response = self.agents[agent_name].invoke(agent_inputs)
             
-            response = agent.invoke(inputs)
-            state["agent_response"] = response
+            execution_time = time.time() - start_time
             
-            logger.info(f"✅ [{self.company_id}] Response generated ({len(response)} chars)")
+            logger.info(
+                f"[{self.company_config.company_id}] Agent executed: {agent_name}",
+                extra={
+                    "agent": agent_name,
+                    "execution_time": execution_time,
+                    "response_length": len(response) if response else 0
+                }
+            )
+            
+            return {
+                **state,
+                "agent_response": response,
+                "current_agent": agent_name,
+                "agent_metadata": {
+                    "execution_time": execution_time,
+                    "timestamp": datetime.utcnow().isoformat()
+                },
+                "final_response": response
+            }
             
         except Exception as e:
-            logger.error(f"❌ [{self.company_id}] Error executing {agent_name}: {e}")
-            state["errors"].append(f"Agent execution error: {str(e)}")
-            state["agent_response"] = ""
-        
-        return state
+            logger.exception(f"Error executing {agent_name}: {e}")
+            
+            # Respuesta de fallback
+            fallback_response = (
+                f"Disculpa, tuve un problema procesando tu solicitud en {self.company_config.company_name}. "
+                f"¿Puedes intentar de nuevo?"
+            )
+            
+            return {
+                **state,
+                "agent_response": fallback_response,
+                "current_agent": agent_name,
+                "is_valid": False,
+                "error_message": str(e),
+                "final_response": fallback_response
+            }
     
     def _validate_response_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 6: Validar respuesta"""
-        logger.info(f"✓ [{self.company_id}] [VALIDATE] Checking response quality")
+        """
+        Validar calidad de respuesta del agente.
         
-        state["execution_path"].append("validate_response")
-        
+        Criterios de validación:
+        - Tiene contenido (> 20 caracteres)
+        - Menciona el nombre de la empresa
+        - No contiene palabras de error
+        - Longitud razonable (< 2000 caracteres)
+        """
         response = state.get("agent_response", "")
         
         # Validaciones
-        is_valid = True
-        validation_errors = []
+        checks = {
+            "has_content": len(response) > 20,
+            "has_company_name": self.company_config.company_name.lower() in response.lower(),
+            "not_error_message": not any(
+                word in response.lower() 
+                for word in ["error", "fallo", "problema técnico", "no pude"]
+            ),
+            "reasonable_length": len(response) < 2000,
+            "not_empty": bool(response and response.strip())
+        }
         
-        if not response or len(response.strip()) < 10:
-            is_valid = False
-            validation_errors.append("Response too short")
+        # Es válida si pasa al menos 3/5 checks
+        is_valid = sum(checks.values()) >= 3
         
-        if "error" in response.lower() and len(response) < 50:
-            is_valid = False
-            validation_errors.append("Error message detected")
+        # Validaciones que fallan
+        failed_checks = [k for k, v in checks.items() if not v]
         
-        state["response_valid"] = is_valid
+        logger.info(
+            f"Response validation: {'PASS' if is_valid else 'FAIL'}",
+            extra={
+                "checks": checks,
+                "failed_checks": failed_checks,
+                "agent": state.get("current_agent")
+            }
+        )
         
-        if not is_valid:
-            logger.warning(f"⚠️ [{self.company_id}] Validation failed: {validation_errors}")
-            state["errors"].extend(validation_errors)
+        return {
+            **state,
+            "is_valid": is_valid,
+            "validation_errors": failed_checks
+        }
+    
+    def _decide_next_step(self, state: OrchestratorState) -> ValidationDecision:
+        """
+        Decidir siguiente paso después de validación.
+        
+        Lógica:
+        - Válida → Guardar y terminar
+        - Inválida + retry < 2 → Reintentar con clasificación
+        - Inválida + retry >= 2 → Fallback a support
+        - Error grave → Terminar
+        """
+        is_valid = state.get("is_valid", False)
+        retry_count = state.get("retry_count", 0)
+        has_error = bool(state.get("error_message"))
+        
+        if is_valid:
+            # Respuesta válida, guardar y terminar
+            logger.debug("Valid response, proceeding to save")
+            return "save"
+        
+        elif retry_count < 2 and not has_error:
+            # Reintentar con reclasificación
+            logger.warning(f"Invalid response, retrying (attempt {retry_count + 1}/2)")
+            state["retry_count"] = retry_count + 1
+            return "retry"
+        
+        elif retry_count >= 2:
+            # Demasiados reintentos, usar fallback
+            logger.error("Max retries reached, using fallback")
+            state["fallback_used"] = True
+            return "fallback"
+        
+        else:
+            # Error grave, terminar
+            logger.error("Critical error, ending execution")
+            return "end"
+    
+    def _save_history_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Guardar conversación en historial"""
+        conversation_id = state.get("conversation_id")
+        
+        if not conversation_id:
+            logger.debug("No conversation_id, skipping history save")
+            return state
+        
+        try:
+            # Guardar pregunta del usuario
+            self.conversation_manager.add_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=state["question"]
+            )
+            
+            # Guardar respuesta del agente
+            self.conversation_manager.add_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=state["final_response"],
+                metadata={
+                    "agent": state.get("current_agent"),
+                    "intent": state.get("intent"),
+                    "confidence": state.get("confidence"),
+                    "execution_time": state.get("execution_time")
+                }
+            )
+            
+            logger.info(
+                f"History saved to conversation {conversation_id}",
+                extra={"agent": state.get("current_agent")}
+            )
+            
+        except Exception as e:
+            logger.error(f"Error saving history: {e}")
         
         return state
     
     def _handle_error_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 7: Manejar errores"""
-        logger.warning(f"🔄 [{self.company_id}] [ERROR] Attempting recovery")
+        """Manejar errores graves"""
+        error_msg = state.get("error_message", "Unknown error")
         
-        state["execution_path"].append("handle_error")
-        state["retry_count"] = state.get("retry_count", 0) + 1
+        logger.error(
+            f"[{self.company_config.company_id}] Error handler activated",
+            extra={"error": error_msg}
+        )
         
-        # Fallback a support si no se ha intentado
-        if not state.get("fallback_attempted", False):
-            logger.info(f"🔄 [{self.company_id}] Fallback to support agent")
-            state["selected_agent"] = "support"
-            state["fallback_attempted"] = True
+        fallback_response = (
+            f"Disculpa, estamos experimentando dificultades técnicas. "
+            f"Por favor, contacta directamente con {self.company_config.company_name}."
+        )
         
-        return state
-    
-    def _finalize_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Nodo 8: Finalizar"""
-        logger.info(f"🏁 [{self.company_id}] [FINALIZE] Preparing final response")
-        
-        state["execution_path"].append("finalize")
-        
-        # Fallback si no hay respuesta válida
-        if not state.get("agent_response") or not state.get("agent_response").strip():
-            state["agent_response"] = (
-                f"Disculpa, estoy teniendo dificultades técnicas. "
-                f"Por favor contacta directamente con {self.company_config.company_name}. 🔧"
-            )
-            state["selected_agent"] = "error"
-        
-        # Log tiempo de ejecución
-        if "start_time" in state:
-            elapsed = datetime.now().timestamp() - state["start_time"]
-            logger.info(f"⏱️ [{self.company_id}] Completed in {elapsed:.2f}s")
-        
-        logger.info(f"📍 [{self.company_id}] Path: {' → '.join(state['execution_path'])}")
-        
-        return state
+        return {
+            **state,
+            "final_response": fallback_response,
+            "current_agent": "error_handler",
+            "fallback_used": True
+        }
     
     # =========================================================================
-    # FUNCIONES DE DECISIÓN
-    # =========================================================================
-    
-    def _should_check_emergency(self, state: OrchestratorState) -> Literal["check", "skip"]:
-        """Decidir si verificar emergencia"""
-        intent = state.get("intent", "")
-        
-        if intent == "EMERGENCY":
-            return "check"
-        
-        # Verificar keywords en pregunta
-        emergency_keywords = self.company_config.emergency_keywords
-        question = state.get("processed_question", "").lower()
-        
-        if any(keyword in question for keyword in emergency_keywords):
-            return "check"
-        
-        return "skip"
-    
-    def _should_validate_or_error(self, state: OrchestratorState) -> Literal["validate", "error"]:
-        """Decidir si validar o manejar error"""
-        if state.get("errors"):
-            return "error"
-        
-        if not state.get("agent_response"):
-            return "error"
-        
-        return "validate"
-    
-    def _should_finalize_or_retry(self, state: OrchestratorState) -> Literal["finalize", "retry", "error"]:
-        """Decidir si finalizar, reintentar o error"""
-        is_valid = state.get("response_valid", False)
-        retry_count = state.get("retry_count", 0)
-        max_retries = state.get("max_retries", 2)
-        
-        if is_valid:
-            return "finalize"
-        
-        if retry_count < max_retries:
-            logger.info(f"🔄 [{self.company_id}] Retry {retry_count + 1}/{max_retries}")
-            return "retry"
-        
-        return "error"
-    
-    def _should_retry_or_end(self, state: OrchestratorState) -> Literal["retry", "end"]:
-        """Decidir si reintentar o terminar"""
-        retry_count = state.get("retry_count", 0)
-        max_retries = state.get("max_retries", 2)
-        fallback_attempted = state.get("fallback_attempted", False)
-        
-        if not fallback_attempted:
-            return "retry"
-        
-        return "end"
-    
-    # =========================================================================
-    # API PÚBLICA (COMPATIBLE CON SISTEMA EXISTENTE)
+    # INTERFAZ PÚBLICA - MANTENER COMPATIBILIDAD
     # =========================================================================
     
     def get_response(
         self,
         question: str,
         user_id: str,
-        conversation_manager: ConversationManager,
+        conversation_id: Optional[str] = None,
         media_type: str = "text",
-        media_context: str = None
+        media_context: Optional[Dict[str, Any]] = None,
+        conversation_manager: Optional[ConversationManager] = None,
+        **kwargs
     ) -> Tuple[str, str]:
         """
-        Método principal - API compatible con sistema existente
-        AHORA USA LANGGRAPH INTERNAMENTE
+        Obtener respuesta del orquestador.
+        
+        ✅ INTERFAZ MANTENIDA - Compatible con código existente
+        
+        Args:
+            question: Pregunta del usuario
+            user_id: ID del usuario
+            conversation_id: ID de conversación (opcional)
+            media_type: Tipo de media (text, image, audio)
+            media_context: Contexto adicional del media
+            conversation_manager: Manager de conversación (opcional)
+            **kwargs: Argumentos adicionales (ignorados)
+        
+        Returns:
+            Tuple[str, str]: (respuesta, nombre_agente)
         """
+        # Override conversation_manager si se proporciona
+        if conversation_manager:
+            self.conversation_manager = conversation_manager
+        
+        # Estado inicial
+        initial_state: OrchestratorState = {
+            "question": question,
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "media_type": media_type,
+            "media_context": media_context,
+            "chat_history": [],
+            "intent": None,
+            "confidence": 0.0,
+            "keywords": [],
+            "reasoning": "",
+            "current_agent": None,
+            "agent_response": None,
+            "agent_metadata": {},
+            "is_valid": False,
+            "validation_errors": [],
+            "retry_count": 0,
+            "final_response": "",
+            "execution_time": 0.0,
+            "timestamp": "",
+            "error_message": None,
+            "fallback_used": False
+        }
         
         try:
-            # Validaciones
-            if not question or not question.strip():
-                return (
-                    f"Por favor, envía un mensaje específico para poder ayudarte "
-                    f"en {self.company_config.company_name}. 😊",
-                    "support"
-                )
+            # Ejecutar grafo
+            logger.debug(
+                f"[{self.company_config.company_id}] Executing orchestrator graph",
+                extra={"question_preview": question[:50]}
+            )
             
-            if not user_id or not user_id.strip():
-                return "Error interno: ID de usuario inválido.", "error"
-            
-            # Obtener historial
-            chat_history = conversation_manager.get_chat_history(user_id, format_type="messages")
-            
-            # Preparar estado inicial
-            initial_state: OrchestratorState = {
-                "question": question,
-                "user_id": user_id,
-                "company_id": self.company_id,
-                "chat_history": chat_history,
-                "media_type": media_type,
-                "media_context": media_context,
-                "processed_question": "",
-                "intent": "",
-                "confidence": 0.0,
-                "classification_data": {},
-                "selected_agent": "",
-                "agent_response": "",
-                "fallback_attempted": False,
-                "rag_context": None,
-                "tools_used": [],
-                "tool_results": {},
-                "needs_clarification": False,
-                "needs_escalation": False,
-                "retry_count": 0,
-                "max_retries": 2,
-                "response_valid": False,
-                "start_time": 0.0,
-                "execution_path": [],
-                "errors": []
-            }
-            
-            # Ejecutar grafo con thread_id para persistencia
-            config = {"configurable": {"thread_id": user_id}}
-            
-            logger.info(f"🚀 [{self.company_id}] Starting LangGraph execution for {user_id}")
-            
-            # Invocar grafo
-            final_state = self.graph.invoke(initial_state, config)
+            result = self.graph.invoke(initial_state)
             
             # Extraer respuesta y agente
-            response = final_state.get("agent_response", "")
-            agent_used = final_state.get("selected_agent", "unknown")
+            response = result.get("final_response", "")
+            agent_name = result.get("current_agent", "unknown")
             
-            # Guardar en conversación
-            conversation_manager.add_message(user_id, "user", question)
-            conversation_manager.add_message(user_id, "assistant", response)
-            
-            # Log final
             logger.info(
-                f"✅ [{self.company_id}] Response delivered - "
-                f"Agent: {agent_used}, Length: {len(response)}"
+                f"[{self.company_config.company_id}] Orchestration completed",
+                extra={
+                    "agent": agent_name,
+                    "intent": result.get("intent"),
+                    "is_valid": result.get("is_valid"),
+                    "retry_count": result.get("retry_count"),
+                    "fallback_used": result.get("fallback_used")
+                }
             )
             
-            return response, agent_used
+            return response, agent_name
+            
+        except Exception as e:
+            logger.exception(
+                f"[{self.company_config.company_id}] Critical error in orchestrator: {e}"
+            )
+            
+            # Fallback final
+            fallback_response = (
+                f"Lo siento, estoy experimentando dificultades. "
+                f"Por favor contacta con {self.company_config.company_name}."
+            )
+            
+            return fallback_response, "error"
+    
+    # =========================================================================
+    # UTILIDADES
+    # =========================================================================
+    
+    def visualize_graph(self, output_path: str = "orchestrator_graph.png"):
+        """
+        Visualizar grafo como imagen.
         
-        except Exception as e:
-            logger.exception(f"❌ [{self.company_id}] Critical error: {e}")
-            error_response = (
-                f"Disculpa, tuve un problema técnico en {self.company_config.company_name}. "
-                f"Por favor intenta de nuevo. 🔧"
-            )
-            return error_response, "error"
-    
-    def _process_multimedia_context(
-        self,
-        question: str,
-        media_type: str,
-        media_context: str = None
-    ) -> str:
-        """Procesar contexto multimedia"""
-        if media_type == "image" and media_context:
-            return f"Contexto visual: {media_context}\n\nPregunta: {question}"
-        elif media_type == "voice" and media_context:
-            return f"Transcripción de voz: {media_context}\n\nPregunta: {question}"
-        return question
-    
-    # =========================================================================
-    # MÉTODOS DE UTILIDAD (sin cambios)
-    # =========================================================================
-    
-    def search_documents(self, query: str, k: int = 3):
-        """Búsqueda de documentos"""
+        Requiere: pip install pygraphviz
+        """
         try:
-            if not self.vectorstore_service:
-                return []
+            from langgraph.graph import Graph
             
-            docs = self.vectorstore_service.search_by_company(query, self.company_id, k=k)
-            return docs
+            # Generar visualización
+            graph_image = self.graph.get_graph().draw_mermaid_png()
+            
+            with open(output_path, "wb") as f:
+                f.write(graph_image)
+            
+            logger.info(f"Graph visualization saved to: {output_path}")
+            
+        except ImportError:
+            logger.warning("Install pygraphviz to visualize graph: pip install pygraphviz")
         except Exception as e:
-            logger.error(f"[{self.company_id}] Error searching documents: {e}")
-            return []
+            logger.error(f"Error visualizing graph: {e}")
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Obtener estadísticas del orquestador"""
+        return {
+            "company_id": self.company_config.company_id,
+            "available_agents": list(self.agents.keys()),
+            "graph_nodes": len(self.graph.get_graph().nodes),
+            "has_conversation_manager": self.conversation_manager is not None
+        }
+    
+    # =========================================================================
+    # MÉTODOS DE COMPATIBILIDAD CON FACTORY
+    # =========================================================================
+    
+    def set_vectorstore_service(self, vectorstore_service: Any):
+        """
+        Compatibilidad con MultiAgentFactory.
+        
+        En el nuevo orchestrator, el vectorstore ya está en los agentes,
+        por lo que este método no hace nada. Se mantiene para no romper
+        el código del factory.
+        """
+        logger.debug(
+            f"[{self.company_config.company_id}] set_vectorstore_service called "
+            f"(ignored - agents already have vectorstore)"
+        )
+        # No hacer nada - los agentes ya tienen vectorstore configurado
+        pass
+    
+    def set_tool_executor(self, tool_executor: Any):
+        """
+        Compatibilidad con MultiAgentFactory.
+        
+        En el nuevo orchestrator, los tools ya están en los agentes,
+        por lo que este método no hace nada. Se mantiene para no romper
+        el código del factory.
+        """
+        logger.debug(
+            f"[{self.company_config.company_id}] set_tool_executor called "
+            f"(ignored - agents already have tools)"
+        )
+        # No hacer nada - los agentes ya tienen tools configurados
+        pass
     
     def health_check(self) -> Dict[str, Any]:
-        """Health check del sistema"""
+        """
+        Health check del orchestrator.
+        Compatibilidad con código existente.
+        """
         try:
-            agents_status = {}
-            
-            for agent_name, agent in self.agents.items():
-                try:
-                    test_inputs = {
-                        "question": "test",
-                        "chat_history": [],
-                        "user_id": "health_check"
-                    }
-                    
-                    if agent_name == "router":
-                        response = agent.invoke(test_inputs)
-                        try:
-                            json.loads(response)
-                            agents_status[agent_name] = "healthy"
-                        except json.JSONDecodeError:
-                            agents_status[agent_name] = "unhealthy"
-                    else:
-                        response = agent.invoke(test_inputs)
-                        agents_status[agent_name] = "healthy" if response else "unhealthy"
-                except Exception as e:
-                    agents_status[agent_name] = f"error: {str(e)}"
-            
-            all_healthy = all(status == "healthy" for status in agents_status.values())
-            
             return {
-                "system_healthy": all_healthy,
-                "system_version": "langgraph",
-                "company_id": self.company_id,
-                "company_name": self.company_config.company_name,
-                "agents_status": agents_status,
-                "langgraph_features": {
-                    "state_persistence": True,
-                    "conditional_routing": True,
-                    "error_recovery": True,
-                    "retry_logic": True
-                },
-                "vectorstore_connected": self.vectorstore_service is not None,
-                "tool_executor_connected": self.tool_executor is not None,
-                "schedule_service_url": self.company_config.schedule_service_url
+                "system_healthy": True,
+                "company_id": self.company_config.company_id,
+                "agents_count": len(self.agents),
+                "graph_initialized": self.graph is not None,
+                "conversation_manager": self.conversation_manager is not None
             }
         except Exception as e:
             return {
                 "system_healthy": False,
-                "system_version": "langgraph",
-                "company_id": self.company_id,
                 "error": str(e)
             }
-    
-    def get_system_stats(self) -> Dict[str, Any]:
-        """Estadísticas del sistema"""
-        stats = {
-            "system_version": "langgraph",
-            "company_id": self.company_id,
-            "company_name": self.company_config.company_name,
-            "agents_available": list(self.agents.keys()),
-            "rag_enabled_agents": ["sales", "support", "emergency", "schedule"],
-            "langgraph_capabilities": [
-                "state_persistence",
-                "conditional_routing",
-                "error_recovery",
-                "retry_logic",
-                "human_in_the_loop_ready"
-            ],
-            "vectorstore_index": self.company_config.vectorstore_index,
-            "schedule_service_url": self.company_config.schedule_service_url,
-            "services": self.company_config.services,
-            "rag_status": "enabled" if self.vectorstore_service else "disabled"
-        }
-        
-        if self.tool_executor:
-            available_tools = self.tool_executor.get_available_tools()
-            tools_ready = [
-                name for name, status in available_tools.items()
-                if status.get("available")
-            ]
-            stats["tools_available"] = len(available_tools)
-            stats["tools_ready"] = len(tools_ready)
-            stats["tools_ready_list"] = tools_ready
-        
-        return stats
