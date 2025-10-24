@@ -25,7 +25,7 @@ Ventajas vs implementación actual de ScheduleAgent:
 - Debugging más sencillo (ver estado en cada paso)
 """
 
-from typing import Dict, Any, List, Literal
+from typing import Dict, Any, List, Literal, TYPE_CHECKING
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 import logging
@@ -36,7 +36,10 @@ from app.langgraph_adapters.state_schemas import (
     ScheduleAgentState,
     create_initial_schedule_state
 )
-from app.agents.schedule_agent import ScheduleAgent
+
+# Avoid circular import: ScheduleAgent imports ScheduleAgentGraph
+if TYPE_CHECKING:
+    from app.agents.schedule_agent import ScheduleAgent
 
 logger = logging.getLogger(__name__)
 
