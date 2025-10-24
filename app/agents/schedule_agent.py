@@ -259,9 +259,11 @@ class ScheduleAgent(BaseAgent):
     1. Si el usuario consulta disponibilidad, proporciona horarios disponibles
     2. Si el usuario quiere agendar, solicita la información requerida de forma amigable
     3. Usa el contexto de agendamiento para proporcionar información específica sobre duraciones, preparaciones y requisitos
-    4. Sé profesional pero cálido en tus respuestas
-    5. Si hay información adicional en el contexto (abonos, recomendaciones), menciónala apropiadamente
-    
+    4. ✅ IMPORTANTE: Si el usuario pregunta por precios/costos, SIEMPRE usa la información exacta del CONTEXTO DE AGENDAMIENTO. NUNCA inventes o estimates precios.
+    5. Si el CONTEXTO incluye información de precios (valor, oferta, inversión), úsala literalmente
+    6. Sé profesional pero cálido en tus respuestas
+    7. Si hay información adicional en el contexto (abonos, recomendaciones), menciónala apropiadamente
+
     TONO: Profesional, organizado, servicial y claro.
     LONGITUD: Máximo 4-5 oraciones, a menos que se requiera información detallada.
     
@@ -291,33 +293,42 @@ class ScheduleAgent(BaseAgent):
         """Obtener contexto de agendamiento desde documentos RAG"""
         try:
             question = inputs.get("question", "")
-            
+
             if not self.vectorstore_service:
                 return self._get_basic_schedule_info()
-            
-            # Buscar información relacionada con agendamiento
-            schedule_query = f"cita agenda horario duración preparación requisitos abono {question}"
+
+            # ✅ MEJORADO: Buscar directamente con la pregunta del usuario
+            # No modificar la query para mantener precisión semántica
             docs = self.vectorstore_service.search_by_company(
-                schedule_query,
+                question,
                 self.company_config.company_id,
-                k=3
+                k=5  # Aumentado a 5 para mejor cobertura
             )
-            
+
             if not docs:
                 return self._get_basic_schedule_info()
-            
-            # Extraer información relevante para agendamiento
+
+            # ✅ MEJORADO: Extraer información relevante (incluyendo precios)
             context_parts = []
+            # Keywords expandidas para incluir información comercial
+            relevant_keywords = [
+                'cita', 'agenda', 'horario', 'duración', 'preparación',
+                'requisitos', 'abono', 'valoración',
+                # ✅ NUEVO: Incluir keywords comerciales
+                'precio', 'costo', 'valor', 'inversión', 'oferta',
+                'pago', 'efectivo', 'transferencia', 'promoción'
+            ]
+
             for doc in docs:
                 if hasattr(doc, 'page_content') and doc.page_content:
                     content = doc.page_content.lower()
-                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos', 'abono', 'valoración']):
+                    if any(word in content for word in relevant_keywords):
                         context_parts.append(doc.page_content)
                 elif isinstance(doc, dict) and 'content' in doc:
                     content = doc['content'].lower()
-                    if any(word in content for word in ['cita', 'agenda', 'horario', 'duración', 'preparación', 'requisitos', 'abono', 'valoración']):
+                    if any(word in content for word in relevant_keywords):
                         context_parts.append(doc['content'])
-            
+
             if context_parts:
                 basic_info = self._get_basic_schedule_info()
                 rag_info = "\n\nInformación adicional específica:\n" + "\n".join(context_parts)
