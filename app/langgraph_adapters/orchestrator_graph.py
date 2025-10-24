@@ -134,6 +134,10 @@ class MultiAgentOrchestratorGraph:
         checkpointer = MemorySaver() if enable_checkpointing else None
         self.app = self.graph.compile(checkpointer=checkpointer)
 
+        # ✅ Configurar recursion_limit aumentado para prevenir errores
+        # Default es 25, aumentamos a 50 para dar más margen
+        self.recursion_limit = 50
+
         logger.info(
             f"✅ MultiAgentOrchestratorGraph initialized for company {company_id}"
         )
@@ -389,12 +393,17 @@ class MultiAgentOrchestratorGraph:
         has_pricing_query = any(keyword in question for keyword in pricing_keywords)
         has_schedule_query = any(keyword in question for keyword in schedule_keywords)
 
+        logger.info(
+            f"[{self.company_id}] Detection: primary_intent={primary_intent}, "
+            f"has_pricing={has_pricing_query}, has_schedule={has_schedule_query}"
+        )
+
         # Si intent primario es "schedule" pero hay pregunta de pricing
         if primary_intent == "schedule" and has_pricing_query:
             state["secondary_intent"] = "sales"
             state["secondary_confidence"] = 0.8
             logger.info(
-                f"[{self.company_id}] Secondary intent detected: sales "
+                f"[{self.company_id}] ✅ Secondary intent detected: sales "
                 f"(pricing question during scheduling)"
             )
 
@@ -403,13 +412,16 @@ class MultiAgentOrchestratorGraph:
             state["secondary_intent"] = "schedule"
             state["secondary_confidence"] = 0.8
             logger.info(
-                f"[{self.company_id}] Secondary intent detected: schedule "
+                f"[{self.company_id}] ✅ Secondary intent detected: schedule "
                 f"(scheduling question during sales)"
             )
 
         else:
             state["secondary_intent"] = None
             state["secondary_confidence"] = 0.0
+            logger.info(
+                f"[{self.company_id}] ❌ No secondary intent detected"
+            )
 
         return state
 
@@ -603,8 +615,17 @@ class MultiAgentOrchestratorGraph:
         secondary_intent = state.get("secondary_intent")
         secondary_confidence = state.get("secondary_confidence", 0.0)
 
+        # ✅ PREVENIR LOOP: Si ya se completó handoff, no hacer otro
+        if state.get("handoff_completed", False):
+            logger.info(f"[{self.company_id}] Handoff already completed, skipping")
+            state["handoff_requested"] = False
+            return state
+
         # Solo hacer handoff si hay secondary intent con alta confianza
-        if secondary_intent and secondary_confidence >= 0.7:
+        # Y el secondary intent es diferente del agente actual
+        if (secondary_intent and
+            secondary_confidence >= 0.7 and
+            secondary_intent != current_agent):
             # Registrar handoff
             state["handoff_requested"] = True
             state["handoff_from"] = current_agent
@@ -624,7 +645,15 @@ class MultiAgentOrchestratorGraph:
 
         else:
             state["handoff_requested"] = False
-            logger.info(f"[{self.company_id}] No handoff needed")
+            if secondary_intent == current_agent:
+                logger.info(
+                    f"[{self.company_id}] No handoff needed: secondary_intent same as current_agent ({current_agent})"
+                )
+            else:
+                logger.info(f"[{self.company_id}] No handoff needed")
+
+        # ✅ Marcar handoff como completado para prevenir loops
+        state["handoff_completed"] = True
 
         return state
 
@@ -745,13 +774,20 @@ class MultiAgentOrchestratorGraph:
         Determinar siguiente paso después de validar output.
 
         Prioridades:
-        1. Si hay secondary intent detectado → check_handoff
+        1. Si hay secondary intent detectado Y NO se ha completado handoff → check_handoff
         2. Si hay información crítica (pricing/schedule) → validate_cross_agent
         3. Si debe reintentar → retry
         4. Sino → end
         """
-        # Prioridad 1: Verificar handoff si hay secondary intent
-        if state.get("secondary_intent") and state.get("secondary_confidence", 0.0) >= 0.7:
+        # ✅ PREVENIR LOOP: Verificar si ya se completó handoff
+        if state.get("handoff_completed", False):
+            logger.info(f"[{self.company_id}] Handoff already completed, skipping check")
+            return "end"
+
+        # Prioridad 1: Verificar handoff si hay secondary intent Y NO se ha completado
+        if (state.get("secondary_intent") and
+            state.get("secondary_confidence", 0.0) >= 0.7 and
+            not state.get("handoff_completed", False)):
             return "check_handoff"
 
         # Prioridad 2: Validar cross-agent si hay pricing/schedule info
@@ -852,9 +888,12 @@ class MultiAgentOrchestratorGraph:
             context=context
         )
 
-        # Ejecutar grafo
+        # Ejecutar grafo con recursion_limit configurado
         try:
-            final_state = self.app.invoke(initial_state)
+            final_state = self.app.invoke(
+                initial_state,
+                config={"recursion_limit": self.recursion_limit}
+            )
 
             # Extraer respuesta y agente usado
             response = final_state.get("agent_response", "")

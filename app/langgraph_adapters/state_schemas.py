@@ -91,6 +91,7 @@ class OrchestratorState(TypedDict):
     handoff_to: Optional[str]
     handoff_reason: Optional[str]
     handoff_context: Dict[str, Any]
+    handoff_completed: bool  # Prevenir handoffs múltiples
 
     # === Validaciones === #
     validations: Annotated[List[ValidationResult], operator.add]
@@ -205,6 +206,7 @@ def create_initial_orchestrator_state(
         "handoff_to": None,
         "handoff_reason": None,
         "handoff_context": {},
+        "handoff_completed": False,
 
         # Validaciones
         "validations": [],
