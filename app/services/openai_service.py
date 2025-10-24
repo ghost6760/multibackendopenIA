@@ -208,34 +208,62 @@ class OpenAIService:
                 
     
     def analyze_image(self, image_file) -> str:
-        """Analyze image using Responses API (minimal approach)."""
+        """Analyze image using Responses API (fixed input types)."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
-
+    
         try:
-            if hasattr(image_file, 'read'):
-                image_data = image_file.read()
+            # Leer bytes
+            if hasattr(image_file, "read"):
+                image_bytes = image_file.read()
             else:
-                with open(image_file, 'rb') as f:
-                    image_data = f.read()
-
-            import base64
-            base64_image = base64.b64encode(image_data).decode('utf-8')
+                with open(image_file, "rb") as f:
+                    image_bytes = f.read()
+    
+            # Preferible: si imagen grande, subir a storage y usar URL pública.
+            if len(image_bytes) > 300_000:
+                logger.warning("Image size > 300KB — consider uploading to storage and passing a URL instead of data URI.")
+    
+            import base64, json
+            base64_image = base64.b64encode(image_bytes).decode("utf-8")
             data_uri = f"data:image/jpeg;base64,{base64_image}"
-
-            # Construir input mixto (texto + image_url)
-            prompt_parts = [
-                {"type": "text", "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."},
-                {"type": "image_url", "image_url": {"url": data_uri}}
-            ]
-
+    
+            # Construir payload válido para Responses API
+            message_item = {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": (
+                            "Describe esta imagen en detalle en español, enfocándote en elementos relevantes "
+                            "para una consulta de tratamientos estéticos o servicios médicos. Si es una promoción o anuncio, menciona los detalles principales."
+                        )
+                    }
+                ]
+            }
+    
+            image_item = {
+                "type": "input_image",
+                "image_url": {"url": data_uri}
+            }
+    
+            input_payload = [message_item, image_item]
+    
+            # DEBUG: log payload (recorta para no llenar logs)
+            try:
+                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): %s", json.dumps(input_payload)[:8000])
+            except Exception:
+                logger.debug("OPENAI RESPONSES PAYLOAD (analyze_image): (could not json.dumps)")
+    
             resp = self.client.responses.create(
                 model=self.model_name,
-                input=prompt_parts,
-                max_output_tokens=300
+                input=input_payload,
+                max_output_tokens=500,
+                temperature=0.1
             )
-
-            # Extraer texto de salida (igual que arriba)
+    
+            # Extraer texto robustamente (usa tu helper si ya existe)
             text_out = ""
             if hasattr(resp, "output"):
                 for out in getattr(resp, "output", []):
@@ -248,51 +276,47 @@ class OpenAIService:
                                 text_out += c
             if not text_out and hasattr(resp, "output_text"):
                 text_out = getattr(resp, "output_text")
-
+    
             return text_out.strip()
-
+    
         except Exception as e:
             logger.error(f"Error analyzing image (Responses): {e}")
+            # Log extra para debugging
+            try:
+                logger.debug("Exception details: %s", getattr(e, "args", e))
+            except Exception:
+                pass
             raise
 
     
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Analyze image from URL using Responses API."""
+        """Analyze image from URL using Responses API (fixed input types)."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
-
-        try:
-            prompt_parts = [
-                {"type": "text", "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."},
-                {"type": "image_url", "image_url": {"url": image_url}}
-            ]
-
-            resp = self.client.responses.create(
-                model=self.model_name,
-                input=prompt_parts,
-                max_output_tokens=300
-            )
-
-            # Extraer texto (igual que arriba)
-            text_out = ""
-            if hasattr(resp, "output"):
-                for out in getattr(resp, "output", []):
-                    content = out.get("content") if isinstance(out, dict) else getattr(out, "content", None)
-                    if isinstance(content, list):
-                        for c in content:
-                            if isinstance(c, dict) and "text" in c:
-                                text_out += c["text"]
-                            elif isinstance(c, str):
-                                text_out += c
-            if not text_out and hasattr(resp, "output_text"):
-                text_out = getattr(resp, "output_text")
-
-            return text_out.strip()
-
-        except Exception as e:
-            logger.error(f"Error analyzing image from URL (Responses): {e}")
-            raise
     
+        try:
+            logger.info(f"Downloading image from: {image_url}")
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; ChatbotImageAnalyzer/1.0)"}
+            response = requests.get(image_url, headers=headers, timeout=30)
+            response.raise_for_status()
+    
+            content_type = response.headers.get("content-type", "").lower()
+            if not any(img_type in content_type for img_type in ["image/", "jpeg", "png", "gif", "webp"]):
+                logger.warning(f"Content type might not be image: {content_type}")
+    
+            # Si la imagen es grande preferible subir a storage y usar URL pública,
+            # pero para compatibilidad temporal delegamos al mismo analyze_image
+            image_file = BytesIO(response.content)
+    
+            return self.analyze_image(image_file)
+    
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error downloading image: {e}")
+            raise Exception(f"Error downloading image: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error in image analysis from URL: {e}")
+            raise
+
     def text_to_speech(self, text: str) -> str:
         """Convert text to speech and return file path"""
         if not self.voice_enabled:
