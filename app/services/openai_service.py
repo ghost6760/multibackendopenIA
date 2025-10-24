@@ -71,35 +71,88 @@ class OpenAIService:
             raise
 
 
-    def validate_openai_setup() -> bool:
-        """Validar configuración completa de OpenAI"""
+    def validate_openai_setup(self) -> bool:
+        """Validar configuración completa de OpenAI (Responses API)."""
         try:
-            # Test de conexión básico
-            response = self.client.chat.completions.create(
-                model="gpt-4.1-mini-2025-04-14",
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=1
+            # Prueba simple con Responses API
+            resp = self.client.responses.create(
+                model=self.model_name,
+                input="test",
+                max_output_tokens=1
             )
-            return True
+            # Si el cliente devolvió algo, consideramos OK
+            return bool(resp and getattr(resp, "id", None))
         except Exception as e:
-            logger.error(f"OpenAI validation failed: {e}")
+            logger.error(f"OpenAI validation failed (Responses): {e}")
             return False
     
     def generate_response(self, messages: list, **kwargs) -> str:
-        """Generate response using OpenAI Chat API"""
+        """Generate response using OpenAI Responses API (minimal migration).
+
+        - messages: lista de dicts {'role': 'user'|'assistant', 'content': '...'}
+        - Conserva max_tokens/temperature como antes.
+        """
         try:
-            response = self.client.chat.completions.create(
+            # Si te pasan un string directamente, usarlo
+            if isinstance(messages, str):
+                prompt = messages
+            else:
+                # Normalizar lista de mensajes a texto plano (cambio mínimo)
+                parts = []
+                for m in messages:
+                    role = m.get("role", "user")
+                    content = m.get("content", "")
+                    # Si content es lista (ej. para images) intentar extraer texto partes
+                    if isinstance(content, list):
+                        # concatenar textos que encuentre en la estructura
+                        subparts = []
+                        for c in content:
+                            if isinstance(c, dict) and "text" in c:
+                                subparts.append(c["text"])
+                            elif isinstance(c, str):
+                                subparts.append(c)
+                        content_text = " ".join(subparts)
+                    else:
+                        content_text = str(content)
+                    parts.append(f"{role.upper()}: {content_text}")
+                prompt = "\n".join(parts)
+
+            resp = self.client.responses.create(
                 model=self.model_name,
-                messages=messages,
-                max_tokens=kwargs.get('max_tokens', self.max_tokens),
-                temperature=kwargs.get('temperature', self.temperature)
+                input=prompt,
+                max_output_tokens=kwargs.get("max_tokens", self.max_tokens),
+                temperature=kwargs.get("temperature", self.temperature)
             )
-            
-            return response.choices[0].message.content
-            
+
+            # Extraer texto de salida de forma robusta:
+            text_out = ""
+            try:
+                # La Responses API puede contener .output con elementos content
+                if hasattr(resp, "output"):
+                    for out in getattr(resp, "output", []):
+                        # cada out puede tener .content: lista de items con .type e .text/plain
+                        content = out.get("content") if isinstance(out, dict) else getattr(out, "content", None)
+                        if isinstance(content, list):
+                            for c in content:
+                                if isinstance(c, dict) and "text" in c:
+                                    text_out += c["text"]
+                                elif isinstance(c, dict) and c.get("type") == "output_text" and "text" in c:
+                                    text_out += c["text"]
+                                elif isinstance(c, str):
+                                    text_out += c
+                # Fallback: algunos SDK exponen resp.output_text directamente
+                if not text_out and hasattr(resp, "output_text"):
+                    text_out = getattr(resp, "output_text")
+            except Exception:
+                # último recurso: convertir a str
+                text_out = str(resp)
+
+            return text_out.strip()
+
         except Exception as e:
-            logger.error(f"Error generating OpenAI response: {e}")
+            logger.error(f"Error generating OpenAI response (Responses API): {e}")
             raise
+
     
     def transcribe_audio(self, audio_file_path: str) -> str:
         """Transcribe audio file to text"""
@@ -155,82 +208,89 @@ class OpenAIService:
                 
     
     def analyze_image(self, image_file) -> str:
-        """Analyze image using OpenAI Vision API"""
+        """Analyze image using Responses API (minimal approach)."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
-        
+
         try:
-            # Read image data
             if hasattr(image_file, 'read'):
                 image_data = image_file.read()
             else:
                 with open(image_file, 'rb') as f:
                     image_data = f.read()
-            
-            # Convert to base64
+
             import base64
             base64_image = base64.b64encode(image_data).decode('utf-8')
-            
-            response = self.client.chat.completions.create(
-                model="gpt-4.1-mini-2025-04-14",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=300
+            data_uri = f"data:image/jpeg;base64,{base64_image}"
+
+            # Construir input mixto (texto + image_url)
+            prompt_parts = [
+                {"type": "text", "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."},
+                {"type": "image_url", "image_url": {"url": data_uri}}
+            ]
+
+            resp = self.client.responses.create(
+                model=self.model_name,
+                input=prompt_parts,
+                max_output_tokens=300
             )
-            
-            return response.choices[0].message.content
-            
+
+            # Extraer texto de salida (igual que arriba)
+            text_out = ""
+            if hasattr(resp, "output"):
+                for out in getattr(resp, "output", []):
+                    content = out.get("content") if isinstance(out, dict) else getattr(out, "content", None)
+                    if isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict) and "text" in c:
+                                text_out += c["text"]
+                            elif isinstance(c, str):
+                                text_out += c
+            if not text_out and hasattr(resp, "output_text"):
+                text_out = getattr(resp, "output_text")
+
+            return text_out.strip()
+
         except Exception as e:
-            logger.error(f"Error analyzing image: {e}")
+            logger.error(f"Error analyzing image (Responses): {e}")
             raise
+
     
     def analyze_image_from_url(self, image_url: str) -> str:
-        """Analyze image from URL"""
+        """Analyze image from URL using Responses API."""
         if not self.image_enabled:
             raise ValueError("Image processing is not enabled")
-        
+
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": image_url
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=300
+            prompt_parts = [
+                {"type": "text", "text": "Describe esta imagen en detalle en español, enfocándote en aspectos relevantes para un centro estético."},
+                {"type": "image_url", "image_url": {"url": image_url}}
+            ]
+
+            resp = self.client.responses.create(
+                model=self.model_name,
+                input=prompt_parts,
+                max_output_tokens=300
             )
-            
-            return response.choices[0].message.content
-            
+
+            # Extraer texto (igual que arriba)
+            text_out = ""
+            if hasattr(resp, "output"):
+                for out in getattr(resp, "output", []):
+                    content = out.get("content") if isinstance(out, dict) else getattr(out, "content", None)
+                    if isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict) and "text" in c:
+                                text_out += c["text"]
+                            elif isinstance(c, str):
+                                text_out += c
+            if not text_out and hasattr(resp, "output_text"):
+                text_out = getattr(resp, "output_text")
+
+            return text_out.strip()
+
         except Exception as e:
-            logger.error(f"Error analyzing image from URL: {e}")
+            logger.error(f"Error analyzing image from URL (Responses): {e}")
             raise
     
     def text_to_speech(self, text: str) -> str:
