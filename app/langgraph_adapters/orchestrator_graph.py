@@ -46,7 +46,7 @@ from app.langgraph_adapters.agent_adapter import AgentAdapter, validate_has_ques
 from app.agents.base_agent import BaseAgent
 from app.services.shared_state_store import SharedStateStore
 from app.models.audit_trail import AuditManager
-from app.workflows.compensation_orchestrator import CompensationOrchestrator
+# CompensationOrchestrator: lazy import to avoid circular dependency
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,8 @@ class MultiAgentOrchestratorGraph:
         # Audit Trail para registro de acciones críticas
         self.audit_manager = AuditManager(company_id=company_id)
 
-        # Compensation Orchestrator para rollback automático
+        # Compensation Orchestrator para rollback automático (lazy import)
+        from app.workflows.compensation_orchestrator import CompensationOrchestrator
         self.compensation_orchestrator = CompensationOrchestrator(
             company_id=company_id,
             audit_manager=self.audit_manager
