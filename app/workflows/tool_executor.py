@@ -8,7 +8,9 @@ from app.services.chatwoot_service import ChatwootService
 from app.services.multimedia_service import MultimediaService
 from app.services.email_service import EmailService
 from app.models.conversation import ConversationManager
+from app.models.audit_trail import AuditManager
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +24,13 @@ class ToolExecutor:
     ✅ Logging detallado por empresa
     """
     
-    def __init__(self, company_id: str):
+    def __init__(self, company_id: str, audit_manager: Optional[AuditManager] = None):
         self.company_id = company_id
         self.tools_library = ToolsLibrary()
+
+        # Audit Manager para registro automático de acciones
+        self.audit_manager = audit_manager or AuditManager(company_id=company_id)
+        self.audit_enabled = True
 
         # Servicios que se inyectan externamente
         self.vectorstore_service: Optional[VectorstoreService] = None
@@ -34,7 +40,7 @@ class ToolExecutor:
         self.email_service: Optional[EmailService] = None
         self.conversation_manager: Optional[ConversationManager] = None
 
-        logger.info(f"🔧 [{company_id}] ToolExecutor initialized")
+        logger.info(f"🔧 [{company_id}] ToolExecutor initialized (audit_enabled={self.audit_enabled})")
     
     # ========================================================================
     # MÉTODOS DE INYECCIÓN DE SERVICIOS
@@ -74,69 +80,154 @@ class ToolExecutor:
     # MÉTODO PRINCIPAL DE EJECUCIÓN
     # ========================================================================
     
-    def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_tool(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        conversation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Ejecutar una herramienta por nombre.
-        
+        Ejecutar una herramienta por nombre con registro automático en audit trail.
+
         Args:
             tool_name: Nombre de la tool (ej: "google_calendar", "knowledge_base")
             parameters: Parámetros específicos de la tool
-            
+            user_id: ID del usuario (para audit trail)
+            agent_name: Nombre del agente que ejecuta la tool
+            conversation_id: ID de conversación
+
         Returns:
             Resultado de la ejecución en formato estándar:
             {
                 "success": bool,
                 "tool": str,
                 "data": Any,
-                "error": Optional[str]
+                "error": Optional[str],
+                "audit_id": Optional[str]  # Si audit está habilitado
             }
         """
+        audit_id = None
+        start_time = time.time()
+
         try:
             logger.info(f"🔧 [{self.company_id}] Executing tool: {tool_name}")
             logger.debug(f"   Parameters: {parameters}")
-            
+
             # Verificar que la tool existe en la biblioteca
             tool_def = self.tools_library.get_tool(tool_name)
             if not tool_def:
                 return self._error_response(
-                    tool_name, 
+                    tool_name,
                     f"Tool '{tool_name}' not found in library"
                 )
-            
+
+            # ✅ REGISTRAR EN AUDIT TRAIL (antes de ejecutar)
+            if self.audit_enabled and user_id:
+                # Determinar si la acción es compensable
+                compensable = tool_name in ["google_calendar", "create_ticket"]
+                compensation_action = None
+
+                if tool_name == "google_calendar" and parameters.get("action") == "create_booking":
+                    compensation_action = "google_calendar.delete_event"
+                elif tool_name == "create_ticket":
+                    compensation_action = "ticketing.close_ticket"
+
+                audit_entry = self.audit_manager.log_action(
+                    user_id=user_id or "system",
+                    action_type=self._get_action_type(tool_name),
+                    action_name=f"{tool_name}.{parameters.get('action', 'execute')}",
+                    input_params=parameters,
+                    agent_name=agent_name,
+                    conversation_id=conversation_id,
+                    compensable=compensable,
+                    compensation_action=compensation_action,
+                    tags=[f"tool:{tool_name}"]
+                )
+
+                audit_id = audit_entry.audit_id
+
             # Enrutar a la implementación específica
             if tool_name == "knowledge_base":
-                return self._execute_knowledge_base(parameters)
-            
+                result = self._execute_knowledge_base(parameters)
+
             elif tool_name == "google_calendar":
-                return self._execute_google_calendar(parameters)
-            
+                result = self._execute_google_calendar(parameters)
+
             elif tool_name == "send_whatsapp":
-                return self._execute_send_whatsapp(parameters)
-            
+                result = self._execute_send_whatsapp(parameters)
+
             elif tool_name == "transcribe_audio":
-                return self._execute_transcribe_audio(parameters)
-            
+                result = self._execute_transcribe_audio(parameters)
+
             elif tool_name == "analyze_image":
-                return self._execute_analyze_image(parameters)
-            
+                result = self._execute_analyze_image(parameters)
+
             elif tool_name == "text_to_speech":
-                return self._execute_text_to_speech(parameters)
-            
+                result = self._execute_text_to_speech(parameters)
+
             elif tool_name == "web_search":
-                return self._execute_web_search(parameters)
-            
+                result = self._execute_web_search(parameters)
+
             elif tool_name == "send_email":
-                return self._execute_send_email(parameters)
-            
+                result = self._execute_send_email(parameters)
+
             else:
-                return self._error_response(
+                result = self._error_response(
                     tool_name,
                     f"Tool '{tool_name}' registered but not implemented yet"
                 )
-                
+
+            # ✅ ACTUALIZAR AUDIT TRAIL (después de ejecutar)
+            duration_ms = (time.time() - start_time) * 1000
+
+            if self.audit_enabled and audit_id:
+                if result.get("success"):
+                    self.audit_manager.mark_success(
+                        audit_id,
+                        result=result.get("data"),
+                        duration_ms=duration_ms
+                    )
+                else:
+                    self.audit_manager.mark_failed(
+                        audit_id,
+                        error_message=result.get("error", "Unknown error"),
+                        duration_ms=duration_ms
+                    )
+
+            # Agregar audit_id al resultado
+            if audit_id:
+                result["audit_id"] = audit_id
+
+            return result
+
         except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+
+            # ✅ REGISTRAR ERROR EN AUDIT TRAIL
+            if self.audit_enabled and audit_id:
+                self.audit_manager.mark_failed(
+                    audit_id,
+                    error_message=str(e),
+                    duration_ms=duration_ms
+                )
+
             logger.exception(f"💥 [{self.company_id}] Error executing tool {tool_name}: {e}")
             return self._error_response(tool_name, str(e))
+
+    def _get_action_type(self, tool_name: str) -> str:
+        """Determinar el tipo de acción para audit trail"""
+        if tool_name == "google_calendar":
+            return "booking"
+        elif tool_name in ["send_email", "send_whatsapp"]:
+            return "notification"
+        elif tool_name == "create_ticket":
+            return "ticket"
+        elif tool_name == "knowledge_base":
+            return "rag_search"
+        else:
+            return "api_call"
     
     # ========================================================================
     # IMPLEMENTACIONES DE TOOLS
