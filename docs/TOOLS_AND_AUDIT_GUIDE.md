@@ -576,28 +576,124 @@ orchestrator_graph = MultiAgentOrchestratorGraph(
 )
 
 # The graph now has tool nodes:
-# - execute_booking (after schedule agent confirms appointment)
-# - send_notification (after booking is created)
-# - create_ticket (if support detects a problem)
+# - check_availability (verifies available slots in calendar)
+# - execute_booking (creates appointment after confirmation)
+# - send_notification (sends email after booking is created)
+# - create_ticket (creates support ticket if problem detected)
 ```
 
-### Automatic Tool Execution Flow
+### Available Tool Nodes
+
+| Tool Node | Description | When Executed | Compensable |
+|-----------|-------------|---------------|-------------|
+| `check_availability` | Verifies available slots in calendar | When schedule agent needs availability | No |
+| `execute_booking` | Creates calendar event | After schedule agent confirms appointment | **Yes** |
+| `send_notification` | Sends confirmation email | After booking is created successfully | No |
+| `create_ticket` | Creates support ticket | When support agent detects a problem | Yes |
+
+### Automatic Tool Execution Flow (Complete)
 
 ```
 User: "Quiero agendar una cita para botox el 20 de enero a las 10am"
   ↓
 Router Agent → Classify intent: "schedule"
   ↓
-Schedule Agent → Process request, confirm appointment
+Schedule Agent (Pass 1) → Extract date, time, treatment
+  ↓ Puts in shared_context:
+  {
+    "schedule_info": {
+      "needs_availability_check": True,
+      "date": "2025-01-20",
+      "time": "10:00",
+      "treatment": "Botox"
+    }
+  }
   ↓
-Conditional Routing → Detects "has_appointment" in shared context
+Conditional Routing → Detects "needs_availability_check"
+  ↓
+check_availability Tool Node → Verifies slots (via ToolExecutor)
+  ✅ Audit Trail: action_type="api_call"
+  ✅ Updates shared_context with available_slots
+  ↓ Returns to schedule agent with:
+  {
+    "availability_checked": True,
+    "available_slots": ["10:00", "11:00", "15:00"],
+    "requested_slot_available": True
+  }
+  ↓
+Schedule Agent (Pass 2) → Confirms with user based on available slots
+  ↓ Updates shared_context:
+  {
+    "has_appointment": True,
+    "confirmed_date": "2025-01-20",
+    "confirmed_time": "10:00"
+  }
+  ↓
+Conditional Routing → Detects "has_appointment"
   ↓
 execute_booking Tool Node → Creates calendar event (compensable)
+  ✅ Audit Trail: action_type="booking", compensable=True
+  ✅ CompensationOrchestrator creates Saga
+  ✅ If fails → automatic rollback
+  ↓
+Conditional Routing → Detects "booking" in tools_executed
   ↓
 send_notification Tool Node → Sends confirmation email
+  ✅ Audit Trail: action_type="notification"
   ↓
-Response to User: "✅ Su cita ha sido confirmada..."
+Response to User: "✅ Su cita ha sido confirmada para el 20 de enero a las 10:00 AM"
 ```
+
+### Why Tool Nodes Instead of Direct Service Calls?
+
+**❌ Anti-Pattern: Agent with Direct Service Access**
+```python
+class ScheduleAgent:
+    def process(self, message):
+        # ❌ Agent calls services directly
+        slots = self.calendar_service.check_availability(date)
+        booking = self.calendar_service.create_booking(...)
+        self.email_service.send_email(...)
+        # ❌ No audit trail
+        # ❌ No compensation
+        # ❌ No centralized control
+```
+
+**✅ Correct Pattern: Tool Nodes**
+```python
+class ScheduleAgent:
+    def process(self, message):
+        # ✅ Agent only extracts information
+        date, time = self.extract_info(message)
+
+        # ✅ Puts in shared_context for Tool Nodes to execute
+        return {
+            "shared_context": {
+                "schedule_info": {
+                    "needs_availability_check": True,
+                    "date": date,
+                    "time": time
+                }
+            }
+        }
+
+# ✅ Tool Node executes the action
+def check_availability_tool(state):
+    result = tool_executor.execute_tool(...)  # ✅ Audit trail
+    # ✅ Automatic logging
+    # ✅ Retry on failure
+    # ✅ Centralized control
+```
+
+**Benefits:**
+- ✅ **Audit Trail**: All actions logged automatically
+- ✅ **Compensation**: Rollback on failures (Saga pattern)
+- ✅ **Separation of Concerns**: Agents = NLP, Tool Nodes = Actions
+- ✅ **Reusability**: Tool nodes can be used by any agent
+- ✅ **Testability**: Agents and tool nodes tested separately
+- ✅ **Observability**: Centralized metrics and monitoring
+
+For detailed architecture explanation, see: `docs/TOOL_NODES_ARCHITECTURE.md`
 
 ---
 

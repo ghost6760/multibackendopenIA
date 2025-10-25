@@ -205,6 +205,7 @@ class MultiAgentOrchestratorGraph:
 
         # === NODOS DE TOOLS (ACCIONES) === #
         if self.tools_enabled:
+            workflow.add_node("check_availability", self._check_availability_tool)
             workflow.add_node("execute_booking", self._execute_booking_tool)
             workflow.add_node("send_notification", self._send_notification_tool)
             workflow.add_node("create_ticket", self._create_ticket_tool)
@@ -247,6 +248,7 @@ class MultiAgentOrchestratorGraph:
                 "validate_output",
                 self._should_execute_tools_or_continue,
                 {
+                    "check_availability": "check_availability",
                     "execute_booking": "execute_booking",
                     "send_notification": "send_notification",
                     "create_ticket": "create_ticket",
@@ -258,6 +260,8 @@ class MultiAgentOrchestratorGraph:
             )
 
             # === EDGES DESDE NODOS DE TOOLS === #
+            # check_availability vuelve a schedule agent para confirmar
+            workflow.add_edge("check_availability", "execute_schedule")
             workflow.add_edge("execute_booking", "validate_cross_agent_info")
             workflow.add_edge("send_notification", "validate_cross_agent_info")
             workflow.add_edge("create_ticket", "validate_cross_agent_info")
@@ -1016,25 +1020,33 @@ class MultiAgentOrchestratorGraph:
     def _should_execute_tools_or_continue(
         self,
         state: OrchestratorState
-    ) -> Literal["execute_booking", "send_notification", "create_ticket", "validate_cross_agent", "check_handoff", "retry", "end"]:
+    ) -> Literal["check_availability", "execute_booking", "send_notification", "create_ticket", "validate_cross_agent", "check_handoff", "retry", "end"]:
         """
         Determinar si ejecutar herramientas (tools) o continuar flujo normal.
 
         Lógica:
-        1. Si el agente es 'schedule' Y tiene booking confirmado → execute_booking
-        2. Si hay información de cita confirmada → send_notification
-        3. Si es support con problema no resuelto → create_ticket
-        4. Sino, continuar flujo normal (validate_cross_agent, check_handoff, retry, end)
+        1. Si el agente es 'schedule' Y necesita verificar disponibilidad → check_availability
+        2. Si el agente es 'schedule' Y tiene booking confirmado → execute_booking
+        3. Si hay información de cita confirmada → send_notification
+        4. Si es support con problema no resuelto → create_ticket
+        5. Sino, continuar flujo normal (validate_cross_agent, check_handoff, retry, end)
         """
         current_agent = state.get("current_agent")
         agent_response = state.get("agent_response", "")
 
-        # Detectar si se confirmó una cita (schedule agent)
+        # Detectar si necesitamos verificar disponibilidad (schedule agent)
         if current_agent == "schedule":
-            # Verificar si hay info de schedule en shared_context
             shared_context = state.get("shared_context", {})
             schedule_info = shared_context.get("schedule_info", {})
 
+            # Prioridad 1: Verificar disponibilidad si se solicitó y NO se ha verificado
+            if schedule_info.get("needs_availability_check") and not schedule_info.get("availability_checked"):
+                logger.info(
+                    f"[{self.company_id}] 🔧 Tool detected: Need availability check → check_availability"
+                )
+                return "check_availability"
+
+            # Prioridad 2: Crear booking si ya se confirmó
             if schedule_info.get("has_appointment"):
                 # Marcar que necesitamos crear booking
                 state["tools_to_execute"] = state.get("tools_to_execute", [])
@@ -1069,6 +1081,101 @@ class MultiAgentOrchestratorGraph:
         return self._should_validate_cross_agent_or_retry(state)
 
     # === NODOS DE TOOLS === #
+
+    def _check_availability_tool(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Nodo: Verificar disponibilidad en Google Calendar.
+
+        Este nodo se ejecuta cuando el schedule agent necesita verificar
+        slots disponibles antes de confirmar una cita.
+
+        Flow:
+        1. Extrae fecha y tratamiento del shared_context
+        2. Llama a ToolExecutor para check_availability
+        3. Actualiza shared_context con slots disponibles
+        4. Regresa a schedule agent para que confirme con usuario
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: check_availability")
+
+        user_id = state.get("user_id", "unknown")
+        shared_context = state.get("shared_context", {})
+        schedule_info = shared_context.get("schedule_info", {})
+
+        if not self.tool_executor:
+            logger.warning(f"[{self.company_id}] ToolExecutor not configured, skipping availability check")
+            # Marcar como verificado para evitar loop
+            schedule_info["availability_checked"] = True
+            schedule_info["available_slots"] = []
+            return state
+
+        # Extraer parámetros
+        date = schedule_info.get("date")
+        treatment = schedule_info.get("treatment", "general")
+
+        if not date:
+            logger.warning(f"[{self.company_id}] No date provided for availability check")
+            schedule_info["availability_checked"] = True
+            schedule_info["available_slots"] = []
+            return state
+
+        # Ejecutar tool check_availability via ToolExecutor
+        result = self.tool_executor.execute_tool(
+            tool_name="google_calendar",
+            parameters={
+                "action": "check_availability",
+                "date": date,
+                "treatment": treatment
+            },
+            user_id=user_id,
+            agent_name="schedule_agent",
+            conversation_id=state.get("conversation_id")
+        )
+
+        if result.get("success"):
+            available_slots = result.get("data", {}).get("available_slots", [])
+
+            logger.info(
+                f"✅ [{self.company_id}] Availability checked: {len(available_slots)} slots available"
+            )
+
+            # Actualizar shared_context con resultados
+            schedule_info["availability_checked"] = True
+            schedule_info["available_slots"] = available_slots
+            schedule_info["needs_availability_check"] = False  # Reset flag
+
+            # Verificar si el slot solicitado está disponible
+            requested_time = schedule_info.get("time")
+            if requested_time and requested_time in available_slots:
+                schedule_info["requested_slot_available"] = True
+            elif requested_time:
+                schedule_info["requested_slot_available"] = False
+
+            # Guardar en shared state store
+            if self.shared_state_store:
+                self.shared_state_store.update_context(
+                    user_id=user_id,
+                    context_update={"schedule_info": schedule_info}
+                )
+
+        else:
+            logger.error(
+                f"❌ [{self.company_id}] Availability check failed: {result.get('error')}"
+            )
+
+            # Marcar como verificado con error para evitar loop infinito
+            schedule_info["availability_checked"] = True
+            schedule_info["availability_check_error"] = result.get("error")
+            schedule_info["available_slots"] = []
+
+        # Actualizar estado
+        shared_context["schedule_info"] = schedule_info
+        state["shared_context"] = shared_context
+
+        # Marcar tool como ejecutado
+        state["tools_executed"] = state.get("tools_executed", [])
+        state["tools_executed"].append("check_availability")
+
+        return state
 
     def _execute_booking_tool(self, state: OrchestratorState) -> OrchestratorState:
         """
