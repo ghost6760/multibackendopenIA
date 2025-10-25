@@ -45,6 +45,8 @@ from app.langgraph_adapters.state_schemas import (
 from app.langgraph_adapters.agent_adapter import AgentAdapter, validate_has_question
 from app.agents.base_agent import BaseAgent
 from app.services.shared_state_store import SharedStateStore
+from app.models.audit_trail import AuditManager
+# CompensationOrchestrator: lazy import to avoid circular dependency
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,8 @@ class MultiAgentOrchestratorGraph:
         agents: Dict[str, BaseAgent],
         company_id: str,
         enable_checkpointing: bool = False,
-        shared_state_store: SharedStateStore = None
+        shared_state_store: SharedStateStore = None,
+        tool_executor = None  # ToolExecutor opcional
     ):
         """
         Inicializar grafo de orquestación.
@@ -100,6 +103,7 @@ class MultiAgentOrchestratorGraph:
             company_id: ID de la empresa
             enable_checkpointing: Habilitar checkpointing para debugging
             shared_state_store: Store compartido entre agentes (opcional)
+            tool_executor: ToolExecutor para acciones (opcional)
         """
         self.company_id = company_id
         self.enable_checkpointing = enable_checkpointing
@@ -109,6 +113,20 @@ class MultiAgentOrchestratorGraph:
             backend="memory",
             ttl_seconds=3600  # 1 hora
         )
+
+        # Audit Trail para registro de acciones críticas
+        self.audit_manager = AuditManager(company_id=company_id)
+
+        # Compensation Orchestrator para rollback automático (lazy import)
+        from app.workflows.compensation_orchestrator import CompensationOrchestrator
+        self.compensation_orchestrator = CompensationOrchestrator(
+            company_id=company_id,
+            audit_manager=self.audit_manager
+        )
+
+        # Tool Executor para acciones (booking, notifications, etc)
+        self.tool_executor = tool_executor
+        self.tools_enabled = tool_executor is not None
 
         # Crear adaptadores para cada agente
         self.router_adapter = AgentAdapter(
@@ -185,6 +203,13 @@ class MultiAgentOrchestratorGraph:
         workflow.add_node("validate_cross_agent_info", self._validate_cross_agent_info)
         workflow.add_node("handle_retry", self._handle_retry)
 
+        # === NODOS DE TOOLS (ACCIONES) === #
+        if self.tools_enabled:
+            workflow.add_node("check_availability", self._check_availability_tool)
+            workflow.add_node("execute_booking", self._execute_booking_tool)
+            workflow.add_node("send_notification", self._send_notification_tool)
+            workflow.add_node("create_ticket", self._create_ticket_tool)
+
         # === EDGE DESDE START === #
         workflow.set_entry_point("validate_input")
 
@@ -218,16 +243,39 @@ class MultiAgentOrchestratorGraph:
             workflow.add_edge(f"execute_{agent_name}", "validate_output")
 
         # === EDGE CONDICIONAL DESDE VALIDATE_OUTPUT === #
-        workflow.add_conditional_edges(
-            "validate_output",
-            self._should_validate_cross_agent_or_retry,
-            {
-                "validate_cross_agent": "validate_cross_agent_info",
-                "check_handoff": "handle_agent_handoff",
-                "retry": "handle_retry",
-                "end": END
-            }
-        )
+        if self.tools_enabled:
+            workflow.add_conditional_edges(
+                "validate_output",
+                self._should_execute_tools_or_continue,
+                {
+                    "check_availability": "check_availability",
+                    "execute_booking": "execute_booking",
+                    "send_notification": "send_notification",
+                    "create_ticket": "create_ticket",
+                    "validate_cross_agent": "validate_cross_agent_info",
+                    "check_handoff": "handle_agent_handoff",
+                    "retry": "handle_retry",
+                    "end": END
+                }
+            )
+
+            # === EDGES DESDE NODOS DE TOOLS === #
+            # check_availability vuelve a schedule agent para confirmar
+            workflow.add_edge("check_availability", "execute_schedule")
+            workflow.add_edge("execute_booking", "validate_cross_agent_info")
+            workflow.add_edge("send_notification", "validate_cross_agent_info")
+            workflow.add_edge("create_ticket", "validate_cross_agent_info")
+        else:
+            workflow.add_conditional_edges(
+                "validate_output",
+                self._should_validate_cross_agent_or_retry,
+                {
+                    "validate_cross_agent": "validate_cross_agent_info",
+                    "check_handoff": "handle_agent_handoff",
+                    "retry": "handle_retry",
+                    "end": END
+                }
+            )
 
         # === EDGE DESDE VALIDATE_CROSS_AGENT_INFO === #
         workflow.add_edge("validate_cross_agent_info", END)
@@ -966,6 +1014,404 @@ class MultiAgentOrchestratorGraph:
             if state.get("current_agent") != "support":
                 return "escalate"
         return "end"
+
+    # === ROUTING PARA TOOLS === #
+
+    def _should_execute_tools_or_continue(
+        self,
+        state: OrchestratorState
+    ) -> Literal["check_availability", "execute_booking", "send_notification", "create_ticket", "validate_cross_agent", "check_handoff", "retry", "end"]:
+        """
+        Determinar si ejecutar herramientas (tools) o continuar flujo normal.
+
+        Lógica:
+        1. Si el agente es 'schedule' Y necesita verificar disponibilidad → check_availability
+        2. Si el agente es 'schedule' Y tiene booking confirmado → execute_booking
+        3. Si hay información de cita confirmada → send_notification
+        4. Si es support con problema no resuelto → create_ticket
+        5. Sino, continuar flujo normal (validate_cross_agent, check_handoff, retry, end)
+        """
+        current_agent = state.get("current_agent")
+        agent_response = state.get("agent_response", "")
+
+        # Detectar si necesitamos verificar disponibilidad (schedule agent)
+        if current_agent == "schedule":
+            shared_context = state.get("shared_context", {})
+            schedule_info = shared_context.get("schedule_info", {})
+
+            # Prioridad 1: Verificar disponibilidad si se solicitó y NO se ha verificado
+            if schedule_info.get("needs_availability_check") and not schedule_info.get("availability_checked"):
+                logger.info(
+                    f"[{self.company_id}] 🔧 Tool detected: Need availability check → check_availability"
+                )
+                return "check_availability"
+
+            # Prioridad 2: Crear booking si ya se confirmó
+            if schedule_info.get("has_appointment"):
+                # Marcar que necesitamos crear booking
+                state["tools_to_execute"] = state.get("tools_to_execute", [])
+                if "booking" not in state["tools_to_execute"]:
+                    state["tools_to_execute"].append("booking")
+
+                logger.info(
+                    f"[{self.company_id}] 🔧 Tool detected: Appointment confirmed → execute_booking"
+                )
+                return "execute_booking"
+
+        # Detectar si necesitamos enviar notificación
+        # (después de crear booking, enviar confirmación)
+        if "booking" in state.get("tools_executed", []):
+            logger.info(
+                f"[{self.company_id}] 🔧 Tool detected: Booking created → send_notification"
+            )
+            return "send_notification"
+
+        # Detectar si necesitamos crear ticket (support con problema)
+        if current_agent == "support":
+            response_lower = agent_response.lower()
+            problem_keywords = ["problema", "error", "falla", "no funciona", "queja"]
+
+            if any(keyword in response_lower for keyword in problem_keywords):
+                logger.info(
+                    f"[{self.company_id}] 🔧 Tool detected: Support issue → create_ticket"
+                )
+                return "create_ticket"
+
+        # Continuar flujo normal usando lógica existente
+        return self._should_validate_cross_agent_or_retry(state)
+
+    # === NODOS DE TOOLS === #
+
+    def _check_availability_tool(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Nodo: Verificar disponibilidad en Google Calendar.
+
+        Este nodo se ejecuta cuando el schedule agent necesita verificar
+        slots disponibles antes de confirmar una cita.
+
+        Flow:
+        1. Extrae fecha y tratamiento del shared_context
+        2. Llama a ToolExecutor para check_availability
+        3. Actualiza shared_context con slots disponibles
+        4. Regresa a schedule agent para que confirme con usuario
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: check_availability")
+
+        user_id = state.get("user_id", "unknown")
+        shared_context = state.get("shared_context", {})
+        schedule_info = shared_context.get("schedule_info", {})
+
+        if not self.tool_executor:
+            logger.warning(f"[{self.company_id}] ToolExecutor not configured, skipping availability check")
+            # Marcar como verificado para evitar loop
+            schedule_info["availability_checked"] = True
+            schedule_info["available_slots"] = []
+            return state
+
+        # Extraer parámetros
+        date = schedule_info.get("date")
+        treatment = schedule_info.get("treatment", "general")
+
+        if not date:
+            logger.warning(f"[{self.company_id}] No date provided for availability check")
+            schedule_info["availability_checked"] = True
+            schedule_info["available_slots"] = []
+            return state
+
+        # Ejecutar tool check_availability via ToolExecutor
+        result = self.tool_executor.execute_tool(
+            tool_name="google_calendar",
+            parameters={
+                "action": "check_availability",
+                "date": date,
+                "treatment": treatment
+            },
+            user_id=user_id,
+            agent_name="schedule_agent",
+            conversation_id=state.get("conversation_id")
+        )
+
+        if result.get("success"):
+            available_slots = result.get("data", {}).get("available_slots", [])
+
+            logger.info(
+                f"✅ [{self.company_id}] Availability checked: {len(available_slots)} slots available"
+            )
+
+            # Actualizar shared_context con resultados
+            schedule_info["availability_checked"] = True
+            schedule_info["available_slots"] = available_slots
+            schedule_info["needs_availability_check"] = False  # Reset flag
+
+            # Verificar si el slot solicitado está disponible
+            requested_time = schedule_info.get("time")
+            if requested_time and requested_time in available_slots:
+                schedule_info["requested_slot_available"] = True
+            elif requested_time:
+                schedule_info["requested_slot_available"] = False
+
+            # Guardar en shared state store
+            if self.shared_state_store:
+                self.shared_state_store.update_context(
+                    user_id=user_id,
+                    context_update={"schedule_info": schedule_info}
+                )
+
+        else:
+            logger.error(
+                f"❌ [{self.company_id}] Availability check failed: {result.get('error')}"
+            )
+
+            # Marcar como verificado con error para evitar loop infinito
+            schedule_info["availability_checked"] = True
+            schedule_info["availability_check_error"] = result.get("error")
+            schedule_info["available_slots"] = []
+
+        # Actualizar estado
+        shared_context["schedule_info"] = schedule_info
+        state["shared_context"] = shared_context
+
+        # Marcar tool como ejecutado
+        state["tools_executed"] = state.get("tools_executed", [])
+        state["tools_executed"].append("check_availability")
+
+        return state
+
+    def _execute_booking_tool(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Nodo: Ejecutar herramienta de booking (crear cita en Google Calendar).
+
+        Este nodo se ejecuta cuando el schedule agent confirmó una cita.
+        Usa CompensationOrchestrator para rollback automático si falla.
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: execute_booking")
+
+        user_id = state.get("user_id", "unknown")
+        shared_context = state.get("shared_context", {})
+        schedule_info = shared_context.get("schedule_info", {})
+
+        if not self.tool_executor:
+            logger.warning(f"[{self.company_id}] ToolExecutor not configured, skipping booking")
+            return state
+
+        # Crear saga para transacción compensable
+        saga = self.compensation_orchestrator.create_saga(
+            user_id=user_id,
+            saga_name="create_appointment"
+        )
+
+        # Acción: Crear evento en calendario
+        def execute_calendar_booking():
+            params = {
+                "action": "create_booking",
+                "treatment": schedule_info.get("treatment", "Consulta"),
+                "date": schedule_info.get("date"),
+                "time": schedule_info.get("time"),
+                "patient_name": schedule_info.get("patient_name"),
+                "patient_phone": schedule_info.get("patient_phone")
+            }
+
+            return self.tool_executor.execute_tool("google_calendar", params)
+
+        # Compensación: Eliminar evento si falla algo después
+        def compensate_calendar_booking(result):
+            if result and result.get("data") and result["data"].get("event_id"):
+                event_id = result["data"]["event_id"]
+
+                compensation_params = {
+                    "action": "delete_event",
+                    "event_id": event_id
+                }
+
+                return self.tool_executor.execute_tool("google_calendar", compensation_params)
+
+            return {"success": True, "message": "Nothing to compensate"}
+
+        # Agregar acción a saga
+        self.compensation_orchestrator.add_action(
+            saga_id=saga.saga_id,
+            action_type="booking",
+            action_name="google_calendar.create_event",
+            executor=execute_calendar_booking,
+            compensator=compensate_calendar_booking,
+            input_params={
+                "treatment": schedule_info.get("treatment"),
+                "date": schedule_info.get("date"),
+                "time": schedule_info.get("time")
+            }
+        )
+
+        # Ejecutar saga
+        result = self.compensation_orchestrator.execute_saga(saga.saga_id)
+
+        if result["success"]:
+            logger.info(
+                f"✅ [{self.company_id}] Booking created successfully"
+            )
+
+            # Marcar herramienta como ejecutada
+            state["tools_executed"] = state.get("tools_executed", [])
+            state["tools_executed"].append("booking")
+
+            # Guardar event_id en estado para notification
+            if "tool_results" not in state:
+                state["tool_results"] = {}
+            state["tool_results"]["booking"] = result
+
+        else:
+            logger.error(
+                f"❌ [{self.company_id}] Booking failed and rolled back: {result.get('error')}"
+            )
+
+            # Marcar error
+            state["tool_errors"] = state.get("tool_errors", [])
+            state["tool_errors"].append({
+                "tool": "booking",
+                "error": result.get("error")
+            })
+
+        return state
+
+    def _send_notification_tool(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Nodo: Enviar notificación (email/WhatsApp) de confirmación.
+
+        Se ejecuta después de crear booking exitosamente.
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: send_notification")
+
+        user_id = state.get("user_id", "unknown")
+        shared_context = state.get("shared_context", {})
+        schedule_info = shared_context.get("schedule_info", {})
+        tool_results = state.get("tool_results", {})
+        booking_result = tool_results.get("booking", {})
+
+        if not self.tool_executor:
+            logger.warning(f"[{self.company_id}] ToolExecutor not configured, skipping notification")
+            return state
+
+        # Obtener email del paciente (asumimos que está en user_info)
+        # TODO: Integrar con UserInfo del SharedStateStore
+        patient_email = schedule_info.get("patient_email", "patient@example.com")
+
+        # Preparar variables para template
+        template_vars = {
+            "company_name": self.company_id.capitalize(),
+            "patient_name": schedule_info.get("patient_name", "Paciente"),
+            "treatment": schedule_info.get("treatment", "Consulta"),
+            "date": schedule_info.get("date", ""),
+            "time": schedule_info.get("time", "")
+        }
+
+        # Registrar en audit trail
+        audit_entry = self.audit_manager.log_action(
+            user_id=user_id,
+            action_type="notification",
+            action_name="email.send_confirmation",
+            input_params={
+                "to_email": patient_email,
+                "template": "appointment_confirmation"
+            },
+            compensable=False  # Email no se puede "desenviar"
+        )
+
+        # Enviar email
+        email_params = {
+            "to_email": patient_email,
+            "template_name": "appointment_confirmation",
+            "template_vars": template_vars
+        }
+
+        result = self.tool_executor.execute_tool("send_email", email_params)
+
+        if result["success"]:
+            logger.info(
+                f"✅ [{self.company_id}] Notification sent successfully to {patient_email}"
+            )
+
+            self.audit_manager.mark_success(audit_entry.audit_id, result=result)
+
+            state["tools_executed"] = state.get("tools_executed", [])
+            state["tools_executed"].append("notification")
+
+        else:
+            logger.error(
+                f"❌ [{self.company_id}] Notification failed: {result.get('error')}"
+            )
+
+            self.audit_manager.mark_failed(audit_entry.audit_id, error_message=result.get("error"))
+
+            state["tool_errors"] = state.get("tool_errors", [])
+            state["tool_errors"].append({
+                "tool": "notification",
+                "error": result.get("error")
+            })
+
+        return state
+
+    def _create_ticket_tool(self, state: OrchestratorState) -> OrchestratorState:
+        """
+        Nodo: Crear ticket de soporte.
+
+        Se ejecuta cuando support agent detecta un problema que requiere seguimiento.
+        """
+        logger.info(f"[{self.company_id}] 📍 Node: create_ticket")
+
+        user_id = state.get("user_id", "unknown")
+        agent_response = state.get("agent_response", "")
+        question = state.get("question", "")
+
+        if not self.tool_executor:
+            logger.warning(f"[{self.company_id}] ToolExecutor not configured, skipping ticket creation")
+            return state
+
+        # Registrar en audit trail
+        audit_entry = self.audit_manager.log_action(
+            user_id=user_id,
+            action_type="ticket",
+            action_name="ticketing.create_ticket",
+            input_params={
+                "subject": question[:100],
+                "description": agent_response[:500]
+            },
+            compensable=True,  # Los tickets pueden cerrarse/eliminarse
+            compensation_action="ticketing.close_ticket"
+        )
+
+        # Crear ticket
+        ticket_params = {
+            "subject": f"Support Request - {question[:50]}...",
+            "description": f"User Question: {question}\n\nAgent Response: {agent_response}",
+            "priority": "medium",
+            "requester_id": user_id
+        }
+
+        result = self.tool_executor.execute_tool("create_ticket", ticket_params)
+
+        if result["success"]:
+            logger.info(
+                f"✅ [{self.company_id}] Support ticket created successfully"
+            )
+
+            self.audit_manager.mark_success(audit_entry.audit_id, result=result)
+
+            state["tools_executed"] = state.get("tools_executed", [])
+            state["tools_executed"].append("ticket")
+
+        else:
+            logger.error(
+                f"❌ [{self.company_id}] Ticket creation failed: {result.get('error')}"
+            )
+
+            self.audit_manager.mark_failed(audit_entry.audit_id, error_message=result.get("error"))
+
+            state["tool_errors"] = state.get("tool_errors", [])
+            state["tool_errors"].append({
+                "tool": "ticket",
+                "error": result.get("error")
+            })
+
+        return state
 
     # === API PÚBLICA === #
 
