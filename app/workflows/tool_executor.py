@@ -6,6 +6,7 @@ from app.services.vectorstore_service import VectorstoreService
 from app.services.calendar_integration_service import CalendarIntegrationService
 from app.services.chatwoot_service import ChatwootService
 from app.services.multimedia_service import MultimediaService
+from app.services.email_service import EmailService
 from app.models.conversation import ConversationManager
 import logging
 
@@ -24,14 +25,15 @@ class ToolExecutor:
     def __init__(self, company_id: str):
         self.company_id = company_id
         self.tools_library = ToolsLibrary()
-        
+
         # Servicios que se inyectan externamente
         self.vectorstore_service: Optional[VectorstoreService] = None
         self.calendar_service: Optional[CalendarIntegrationService] = None
         self.chatwoot_service: Optional[ChatwootService] = None
         self.multimedia_service: Optional[MultimediaService] = None
+        self.email_service: Optional[EmailService] = None
         self.conversation_manager: Optional[ConversationManager] = None
-        
+
         logger.info(f"🔧 [{company_id}] ToolExecutor initialized")
     
     # ========================================================================
@@ -57,7 +59,12 @@ class ToolExecutor:
         """Inyectar servicio multimedia (audio, imagen, TTS)"""
         self.multimedia_service = service
         logger.info(f"✅ [{self.company_id}] MultimediaService injected")
-    
+
+    def set_email_service(self, service: EmailService):
+        """Inyectar servicio de email"""
+        self.email_service = service
+        logger.info(f"✅ [{self.company_id}] EmailService injected")
+
     def set_conversation_manager(self, manager: ConversationManager):
         """Inyectar gestor de conversaciones"""
         self.conversation_manager = manager
@@ -421,13 +428,92 @@ class ToolExecutor:
     
     def _execute_send_email(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        🟡 Tool: send_email (NOT IMPLEMENTED YET)
+        ✅ Tool: send_email
         Enviar emails automáticos
+
+        Params:
+            to_email: str - Email del destinatario
+            subject: str - Asunto
+            body_html: str (optional) - Cuerpo en HTML
+            body_text: str (optional) - Cuerpo en texto plano
+            template_name: str (optional) - Nombre del template
+            template_vars: dict (optional) - Variables para el template
+            cc: list (optional) - Lista de emails en copia
+            bcc: list (optional) - Lista de emails en copia oculta
+            reply_to: str (optional) - Email para responder
         """
+        if not self.email_service:
+            return self._error_response(
+                "send_email",
+                "EmailService not configured"
+            )
+
+        # Validar params requeridos
+        to_email = params.get("to_email")
+        if not to_email:
+            return self._error_response(
+                "send_email",
+                "to_email parameter is required"
+            )
+
+        # Si hay template, usar send_template_email
+        template_name = params.get("template_name")
+        if template_name:
+            template_vars = params.get("template_vars", {})
+
+            logger.info(
+                f"📧 [{self.company_id}] Sending template email: {template_name} to {to_email}"
+            )
+
+            result = self.email_service.send_template_email(
+                to_email=to_email,
+                template_name=template_name,
+                template_vars=template_vars
+            )
+
+            return {
+                "success": result["success"],
+                "tool": "send_email",
+                "data": result if result["success"] else None,
+                "error": result.get("error")
+            }
+
+        # Envío normal
+        subject = params.get("subject")
+        body_html = params.get("body_html")
+        body_text = params.get("body_text")
+
+        if not subject:
+            return self._error_response(
+                "send_email",
+                "subject parameter is required"
+            )
+
+        if not body_html and not body_text:
+            return self._error_response(
+                "send_email",
+                "Either body_html or body_text is required"
+            )
+
+        logger.info(
+            f"📧 [{self.company_id}] Sending email to {to_email}: {subject}"
+        )
+
+        result = self.email_service.send_email(
+            to_email=to_email,
+            subject=subject,
+            body_html=body_html,
+            body_text=body_text,
+            cc=params.get("cc"),
+            bcc=params.get("bcc"),
+            reply_to=params.get("reply_to")
+        )
+
         return {
-            "success": False,
+            "success": result["success"],
             "tool": "send_email",
-            "error": "send_email tool not implemented yet. Coming soon!"
+            "data": result if result["success"] else None,
+            "error": result.get("error")
         }
     
     # ========================================================================
